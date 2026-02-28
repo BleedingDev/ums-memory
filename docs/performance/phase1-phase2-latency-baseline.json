@@ -1,0 +1,49 @@
+{
+  "generatedAt": "2026-02-28T19:51:52.567Z",
+  "implementation": {
+    "source": "./apps/api/src/ums/engine.mjs",
+    "exportName": "createUmsEngine"
+  },
+  "config": {
+    "events": 2000,
+    "queries": 300,
+    "maxItems": 10,
+    "tokenBudget": 220
+  },
+  "thresholds": {
+    "ingestP95Ms": 2.5,
+    "replayP95Ms": 2.5,
+    "recallP95Ms": 8,
+    "recallPayloadMaxBytes": 4096
+  },
+  "metrics": {
+    "ingestMs": {
+      "p50": 0.0014,
+      "p95": 0.0026,
+      "max": 0.5814
+    },
+    "replayMs": {
+      "p50": 0.0008,
+      "p95": 0.0015,
+      "max": 0.2905
+    },
+    "recallMs": {
+      "p50": 2.2131,
+      "p95": 5.5164,
+      "max": 6.3195
+    },
+    "recallPayloadBytes": {
+      "p50": 3262,
+      "p95": 3310,
+      "max": 3310
+    },
+    "replayDuplicatesCaptured": 2000
+  },
+  "gates": {
+    "ingestP95WithinThreshold": true,
+    "replayP95WithinThreshold": true,
+    "recallP95WithinThreshold": true,
+    "recallPayloadMaxWithinThreshold": true,
+    "replayCapturedAllDuplicates": true
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "name": "@ums/shared",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Shared backend core contracts and in-memory reference implementation for UMS.",
+  "scripts": {
+    "test": "node --test ./tests/**/*.test.js"
+  }
+}

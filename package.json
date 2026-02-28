@@ -1,0 +1,16 @@
+{
+  "name": "ums-memory",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "api": "node apps/api/src/server.mjs",
+    "cli": "node apps/cli/src/index.mjs",
+    "test:api": "node --test apps/api/test/*.test.mjs apps/cli/test/*.test.mjs",
+    "test:ums": "UMS_IMPL_MODULE=./apps/api/src/ums/engine.mjs UMS_IMPL_EXPORT=createUmsEngine node --test tests/unit/*.test.mjs tests/integration/*.test.mjs",
+    "test": "npm run test:api && npm run test:ums",
+    "bench:api": "node apps/api/bench/benchmark.mjs",
+    "bench:ums": "UMS_IMPL_MODULE=./apps/api/src/ums/engine.mjs UMS_IMPL_EXPORT=createUmsEngine node benchmarks/ums-latency-benchmark.mjs",
+    "bench": "npm run bench:api && npm run bench:ums"
+  }
+}
