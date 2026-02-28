@@ -10,10 +10,10 @@ const OPS = [
   "outcome",
   "audit",
   "export",
-  "doctor"
+  "doctor",
 ];
 
-const store = new Map();
+const stores = new Map();
 
 function stableSortObject(value) {
   if (Array.isArray(value)) {
@@ -37,8 +37,8 @@ function hash(value) {
   return createHash("sha256").update(value).digest("hex");
 }
 
-function opSeed(operation, profile, input) {
-  return hash(stableStringify({ operation, profile, input }));
+function opSeed(operation, storeId, profile, input) {
+  return hash(stableStringify({ operation, storeId, profile, input }));
 }
 
 function makeId(prefix, seed) {
@@ -51,20 +51,11 @@ function requireObject(value) {
   }
 }
 
-function getProfileState(profile) {
-  const existing = store.get(profile);
-  if (existing) {
-    return existing;
+function defaultStoreId(value) {
+  if (typeof value === "string" && value.trim()) {
+    return value.trim();
   }
-  const created = {
-    events: [],
-    eventDigests: new Set(),
-    rules: [],
-    feedback: [],
-    outcomes: []
-  };
-  store.set(profile, created);
-  return created;
+  return "default";
 }
 
 function defaultProfile(value) {
@@ -74,13 +65,40 @@ function defaultProfile(value) {
   return "default";
 }
 
+function getStoreProfiles(storeId) {
+  const existing = stores.get(storeId);
+  if (existing) {
+    return existing;
+  }
+  const created = new Map();
+  stores.set(storeId, created);
+  return created;
+}
+
+function getProfileState(storeId, profile) {
+  const profiles = getStoreProfiles(storeId);
+  const existing = profiles.get(profile);
+  if (existing) {
+    return existing;
+  }
+  const created = {
+    events: [],
+    eventDigests: new Set(),
+    rules: [],
+    feedback: [],
+    outcomes: [],
+  };
+  profiles.set(profile, created);
+  return created;
+}
+
 function normalizeEvent(raw, index) {
   const event = raw && typeof raw === "object" ? raw : {};
   const material = stableStringify({
     source: event.source ?? "unknown",
     type: event.type ?? "note",
     content: event.content ?? "",
-    ordinal: index
+    ordinal: index,
   });
   const digest = hash(material);
   return {
@@ -88,7 +106,7 @@ function normalizeEvent(raw, index) {
     type: event.type ?? "note",
     source: event.source ?? "unknown",
     content: event.content ?? "",
-    digest
+    digest,
   };
 }
 
@@ -102,14 +120,24 @@ function normalizeRuleCandidate(raw) {
     candidateId: makeId("cand", digest),
     statement,
     sourceEventId: source,
-    confidence: Number.isFinite(candidate.confidence) ? Number(candidate.confidence) : 0.5
+    confidence: Number.isFinite(candidate.confidence) ? Number(candidate.confidence) : 0.5,
   };
 }
 
 function normalizeRequest(operation, request) {
   requireObject(request);
+  const storeId = defaultStoreId(request.storeId ?? request.store);
   const profile = defaultProfile(request.profile);
-  return { profile, input: stableSortObject(request), operation };
+  return {
+    storeId,
+    profile,
+    input: stableSortObject({
+      ...request,
+      storeId,
+      profile,
+    }),
+    operation,
+  };
 }
 
 function findByDigestPrefix(items, digestPrefix, field) {
@@ -119,19 +147,20 @@ function findByDigestPrefix(items, digestPrefix, field) {
   return items.find((item) => item[field].startsWith(digestPrefix)) ?? null;
 }
 
-function buildMeta(operation, profile, input) {
-  const seed = opSeed(operation, profile, input);
+function buildMeta(operation, storeId, profile, input) {
+  const seed = opSeed(operation, storeId, profile, input);
   return {
     operation,
+    storeId,
     profile,
     requestDigest: seed,
-    deterministic: true
+    deterministic: true,
   };
 }
 
 function runIngest(request) {
-  const { profile, input } = normalizeRequest("ingest", request);
-  const state = getProfileState(profile);
+  const { storeId, profile, input } = normalizeRequest("ingest", request);
+  const state = getProfileState(storeId, profile);
   const events = Array.isArray(request.events) ? request.events : [];
   const refs = [];
   let accepted = 0;
@@ -144,7 +173,7 @@ function runIngest(request) {
       refs.push({
         eventId: normalized.eventId,
         digest: normalized.digest,
-        status: "duplicate"
+        status: "duplicate",
       });
       continue;
     }
@@ -154,24 +183,24 @@ function runIngest(request) {
     refs.push({
       eventId: normalized.eventId,
       digest: normalized.digest,
-      status: "accepted"
+      status: "accepted",
     });
   }
 
   const ledgerDigest = hash(stableStringify(state.events.map((event) => event.digest)));
 
   return {
-    ...buildMeta("ingest", profile, input),
+    ...buildMeta("ingest", storeId, profile, input),
     accepted,
     duplicates,
     eventRefs: refs,
-    ledgerDigest
+    ledgerDigest,
   };
 }
 
 function runContext(request) {
-  const { profile, input } = normalizeRequest("context", request);
-  const state = getProfileState(profile);
+  const { storeId, profile, input } = normalizeRequest("context", request);
+  const state = getProfileState(storeId, profile);
   const query = typeof request.query === "string" ? request.query.toLowerCase() : "";
   const limit = Number.isInteger(request.limit) && request.limit > 0 ? request.limit : 5;
 
@@ -188,46 +217,46 @@ function runContext(request) {
       type: item.event.type,
       source: item.event.source,
       excerpt: item.event.content.slice(0, 180),
-      digest: item.event.digest
+      digest: item.event.digest,
     }));
 
   return {
-    ...buildMeta("context", profile, input),
+    ...buildMeta("context", storeId, profile, input),
     query,
     totalEvents: state.events.length,
     matches: matched,
     rules: state.rules.slice(0, 5).map((rule) => ({
       ruleId: rule.ruleId,
       statement: rule.statement,
-      confidence: rule.confidence
-    }))
+      confidence: rule.confidence,
+    })),
   };
 }
 
 function runReflect(request) {
-  const { profile, input } = normalizeRequest("reflect", request);
-  const state = getProfileState(profile);
+  const { storeId, profile, input } = normalizeRequest("reflect", request);
+  const state = getProfileState(storeId, profile);
   const max = Number.isInteger(request.maxCandidates) && request.maxCandidates > 0 ? request.maxCandidates : 3;
   const candidates = state.events.slice(-max).map((event) => {
     const statement = `Prefer source=${event.source} for type=${event.type}`;
     const normalized = normalizeRuleCandidate({
       statement,
       sourceEventId: event.eventId,
-      confidence: 0.6
+      confidence: 0.6,
     });
     return normalized;
   });
 
   return {
-    ...buildMeta("reflect", profile, input),
+    ...buildMeta("reflect", storeId, profile, input),
     candidateCount: candidates.length,
-    candidates
+    candidates,
   };
 }
 
 function runValidate(request) {
-  const { profile, input } = normalizeRequest("validate", request);
-  const state = getProfileState(profile);
+  const { storeId, profile, input } = normalizeRequest("validate", request);
+  const state = getProfileState(storeId, profile);
   const rawCandidates = Array.isArray(request.candidates) ? request.candidates : [];
   const candidates = rawCandidates.map(normalizeRuleCandidate);
   const validations = candidates.map((candidate) => {
@@ -236,20 +265,20 @@ function runValidate(request) {
       candidateId: candidate.candidateId,
       valid: Boolean(evidence && candidate.statement),
       evidenceEventId: evidence ? evidence.eventId : null,
-      contradictionCount: 0
+      contradictionCount: 0,
     };
   });
 
   return {
-    ...buildMeta("validate", profile, input),
+    ...buildMeta("validate", storeId, profile, input),
     checked: validations.length,
-    validations
+    validations,
   };
 }
 
 function runCurate(request) {
-  const { profile, input } = normalizeRequest("curate", request);
-  const state = getProfileState(profile);
+  const { storeId, profile, input } = normalizeRequest("curate", request);
+  const state = getProfileState(storeId, profile);
   const rawCandidates = Array.isArray(request.candidates) ? request.candidates : [];
   const applied = [];
   const skipped = [];
@@ -259,7 +288,7 @@ function runCurate(request) {
     if (!candidate.statement) {
       skipped.push({
         candidateId: candidate.candidateId,
-        reason: "empty_statement"
+        reason: "empty_statement",
       });
       continue;
     }
@@ -269,33 +298,33 @@ function runCurate(request) {
       existing.confidence = candidate.confidence;
       applied.push({
         ruleId: existing.ruleId,
-        action: "updated"
+        action: "updated",
       });
       continue;
     }
     const rule = {
       ruleId: candidate.candidateId,
       statement: candidate.statement,
-      confidence: candidate.confidence
+      confidence: candidate.confidence,
     };
     state.rules.push(rule);
     applied.push({
       ruleId: rule.ruleId,
-      action: "created"
+      action: "created",
     });
   }
 
   return {
-    ...buildMeta("curate", profile, input),
+    ...buildMeta("curate", storeId, profile, input),
     applied,
     skipped,
-    totalRules: state.rules.length
+    totalRules: state.rules.length,
   };
 }
 
 function runFeedback(request) {
-  const { profile, input } = normalizeRequest("feedback", request);
-  const state = getProfileState(profile);
+  const { storeId, profile, input } = normalizeRequest("feedback", request);
+  const state = getProfileState(storeId, profile);
   const targetRuleId = typeof request.targetRuleId === "string" ? request.targetRuleId : "";
   const signal = request.signal === "harmful" ? "harmful" : "helpful";
   const note = typeof request.note === "string" ? request.note : "";
@@ -306,21 +335,21 @@ function runFeedback(request) {
     feedbackId,
     targetRuleId,
     signal,
-    note
+    note,
   });
 
   return {
-    ...buildMeta("feedback", profile, input),
+    ...buildMeta("feedback", storeId, profile, input),
     feedbackId,
     targetRuleId,
     signal,
-    totalFeedback: state.feedback.length
+    totalFeedback: state.feedback.length,
   };
 }
 
 function runOutcome(request) {
-  const { profile, input } = normalizeRequest("outcome", request);
-  const state = getProfileState(profile);
+  const { storeId, profile, input } = normalizeRequest("outcome", request);
+  const state = getProfileState(storeId, profile);
   const outcome = request.outcome === "failure" ? "failure" : "success";
   const task = typeof request.task === "string" && request.task ? request.task : "unspecified-task";
   const usedRuleIds = Array.isArray(request.usedRuleIds)
@@ -332,22 +361,22 @@ function runOutcome(request) {
     outcomeId,
     task,
     outcome,
-    usedRuleIds
+    usedRuleIds,
   });
 
   return {
-    ...buildMeta("outcome", profile, input),
+    ...buildMeta("outcome", storeId, profile, input),
     outcomeId,
     task,
     outcome,
     usedRuleIds,
-    totalOutcomes: state.outcomes.length
+    totalOutcomes: state.outcomes.length,
   };
 }
 
 function runAudit(request) {
-  const { profile, input } = normalizeRequest("audit", request);
-  const state = getProfileState(profile);
+  const { storeId, profile, input } = normalizeRequest("audit", request);
+  const state = getProfileState(storeId, profile);
   const duplicateStatements = new Set();
   const seen = new Set();
   for (const rule of state.rules) {
@@ -360,19 +389,19 @@ function runAudit(request) {
   }
 
   return {
-    ...buildMeta("audit", profile, input),
+    ...buildMeta("audit", storeId, profile, input),
     checks: [
       { name: "events_present", status: state.events.length > 0 ? "pass" : "warn" },
       { name: "rules_present", status: state.rules.length > 0 ? "pass" : "warn" },
-      { name: "duplicate_rules", status: duplicateStatements.size === 0 ? "pass" : "warn" }
+      { name: "duplicate_rules", status: duplicateStatements.size === 0 ? "pass" : "warn" },
     ],
-    duplicateRules: Array.from(duplicateStatements.values())
+    duplicateRules: Array.from(duplicateStatements.values()),
   };
 }
 
 function runExport(request) {
-  const { profile, input } = normalizeRequest("export", request);
-  const state = getProfileState(profile);
+  const { storeId, profile, input } = normalizeRequest("export", request);
+  const state = getProfileState(storeId, profile);
   const topRules = state.rules.slice(0, 5);
   const topAntiPatterns = state.feedback
     .filter((entry) => entry.signal === "harmful")
@@ -381,46 +410,48 @@ function runExport(request) {
   const agentsMdLines = [
     "# UMS Memory Export",
     "",
+    `Store: ${storeId}`,
     `Profile: ${profile}`,
     "",
     "## Top Rules",
     ...topRules.map((rule) => `- ${rule.statement} (confidence=${rule.confidence})`),
     "",
     "## Anti-pattern Signals",
-    ...topAntiPatterns.map((line) => `- ${line}`)
+    ...topAntiPatterns.map((line) => `- ${line}`),
   ];
 
   return {
-    ...buildMeta("export", profile, input),
+    ...buildMeta("export", storeId, profile, input),
     format: request.format === "playbook" ? "playbook" : "agents-md",
     agentsMd: agentsMdLines.join("\n"),
     playbook: {
+      storeId,
       profile,
       topRules,
-      antiPatterns: topAntiPatterns
-    }
+      antiPatterns: topAntiPatterns,
+    },
   };
 }
 
 function runDoctor(request) {
-  const { profile, input } = normalizeRequest("doctor", request);
-  const state = getProfileState(profile);
+  const { storeId, profile, input } = normalizeRequest("doctor", request);
+  const state = getProfileState(storeId, profile);
   const status = {
     events: state.events.length,
     rules: state.rules.length,
     feedback: state.feedback.length,
-    outcomes: state.outcomes.length
+    outcomes: state.outcomes.length,
   };
 
   return {
-    ...buildMeta("doctor", profile, input),
+    ...buildMeta("doctor", storeId, profile, input),
     healthy: true,
     checks: [
       { name: "json_contracts", status: "pass" },
       { name: "deterministic_hashing", status: "pass" },
-      { name: "store_initialized", status: "pass" }
+      { name: "store_initialized", status: "pass" },
     ],
-    status
+    status,
   };
 }
 
@@ -434,7 +465,7 @@ const runners = {
   outcome: runOutcome,
   audit: runAudit,
   export: runExport,
-  doctor: runDoctor
+  doctor: runDoctor,
 };
 
 export function executeOperation(operation, request) {
@@ -452,63 +483,99 @@ export function listOperations() {
   return [...OPS];
 }
 
-export function snapshotProfile(profile = "default") {
-  const state = getProfileState(profile);
+export function snapshotProfile(profile = "default", storeId = "default") {
+  const state = getProfileState(defaultStoreId(storeId), defaultProfile(profile));
   return {
     events: state.events.map((event) => ({ ...event })),
     rules: state.rules.map((rule) => ({ ...rule })),
     feedback: state.feedback.map((entry) => ({ ...entry })),
-    outcomes: state.outcomes.map((entry) => ({ ...entry }))
+    outcomes: state.outcomes.map((entry) => ({ ...entry })),
+  };
+}
+
+function serializeState(state) {
+  return {
+    events: state.events.map((event) => ({ ...event })),
+    rules: state.rules.map((rule) => ({ ...rule })),
+    feedback: state.feedback.map((entry) => ({ ...entry })),
+    outcomes: state.outcomes.map((entry) => ({ ...entry })),
   };
 }
 
 export function exportStoreSnapshot() {
-  const profiles = {};
-  for (const [profile, state] of store.entries()) {
-    profiles[profile] = {
-      events: state.events.map((event) => ({ ...event })),
-      rules: state.rules.map((rule) => ({ ...rule })),
-      feedback: state.feedback.map((entry) => ({ ...entry })),
-      outcomes: state.outcomes.map((entry) => ({ ...entry }))
-    };
+  const storesPayload = {};
+
+  for (const storeId of [...stores.keys()].sort()) {
+    const profiles = stores.get(storeId) ?? new Map();
+    const profilesPayload = {};
+    for (const profile of [...profiles.keys()].sort()) {
+      profilesPayload[profile] = serializeState(profiles.get(profile));
+    }
+    storesPayload[storeId] = { profiles: profilesPayload };
   }
-  return { profiles };
+
+  return { stores: storesPayload };
+}
+
+function normalizeState(rawState) {
+  const state = rawState && typeof rawState === "object" ? rawState : {};
+  const events = Array.isArray(state.events) ? state.events : [];
+  const rules = Array.isArray(state.rules) ? state.rules : [];
+  const feedback = Array.isArray(state.feedback) ? state.feedback : [];
+  const outcomes = Array.isArray(state.outcomes) ? state.outcomes : [];
+  const eventDigests = new Set(
+    events
+      .map((event) => (event && typeof event === "object" ? event.digest : null))
+      .filter((digest) => typeof digest === "string" && digest),
+  );
+
+  return {
+    events: events.map((event) => ({ ...event })),
+    eventDigests,
+    rules: rules.map((rule) => ({ ...rule })),
+    feedback: feedback.map((entry) => ({ ...entry })),
+    outcomes: outcomes.map((entry) => ({ ...entry })),
+  };
+}
+
+function importProfiles(storeId, profiles) {
+  const normalizedStore = defaultStoreId(storeId);
+  const profileMap = getStoreProfiles(normalizedStore);
+  const source = profiles && typeof profiles === "object" ? profiles : {};
+
+  for (const profile of Object.keys(source).sort()) {
+    profileMap.set(defaultProfile(profile), normalizeState(source[profile]));
+  }
 }
 
 export function importStoreSnapshot(snapshot) {
-  store.clear();
-  const profiles =
-    snapshot && typeof snapshot === "object" && snapshot.profiles && typeof snapshot.profiles === "object"
-      ? snapshot.profiles
-      : {};
+  stores.clear();
+  if (!snapshot || typeof snapshot !== "object") {
+    return;
+  }
 
-  for (const profile of Object.keys(profiles).sort()) {
-    const rawState = profiles[profile] && typeof profiles[profile] === "object" ? profiles[profile] : {};
-    const events = Array.isArray(rawState.events) ? rawState.events : [];
-    const rules = Array.isArray(rawState.rules) ? rawState.rules : [];
-    const feedback = Array.isArray(rawState.feedback) ? rawState.feedback : [];
-    const outcomes = Array.isArray(rawState.outcomes) ? rawState.outcomes : [];
-    const eventDigests = new Set(
-      events
-        .map((event) => (event && typeof event === "object" ? event.digest : null))
-        .filter((digest) => typeof digest === "string" && digest)
-    );
+  if (snapshot.stores && typeof snapshot.stores === "object" && !Array.isArray(snapshot.stores)) {
+    for (const storeId of Object.keys(snapshot.stores).sort()) {
+      const storeEntry = snapshot.stores[storeId];
+      const profiles =
+        storeEntry && typeof storeEntry === "object" && storeEntry.profiles && typeof storeEntry.profiles === "object"
+          ? storeEntry.profiles
+          : {};
+      importProfiles(storeId, profiles);
+    }
+    return;
+  }
 
-    store.set(profile, {
-      events: events.map((event) => ({ ...event })),
-      eventDigests,
-      rules: rules.map((rule) => ({ ...rule })),
-      feedback: feedback.map((entry) => ({ ...entry })),
-      outcomes: outcomes.map((entry) => ({ ...entry }))
-    });
+  if (snapshot.profiles && typeof snapshot.profiles === "object") {
+    importProfiles("default", snapshot.profiles);
   }
 }
 
 export function resetStore() {
-  store.clear();
+  stores.clear();
 }
 
-export function findRuleByDigestPrefix(profile, digestPrefix) {
-  const state = getProfileState(defaultProfile(profile));
+export function findRuleByDigestPrefix(profile, digestPrefix, storeId = "default") {
+  const state = getProfileState(defaultStoreId(storeId), defaultProfile(profile));
   return findByDigestPrefix(state.rules, digestPrefix, "ruleId");
 }

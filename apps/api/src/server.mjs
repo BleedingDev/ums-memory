@@ -36,6 +36,17 @@ function parseOperation(pathname) {
   return operation || null;
 }
 
+function parseStoreHeader(req) {
+  const value = req.headers["x-ums-store"];
+  if (Array.isArray(value)) {
+    return value.find((entry) => typeof entry === "string" && entry.trim()) ?? null;
+  }
+  if (typeof value === "string" && value.trim()) {
+    return value.trim();
+  }
+  return null;
+}
+
 async function parseJsonBody(req) {
   const chunks = [];
   for await (const chunk of req) {
@@ -94,7 +105,12 @@ export function createApiServer() {
         service: "ums-api",
         version: "v1",
         operations: listOperations().map((operation) => `${API_PREFIX}/${operation}`),
-        deterministic: true
+        deterministic: true,
+        storeSelection: {
+          bodyField: "storeId",
+          header: "x-ums-store",
+          defaultStore: "default",
+        },
       });
     }
 
@@ -108,7 +124,18 @@ export function createApiServer() {
 
     try {
       const body = await parseJsonBody(req);
-      const data = executeOperation(operation, body);
+      let requestBody = body;
+      const headerStore = parseStoreHeader(req);
+      if (
+        headerStore &&
+        requestBody &&
+        typeof requestBody === "object" &&
+        !Array.isArray(requestBody) &&
+        !requestBody.storeId
+      ) {
+        requestBody = { ...requestBody, storeId: headerStore };
+      }
+      const data = executeOperation(operation, requestBody);
       return json(res, 200, { ok: true, data });
     } catch (error) {
       const failure = toErrorResponse(error);
@@ -143,4 +170,3 @@ if (import.meta.url === `file://${process.argv[1]}`) {
       process.exit(1);
     });
 }
-

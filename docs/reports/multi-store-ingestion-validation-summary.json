@@ -1,0 +1,239 @@
+{
+  "generatedAt": "2026-02-28T20:38:47.430Z",
+  "sources": {
+    "jiraExampleRepo": "/Users/satan/work/techsio-prototypes/ferndesk-connector",
+    "codexJsonlFiles": 6716,
+    "claudeJsonlFiles": 188
+  },
+  "ingestion": {
+    "jira": {
+      "accepted": 4,
+      "duplicates": 0,
+      "rejected": 0,
+      "stats": {
+        "storeCount": 1,
+        "spaceCount": 1,
+        "totalEvents": 4,
+        "redactedSecrets": 0,
+        "unsafeInstructions": 0
+      }
+    },
+    "codingAgents": {
+      "accepted": 6652,
+      "duplicates": 0,
+      "rejected": 0,
+      "stats": {
+        "storeCount": 2,
+        "spaceCount": 3,
+        "totalEvents": 6656,
+        "redactedSecrets": 153,
+        "unsafeInstructions": 0
+      }
+    }
+  },
+  "snapshotTotals": {
+    "storeCount": 2,
+    "spaceCount": 3,
+    "eventCount": 6656
+  },
+  "stores": [
+    {
+      "storeId": "coding-agent",
+      "totals": {
+        "spaceCount": 2,
+        "eventCount": 6652
+      },
+      "spaces": [
+        {
+          "space": "codex-cli",
+          "count": 6468
+        },
+        {
+          "space": "claude-code",
+          "count": 184
+        }
+      ],
+      "topSources": [
+        {
+          "source": "codex-cli",
+          "count": 6468
+        },
+        {
+          "source": "claude-code",
+          "count": 184
+        }
+      ],
+      "topTerms": [
+        {
+          "term": "output",
+          "count": 998
+        },
+        {
+          "term": "code",
+          "count": 991
+        },
+        {
+          "term": "can",
+          "count": 831
+        },
+        {
+          "term": "use",
+          "count": 763
+        },
+        {
+          "term": "metadata",
+          "count": 723
+        },
+        {
+          "term": "exit",
+          "count": 719
+        },
+        {
+          "term": "duration",
+          "count": 697
+        },
+        {
+          "term": "seconds",
+          "count": 697
+        },
+        {
+          "term": "make",
+          "count": 695
+        },
+        {
+          "term": "everything",
+          "count": 686
+        },
+        {
+          "term": "should",
+          "count": 634
+        },
+        {
+          "term": "need",
+          "count": 631
+        }
+      ]
+    },
+    {
+      "storeId": "jira-history",
+      "totals": {
+        "spaceCount": 1,
+        "eventCount": 4
+      },
+      "spaces": [
+        {
+          "space": "ferndesk-support",
+          "count": 4
+        }
+      ],
+      "topSources": [
+        {
+          "source": "jira",
+          "count": 4
+        }
+      ],
+      "topTerms": [
+        {
+          "term": "agent",
+          "count": 2
+        },
+        {
+          "term": "comment",
+          "count": 2
+        },
+        {
+          "term": "description",
+          "count": 2
+        },
+        {
+          "term": "public",
+          "count": 2
+        },
+        {
+          "term": "visibility",
+          "count": 2
+        },
+        {
+          "term": "abc",
+          "count": 1
+        },
+        {
+          "term": "acme",
+          "count": 1
+        },
+        {
+          "term": "amount",
+          "count": 1
+        },
+        {
+          "term": "billing",
+          "count": 1
+        },
+        {
+          "term": "customer",
+          "count": 1
+        },
+        {
+          "term": "escalated",
+          "count": 1
+        },
+        {
+          "term": "example",
+          "count": 1
+        }
+      ]
+    }
+  ],
+  "reflections": {
+    "jiraHistory": {
+      "query": "invoice mismatch escalation billing",
+      "sampleItems": [
+        {
+          "id": "jira-ABC-1-summary",
+          "source": "jira",
+          "content": "[ABC-1] Invoice mismatch for Acme\nDescription: Customer reports wrong invoice amount."
+        },
+        {
+          "id": "jira-ABC-1-comment-20001",
+          "source": "jira",
+          "content": "Comment by Support Agent\nVisibility: public\nEscalated to billing squad."
+        },
+        {
+          "id": "jira-SUP-1-comment-c-1",
+          "source": "jira",
+          "content": "Comment by Agent\nVisibility: public\nA public reply"
+        },
+        {
+          "id": "jira-SUP-1-summary",
+          "source": "jira",
+          "content": "[SUP-1] Example issue\nDescription: Hello"
+        }
+      ]
+    },
+    "codingAgent": {
+      "query": "benchmark tests memory store jira",
+      "sampleItems": [
+        {
+          "id": "codex-cli-.codex/history.jsonl-151",
+          "source": "codex-cli",
+          "content": "Type of \"register\" is partially unknown\n  Type of \"register\" is \"(key: str | None = None, username: str | None = None, password: [REDACTED] | None = None, token: [REDACTED] | None = None, personal_key_id: str | None = None, personal_key_secret: str | None = None, server: str | No…"
+        },
+        {
+          "id": "codex-cli-.codex/history.jsonl-1082",
+          "source": "codex-cli",
+          "content": "How's the final performance after optimisation? Did we get any speed improvements or memory improvements? If necessary improve benchmark precision, so that we get accurate comparison."
+        },
+        {
+          "id": "codex-cli-.codex/sessions/2025/08/12/rollout-2025-08-12T17-18-22-b9d0f1c7-5054-4ee8-886b-df12019fcd23.jsonl-95",
+          "source": "codex-cli",
+          "content": "{\"output\":\"\\n RUN  v3.2.2 /Users/satan/work/coursition-effect-experiment\\n\\n ✓ src/stores/jobs/jobs.store.test.ts (5 tests) 24ms\\n ✓ src/stores/media/media.store.test.ts (2 tests) 26ms\\n\\n\\n Test Files  2 passed (2)\\n      Tests  7 passed (7)\\n   Start at  17:26:55\\n   Duration  …"
+        },
+        {
+          "id": "codex-cli-.codex/history.jsonl-2348",
+          "source": "codex-cli",
+          "content": "Continue. Are the tests, typecheck passing? Did you validate using dev-browser already?"
+        }
+      ]
+    }
+  }
+}

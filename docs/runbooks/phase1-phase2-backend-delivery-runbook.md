@@ -8,6 +8,7 @@ Operational runbook for delivering Phase 1 and Phase 2 epics under shared backen
 - security defaults enabled by default
 
 This runbook is paired with [ADR-0001](../adr/0001-phase1-phase2-baseline-constraints.md).
+For source-domain partitioning, see [Multi-Store Source Ingestion](./multi-store-source-ingestion.md).
 
 ## Mandatory Delivery Boundaries
 1. `No frontend`

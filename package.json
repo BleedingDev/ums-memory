@@ -11,6 +11,7 @@
     "test": "npm run test:api && npm run test:ums",
     "bench:api": "node apps/api/bench/benchmark.mjs",
     "bench:ums": "UMS_IMPL_MODULE=./apps/api/src/ums/engine.mjs UMS_IMPL_EXPORT=createUmsEngine node benchmarks/ums-latency-benchmark.mjs",
-    "bench": "npm run bench:api && npm run bench:ums"
+    "bench": "npm run bench:api && npm run bench:ums",
+    "validate:ingestion": "node scripts/validate-ingestion.mjs"
   }
 }

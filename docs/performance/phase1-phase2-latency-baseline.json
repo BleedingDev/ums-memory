@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-02-28T20:00:46.467Z",
+  "generatedAt": "2026-02-28T20:38:27.642Z",
   "implementation": {
     "source": "./apps/api/src/ums/engine.mjs",
     "exportName": "createUmsEngine"
@@ -8,7 +8,11 @@
     "events": 2000,
     "queries": 300,
     "maxItems": 10,
-    "tokenBudget": 220
+    "tokenBudget": 220,
+    "stores": [
+      "coding-agent",
+      "jira-history"
+    ]
   },
   "thresholds": {
     "ingestP95Ms": 2.5,
@@ -18,26 +22,74 @@
   },
   "metrics": {
     "ingestMs": {
-      "p50": 0.0016,
-      "p95": 0.006,
-      "max": 0.4764
+      "p50": 0.0015,
+      "p95": 0.003,
+      "max": 0.4455
     },
     "replayMs": {
-      "p50": 0.0008,
-      "p95": 0.0017,
-      "max": 0.2465
+      "p50": 0.001,
+      "p95": 0.0027,
+      "max": 0.6598
     },
     "recallMs": {
-      "p50": 2.2458,
-      "p95": 5.1999,
-      "max": 10.2494
+      "p50": 2.2028,
+      "p95": 3.9726,
+      "max": 9.1109
     },
     "recallPayloadBytes": {
-      "p50": 3262,
-      "p95": 3310,
-      "max": 3310
+      "p50": 3615.5,
+      "p95": 3660.75,
+      "max": 3675
     },
-    "replayDuplicatesCaptured": 2000
+    "replayDuplicatesCaptured": 4000,
+    "byStore": {
+      "coding-agent": {
+        "ingestMs": {
+          "p50": 0.0017,
+          "p95": 0.0042,
+          "max": 0.4455
+        },
+        "replayMs": {
+          "p50": 0.0022,
+          "p95": 0.0027,
+          "max": 0.3298
+        },
+        "recallMs": {
+          "p50": 2.2449,
+          "p95": 4.0068,
+          "max": 9.1109
+        },
+        "recallPayloadBytes": {
+          "p50": 3578,
+          "p95": 3635,
+          "max": 3635
+        },
+        "replayDuplicatesCaptured": 2000
+      },
+      "jira-history": {
+        "ingestMs": {
+          "p50": 0.0014,
+          "p95": 0.0018,
+          "max": 0.0368
+        },
+        "replayMs": {
+          "p50": 0.001,
+          "p95": 0.0025,
+          "max": 0.6598
+        },
+        "recallMs": {
+          "p50": 2.0395,
+          "p95": 3.5001,
+          "max": 6.4717
+        },
+        "recallPayloadBytes": {
+          "p50": 3620,
+          "p95": 3675,
+          "max": 3675
+        },
+        "replayDuplicatesCaptured": 2000
+      }
+    }
   },
   "gates": {
     "ingestP95WithinThreshold": true,
@@ -45,5 +97,21 @@
     "recallP95WithinThreshold": true,
     "recallPayloadMaxWithinThreshold": true,
     "replayCapturedAllDuplicates": true
+  },
+  "gatesByStore": {
+    "coding-agent": {
+      "ingestP95WithinThreshold": true,
+      "replayP95WithinThreshold": true,
+      "recallP95WithinThreshold": true,
+      "recallPayloadMaxWithinThreshold": true,
+      "replayCapturedAllDuplicates": true
+    },
+    "jira-history": {
+      "ingestP95WithinThreshold": true,
+      "replayP95WithinThreshold": true,
+      "recallP95WithinThreshold": true,
+      "recallPayloadMaxWithinThreshold": true,
+      "replayCapturedAllDuplicates": true
+    }
   }
 }

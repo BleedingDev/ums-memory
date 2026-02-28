@@ -12,12 +12,12 @@ function printUsage() {
   process.stderr.write(
     [
       "Usage:",
-      "  node apps/cli/src/index.mjs <operation> [--input '<json>'] [--file path] [--state-file path] [--pretty]",
+      "  node apps/cli/src/index.mjs <operation> [--input '<json>'] [--file path] [--state-file path] [--store-id id] [--pretty]",
       "",
       `Operations: ${ops}`,
       "",
       "Examples:",
-      "  node apps/cli/src/index.mjs ingest --input '{\"profile\":\"demo\",\"events\":[{\"type\":\"note\",\"content\":\"Use deterministic IDs\"}]}'",
+      "  node apps/cli/src/index.mjs ingest --store-id coding-agent --input '{\"profile\":\"demo\",\"events\":[{\"type\":\"note\",\"content\":\"Use deterministic IDs\"}]}'",
       "  echo '{\"profile\":\"demo\",\"query\":\"deterministic\"}' | node apps/cli/src/index.mjs context"
     ].join("\n") + "\n"
   );
@@ -31,6 +31,7 @@ function parseArgs(argv) {
     input: null,
     file: null,
     stateFile: process.env.UMS_CLI_STATE_FILE ?? ".ums-cli-state.json",
+    storeId: null,
     help: false
   };
 
@@ -57,6 +58,10 @@ function parseArgs(argv) {
     }
     if (token === "--state-file") {
       flags.stateFile = args.shift() ?? "";
+      continue;
+    }
+    if (token === "--store-id") {
+      flags.storeId = args.shift() ?? "";
       continue;
     }
     throw new Error(`Unknown argument: ${token}`);
@@ -132,6 +137,15 @@ async function main(argv = process.argv.slice(2)) {
   await loadCliState(parsed.stateFile);
   const requestRaw = await readInput(parsed);
   const requestBody = safeJsonParse(requestRaw);
+  if (
+    parsed.storeId &&
+    typeof requestBody === "object" &&
+    requestBody &&
+    !Array.isArray(requestBody) &&
+    !requestBody.storeId
+  ) {
+    requestBody.storeId = parsed.storeId;
+  }
   const data = executeOperation(parsed.operation, requestBody);
   await saveCliState(parsed.stateFile);
   const payload = {

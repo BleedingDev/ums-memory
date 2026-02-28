@@ -91,3 +91,66 @@ test("cli supports stdin json input", async () => {
     await rm(tempDir, { recursive: true, force: true });
   }
 });
+
+test("cli store-id flag isolates memories across stores", async () => {
+  const tempDir = await mkdtemp(resolve(tmpdir(), "ums-cli-test-"));
+  const stateFile = resolve(tempDir, "state.json");
+
+  try {
+    const jiraIngest = await runCli([
+      "ingest",
+      "--state-file",
+      stateFile,
+      "--store-id",
+      "jira-history",
+      "--input",
+      JSON.stringify({
+        profile: "shared-profile",
+        events: [{ type: "ticket", source: "jira", content: "jira only note" }],
+      }),
+    ]);
+    assert.equal(jiraIngest.code, 0);
+
+    const codingIngest = await runCli([
+      "ingest",
+      "--state-file",
+      stateFile,
+      "--store-id",
+      "coding-agent",
+      "--input",
+      JSON.stringify({
+        profile: "shared-profile",
+        events: [{ type: "note", source: "codex", content: "coding only note" }],
+      }),
+    ]);
+    assert.equal(codingIngest.code, 0);
+
+    const jiraContext = await runCli([
+      "context",
+      "--state-file",
+      stateFile,
+      "--store-id",
+      "jira-history",
+      "--input",
+      JSON.stringify({ profile: "shared-profile", query: "coding only note" }),
+    ]);
+    const jiraBody = JSON.parse(jiraContext.stdout);
+    assert.equal(jiraBody.ok, true);
+    assert.equal(jiraBody.data.matches.length, 0);
+
+    const codingContext = await runCli([
+      "context",
+      "--state-file",
+      stateFile,
+      "--store-id",
+      "coding-agent",
+      "--input",
+      JSON.stringify({ profile: "shared-profile", query: "jira only note" }),
+    ]);
+    const codingBody = JSON.parse(codingContext.stdout);
+    assert.equal(codingBody.ok, true);
+    assert.equal(codingBody.data.matches.length, 0);
+  } finally {
+    await rm(tempDir, { recursive: true, force: true });
+  }
+});
