@@ -1,6 +1,6 @@
 # UMS Phase 1/2 Latency Baseline
 
-Generated at: 2026-02-28T19:59:44.437Z
+Generated at: 2026-02-28T20:00:46.467Z
 Implementation: ./apps/api/src/ums/engine.mjs#createUmsEngine
 
 ## Workload
@@ -12,9 +12,9 @@ Implementation: ./apps/api/src/ums/engine.mjs#createUmsEngine
 ## Metrics
 | metric | p50 | p95 | max |
 | --- | ---: | ---: | ---: |
-| ingest (ms) | 0.0033 | 0.0064 | 2.6395 |
-| replay (ms) | 0.0008 | 0.0027 | 0.4056 |
-| recall (ms) | 2.3682 | 5.2605 | 9.5122 |
+| ingest (ms) | 0.0016 | 0.006 | 0.4764 |
+| replay (ms) | 0.0008 | 0.0017 | 0.2465 |
+| recall (ms) | 2.2458 | 5.1999 | 10.2494 |
 | recall payload bytes | 3262 | 3310 | 3310 |
 
 ## Guardrail Gates

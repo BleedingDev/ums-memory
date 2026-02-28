@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-02-28T19:59:44.437Z",
+  "generatedAt": "2026-02-28T20:00:46.467Z",
   "implementation": {
     "source": "./apps/api/src/ums/engine.mjs",
     "exportName": "createUmsEngine"
@@ -18,19 +18,19 @@
   },
   "metrics": {
     "ingestMs": {
-      "p50": 0.0033,
-      "p95": 0.0064,
-      "max": 2.6395
+      "p50": 0.0016,
+      "p95": 0.006,
+      "max": 0.4764
     },
     "replayMs": {
       "p50": 0.0008,
-      "p95": 0.0027,
-      "max": 0.4056
+      "p95": 0.0017,
+      "max": 0.2465
     },
     "recallMs": {
-      "p50": 2.3682,
-      "p95": 5.2605,
-      "max": 9.5122
+      "p50": 2.2458,
+      "p95": 5.1999,
+      "max": 10.2494
     },
     "recallPayloadBytes": {
       "p50": 3262,
