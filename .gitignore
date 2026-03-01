@@ -1,2 +1,8 @@
 # bv (beads viewer) local config and caches
 .bv/
+
+# local orchestration logs/state
+.ntm/
+
+# local sibling repo checkout
+mcp_agent_mail/
