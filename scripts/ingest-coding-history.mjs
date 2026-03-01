@@ -5,7 +5,7 @@ import { executeOperation } from "../apps/api/src/core.mjs";
 import { DEFAULT_SHARED_STATE_FILE, executeOperationWithSharedState } from "../apps/api/src/persistence.mjs";
 
 const DEFAULT_STORE_ID = "coding-agent";
-const DEFAULT_PROFILE = "agent-lessons-curated";
+const DEFAULT_PROFILE = "agent-lessons-curated-v9";
 const DEFAULT_REPORT_PATH = resolve(
   process.cwd(),
   "docs/reports/coding-agent-persistent-ingestion-summary.json",
@@ -550,12 +550,12 @@ const CANONICAL_RULE_DEFINITIONS = [
     test: (text) => /\b(ready|triage|issue|reproduc|command|check)\b/i.test(text),
   },
   {
-    statement: "Use Effect v4 patterns (including Effect.Service) for service wiring and error modeling.",
-    test: (text) => /\b(effect v4|effectservice|effect\.service|effect-ts|effect patterns?)\b/i.test(text),
+    statement: "Use Effect v4 service APIs (ServiceMap.Service / LayerMap.Service) for service wiring and composition.",
+    test: (text) => /\b(effect v4|servicemap\.service|layermap\.service|effect-ts|effect patterns?)\b/i.test(text),
   },
   {
-    statement: "Use Tailwind v4 conventions and keep Tailwind lint checks in CI.",
-    test: (text) => /\b(tailwind v4|nativewind v5|lint:tailwind|tailwind)\b/i.test(text),
+    statement: "Use Tailwind v4 conventions and enforce style checks with OxLint + OxFmt (no ESLint).",
+    test: (text) => /\b(tailwind v4|nativewind v5|oxlint|oxfmt|tailwind)\b/i.test(text),
   },
   {
     statement: "Keep TypeScript strict mode enabled across packages.",

@@ -1,18 +1,18 @@
 {
-  "generatedAt": "2026-03-01T10:32:38.691Z",
+  "generatedAt": "2026-03-01T10:39:56.705Z",
   "mode": "coding-agent-only-persistent",
   "stateFile": ".ums-state.json",
   "storeId": "coding-agent",
-  "profile": "agent-lessons-curated-v8",
+  "profile": "agent-lessons-curated-v9",
   "sources": {
-    "codexJsonlFiles": 6809,
-    "claudeJsonlFiles": 199,
+    "codexJsonlFiles": 6817,
+    "claudeJsonlFiles": 200,
     "planEvents": 10
   },
   "events": {
-    "prepared": 6161,
-    "ingestedAccepted": 6140,
-    "ingestedDuplicates": 21,
+    "prepared": 6165,
+    "ingestedAccepted": 0,
+    "ingestedDuplicates": 6165,
     "chunks": 25
   },
   "learning": {
@@ -20,7 +20,7 @@
     "candidatesValidated": 15,
     "rulesApplied": 15,
     "totalRules": 15,
-    "antiPatternSignalsApplied": 8,
+    "antiPatternSignalsApplied": 0,
     "canonicalCandidatesGenerated": 15,
     "heuristicCandidatesGenerated": 15,
     "highSignalHeuristicCandidatesGenerated": 1,
@@ -55,13 +55,13 @@
         "confidence": 0.96
       },
       {
-        "ruleId": "cand_ee09999062fb",
-        "statement": "Track benchmark deltas and enforce regression gates in CI.",
+        "ruleId": "cand_b19d181f0215",
+        "statement": "Use Tailwind v4 conventions and enforce style checks with OxLint + OxFmt (no ESLint).",
         "confidence": 0.96
       },
       {
-        "ruleId": "cand_6f8ab5dcca45",
-        "statement": "Validate integrations in realistic conditions before marking work complete.",
+        "ruleId": "cand_ee09999062fb",
+        "statement": "Track benchmark deltas and enforce regression gates in CI.",
         "confidence": 0.96
       }
     ],
@@ -127,7 +127,7 @@
       }
     ],
     "doctorStatus": {
-      "events": 6140,
+      "events": 6144,
       "rules": 15,
       "feedback": 8,
       "outcomes": 0,
