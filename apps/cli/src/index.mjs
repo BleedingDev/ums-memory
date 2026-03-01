@@ -157,7 +157,11 @@ async function main(argv = process.argv.slice(2)) {
   return 0;
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+const isMainModule =
+  (typeof import.meta.main === "boolean" && import.meta.main) ||
+  import.meta.url === `file://${process.argv[1]}`;
+
+if (isMainModule) {
   main().then(
     (code) => {
       process.exitCode = code;

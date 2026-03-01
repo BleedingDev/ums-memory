@@ -6,7 +6,11 @@
   "scripts": {
     "api": "node apps/api/src/server.mjs",
     "cli": "node apps/cli/src/index.mjs",
+    "build:sfe:cli": "mkdir -p dist && bun build --compile --minify --sourcemap --bytecode apps/cli/src/index.mjs --outfile dist/ums-cli",
+    "build:sfe:api": "mkdir -p dist && bun build --compile --minify --sourcemap --bytecode apps/api/src/server.mjs --outfile dist/ums-api",
+    "build:sfe": "npm run build:sfe:cli && npm run build:sfe:api",
     "test:api": "node --test apps/api/test/*.test.mjs apps/cli/test/*.test.mjs",
+    "test:sfe": "node --test apps/cli/test/cli.sfe.test.mjs apps/api/test/server.sfe.test.mjs",
     "test:ums": "UMS_IMPL_MODULE=./apps/api/src/ums/engine.mjs UMS_IMPL_EXPORT=createUmsEngine node --test tests/unit/*.test.mjs tests/integration/*.test.mjs",
     "test": "npm run test:api && npm run test:ums",
     "bench:api": "node apps/api/bench/benchmark.mjs",

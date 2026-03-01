@@ -151,18 +151,32 @@ export function startApiServer({
   const server = createApiServer();
   return new Promise((resolve) => {
     server.listen(port, host, () => {
+      const address = server.address();
+      const resolvedPort =
+        address && typeof address === "object" && typeof address.port === "number"
+          ? address.port
+          : port;
       resolve({
         server,
         host,
-        port
+        port: resolvedPort
       });
     });
   });
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+const isMainModule =
+  (typeof import.meta.main === "boolean" && import.meta.main) ||
+  import.meta.url === `file://${process.argv[1]}`;
+
+// Bun-compiled executables can be more aggressive with GC; keep a strong
+// process-lifetime reference so the listener stays active.
+let activeServerHandle = null;
+
+if (isMainModule) {
   startApiServer()
-    .then(({ host, port }) => {
+    .then(({ server, host, port }) => {
+      activeServerHandle = server;
       process.stdout.write(`UMS API listening on http://${host}:${port}\n`);
     })
     .catch((error) => {
