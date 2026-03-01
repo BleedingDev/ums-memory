@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import { Effect } from "effect";
 
@@ -16,8 +17,12 @@ import {
   type StorageServiceError,
 } from "../../errors.js";
 import {
+  type EnterpriseEvidenceRelationKind,
+  type EnterpriseEvidenceSourceKind,
   type EnterpriseMemoryKind,
   type EnterpriseMemoryStatus,
+  enterpriseEvidenceRelationKinds,
+  enterpriseEvidenceSourceKinds,
   enterpriseMemoryKinds,
   enterpriseMemoryStatuses,
 } from "./enterprise-schema.js";
@@ -28,6 +33,8 @@ const tenantUpdatedAtMillis = 0;
 
 const memoryKindSet: ReadonlySet<string> = new Set(enterpriseMemoryKinds);
 const memoryStatusSet: ReadonlySet<string> = new Set(enterpriseMemoryStatuses);
+const evidenceSourceKindSet: ReadonlySet<string> = new Set(enterpriseEvidenceSourceKinds);
+const evidenceRelationKindSet: ReadonlySet<string> = new Set(enterpriseEvidenceRelationKinds);
 const sqliteForeignKeysModeByConnection = new WeakMap<DatabaseSync, boolean>();
 
 type CanonicalJsonValue =
@@ -76,6 +83,19 @@ interface StoragePayloadProjection {
   readonly updatedAtMillis: number;
   readonly expiresAtMillis: number | null;
   readonly tombstonedAtMillis: number | null;
+  readonly provenanceJson: string | null;
+  readonly evidencePointers: readonly EvidencePointerProjection[];
+}
+
+interface EvidencePointerProjection {
+  readonly proposedEvidenceId: string;
+  readonly sourceKind: EnterpriseEvidenceSourceKind;
+  readonly sourceRef: string;
+  readonly digestSha256: string;
+  readonly payloadJson: string;
+  readonly observedAtMillis: number;
+  readonly createdAtMillis: number;
+  readonly relationKind: EnterpriseEvidenceRelationKind;
 }
 
 export interface SqliteStorageRepositoryOptions {
@@ -237,6 +257,370 @@ const parseOptionalEnum = <Value extends string>(
   }
 
   return value as Value;
+};
+
+const compareStringsAscending = (left: string, right: string): number => {
+  if (left < right) {
+    return -1;
+  }
+  if (left > right) {
+    return 1;
+  }
+  return 0;
+};
+
+const parseOptionalTrimmedStringArray = (
+  payload: DomainRecord,
+  keys: readonly string[],
+  label: string,
+): readonly string[] | undefined => {
+  const value = readRecordValue(payload, keys);
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!Array.isArray(value)) {
+    throw new StoragePayloadValidationFailure(`${label} must be an array of non-empty strings.`);
+  }
+
+  const normalized = value.map((entry, index) => {
+    if (typeof entry !== "string") {
+      throw new StoragePayloadValidationFailure(
+        `${label}[${index}] must be a non-empty string value.`,
+      );
+    }
+    const trimmed = entry.trim();
+    if (trimmed.length === 0) {
+      throw new StoragePayloadValidationFailure(
+        `${label}[${index}] must be a non-empty string value.`,
+      );
+    }
+    return trimmed;
+  });
+
+  return Object.freeze(
+    [...new Set(normalized)].sort((left, right) => compareStringsAscending(left, right)),
+  );
+};
+
+const toSha256Hex = (value: string): string => createHash("sha256").update(value).digest("hex");
+
+const toCanonicalJsonString = (value: DomainValue, path: string): string =>
+  JSON.stringify(normalizeDomainValue(value, path));
+
+const readPayloadMetadataRecord = (payload: DomainRecord): DomainRecord | undefined => {
+  const metadataValue = readRecordValue(payload, ["metadata"]);
+  if (metadataValue === undefined) {
+    return undefined;
+  }
+
+  return isDomainRecord(metadataValue) ? metadataValue : undefined;
+};
+
+const readPayloadProvenanceValue = (payload: DomainRecord): DomainValue | undefined => {
+  const rootValue = readRecordValue(payload, [
+    "provenance",
+    "provenanceMetadata",
+    "provenance_metadata",
+  ]);
+  if (rootValue !== undefined) {
+    return rootValue;
+  }
+
+  const metadataRecord = readPayloadMetadataRecord(payload);
+  if (metadataRecord === undefined) {
+    return undefined;
+  }
+
+  return readRecordValue(metadataRecord, [
+    "provenance",
+    "provenanceMetadata",
+    "provenance_metadata",
+  ]);
+};
+
+const parseIncomingProvenanceJson = (payload: DomainRecord): string | null => {
+  const provenanceValue = readPayloadProvenanceValue(payload);
+  if (provenanceValue === undefined || provenanceValue === null) {
+    return null;
+  }
+  if (!isDomainRecord(provenanceValue)) {
+    throw new StoragePayloadValidationFailure(
+      "payload.provenance must be a plain object record when provided.",
+    );
+  }
+
+  return toCanonicalJsonString(provenanceValue, "payload.provenance");
+};
+
+const readPayloadEvidencePointersValue = (payload: DomainRecord): DomainValue | undefined => {
+  const rootValue = readRecordValue(payload, ["evidencePointers", "evidence_pointers"]);
+  if (rootValue !== undefined) {
+    return rootValue;
+  }
+
+  const metadataRecord = readPayloadMetadataRecord(payload);
+  if (metadataRecord === undefined) {
+    return undefined;
+  }
+
+  return readRecordValue(metadataRecord, ["evidencePointers", "evidence_pointers"]);
+};
+
+const createEvidencePointerFromReferenceId = (
+  sourceId: string,
+  relationKind: EnterpriseEvidenceRelationKind,
+  observedAtMillis: number,
+  createdAtMillis: number,
+): EvidencePointerProjection => {
+  const sourceKind: EnterpriseEvidenceSourceKind = "event";
+  const sourceRef = `event://${sourceId}`;
+  const payloadJson = "{}";
+  const digestSha256 = toSha256Hex(`${sourceKind}\n${sourceRef}\n${payloadJson}`);
+  const proposedEvidenceId = `evidence:${toSha256Hex(`${sourceKind}\n${sourceRef}\n${digestSha256}`)}`;
+
+  return Object.freeze({
+    proposedEvidenceId,
+    sourceKind,
+    sourceRef,
+    digestSha256,
+    payloadJson,
+    observedAtMillis,
+    createdAtMillis,
+    relationKind,
+  });
+};
+
+const parseEvidencePointerRecord = (
+  pointerRecord: DomainRecord,
+  label: string,
+  fallbackObservedAtMillis: number,
+  fallbackCreatedAtMillis: number,
+): EvidencePointerProjection => {
+  const eventOrEpisodeId =
+    parseOptionalTrimmedString(
+      pointerRecord,
+      ["eventId", "event_id", "episodeId", "episode_id"],
+      `${label}.eventId`,
+    ) ?? null;
+  const sourceRefCandidate =
+    parseOptionalTrimmedString(
+      pointerRecord,
+      ["sourceRef", "source_ref", "reference", "ref"],
+      `${label}.sourceRef`,
+    ) ?? null;
+  const sourceRef =
+    sourceRefCandidate ?? (eventOrEpisodeId === null ? null : `event://${eventOrEpisodeId}`);
+  if (sourceRef === null) {
+    throw new StoragePayloadValidationFailure(
+      `${label} must define sourceRef or eventId/episodeId.`,
+    );
+  }
+
+  const sourceKind =
+    parseOptionalEnum<EnterpriseEvidenceSourceKind>(
+      pointerRecord,
+      ["sourceKind", "source_kind"],
+      evidenceSourceKindSet,
+      `${label}.sourceKind`,
+    ) ?? "event";
+  const relationKind =
+    parseOptionalEnum<EnterpriseEvidenceRelationKind>(
+      pointerRecord,
+      ["relationKind", "relation_kind"],
+      evidenceRelationKindSet,
+      `${label}.relationKind`,
+    ) ?? "supports";
+
+  const evidencePayloadValue = readRecordValue(pointerRecord, [
+    "payload",
+    "payload_json",
+    "metadata",
+  ]);
+  const payloadJson =
+    evidencePayloadValue === undefined
+      ? "{}"
+      : toCanonicalJsonString(evidencePayloadValue, `${label}.payload`);
+
+  const rawDigest =
+    parseOptionalTrimmedString(
+      pointerRecord,
+      ["digestSha256", "digest_sha256", "digest", "sha256"],
+      `${label}.digestSha256`,
+    ) ?? null;
+  const digestSha256 =
+    rawDigest === null
+      ? toSha256Hex(`${sourceKind}\n${sourceRef}\n${payloadJson}`)
+      : rawDigest.toLowerCase();
+  if (!/^[0-9a-f]{64}$/.test(digestSha256)) {
+    throw new StoragePayloadValidationFailure(
+      `${label}.digestSha256 must be a 64-character hexadecimal sha256 digest.`,
+    );
+  }
+
+  const observedAtMillis =
+    parseOptionalNonNegativeSafeInteger(
+      pointerRecord,
+      ["observedAtMillis", "observed_at_ms", "occurredAtMillis", "occurred_at_ms"],
+      `${label}.observedAtMillis`,
+    ) ?? fallbackObservedAtMillis;
+  const createdAtMillisInput = parseOptionalNonNegativeSafeInteger(
+    pointerRecord,
+    ["createdAtMillis", "created_at_ms"],
+    `${label}.createdAtMillis`,
+  );
+  const createdAtMillis = Math.max(
+    createdAtMillisInput ?? fallbackCreatedAtMillis,
+    observedAtMillis,
+  );
+
+  const proposedEvidenceId =
+    parseOptionalTrimmedString(
+      pointerRecord,
+      ["evidenceId", "evidence_id"],
+      `${label}.evidenceId`,
+    ) ?? `evidence:${toSha256Hex(`${sourceKind}\n${sourceRef}\n${digestSha256}`)}`;
+
+  return Object.freeze({
+    proposedEvidenceId,
+    sourceKind,
+    sourceRef,
+    digestSha256,
+    payloadJson,
+    observedAtMillis,
+    createdAtMillis,
+    relationKind,
+  });
+};
+
+const compareEvidencePointers = (
+  left: EvidencePointerProjection,
+  right: EvidencePointerProjection,
+): number => {
+  const bySourceKind = compareStringsAscending(left.sourceKind, right.sourceKind);
+  if (bySourceKind !== 0) {
+    return bySourceKind;
+  }
+  const bySourceRef = compareStringsAscending(left.sourceRef, right.sourceRef);
+  if (bySourceRef !== 0) {
+    return bySourceRef;
+  }
+  const byDigest = compareStringsAscending(left.digestSha256, right.digestSha256);
+  if (byDigest !== 0) {
+    return byDigest;
+  }
+  const byRelation = compareStringsAscending(left.relationKind, right.relationKind);
+  if (byRelation !== 0) {
+    return byRelation;
+  }
+  const byEvidenceId = compareStringsAscending(left.proposedEvidenceId, right.proposedEvidenceId);
+  if (byEvidenceId !== 0) {
+    return byEvidenceId;
+  }
+  if (left.observedAtMillis !== right.observedAtMillis) {
+    return left.observedAtMillis - right.observedAtMillis;
+  }
+  if (left.createdAtMillis !== right.createdAtMillis) {
+    return left.createdAtMillis - right.createdAtMillis;
+  }
+  return compareStringsAscending(left.payloadJson, right.payloadJson);
+};
+
+const parseEvidencePointerProjections = (
+  payload: DomainRecord,
+  fallbackObservedAtMillis: number,
+  fallbackCreatedAtMillis: number,
+): readonly EvidencePointerProjection[] => {
+  const explicitPointersValue = readPayloadEvidencePointersValue(payload);
+  const pointers: EvidencePointerProjection[] = [];
+
+  if (explicitPointersValue !== undefined) {
+    if (!Array.isArray(explicitPointersValue)) {
+      throw new StoragePayloadValidationFailure(
+        "payload.evidencePointers must be an array of evidence pointer objects.",
+      );
+    }
+    for (const [index, pointerValue] of explicitPointersValue.entries()) {
+      if (!isDomainRecord(pointerValue)) {
+        throw new StoragePayloadValidationFailure(
+          `payload.evidencePointers[${index}] must be a plain object record.`,
+        );
+      }
+      pointers.push(
+        parseEvidencePointerRecord(
+          pointerValue,
+          `payload.evidencePointers[${index}]`,
+          fallbackObservedAtMillis,
+          fallbackCreatedAtMillis,
+        ),
+      );
+    }
+  }
+
+  const evidenceEventIds =
+    parseOptionalTrimmedStringArray(
+      payload,
+      ["evidenceEventIds", "evidence_event_ids"],
+      "payload.evidenceEventIds",
+    ) ?? [];
+  const evidenceEpisodeIds =
+    parseOptionalTrimmedStringArray(
+      payload,
+      ["evidenceEpisodeIds", "evidence_episode_ids"],
+      "payload.evidenceEpisodeIds",
+    ) ?? [];
+  const allSourceIds = [...new Set([...evidenceEventIds, ...evidenceEpisodeIds])].sort(
+    (left, right) => compareStringsAscending(left, right),
+  );
+  for (const sourceId of allSourceIds) {
+    pointers.push(
+      createEvidencePointerFromReferenceId(
+        sourceId,
+        "supports",
+        fallbackObservedAtMillis,
+        fallbackCreatedAtMillis,
+      ),
+    );
+  }
+
+  const sortedPointers = [...pointers].sort((left, right) => compareEvidencePointers(left, right));
+  const deduplicatedPointers: EvidencePointerProjection[] = [];
+  const relationKindByNaturalKey = new Map<string, EnterpriseEvidenceRelationKind>();
+  for (const pointer of sortedPointers) {
+    const naturalKey = `${pointer.sourceKind}\u0000${pointer.sourceRef}\u0000${pointer.digestSha256}`;
+    const existingRelationKind = relationKindByNaturalKey.get(naturalKey);
+    if (existingRelationKind !== undefined) {
+      if (existingRelationKind !== pointer.relationKind) {
+        throw new StoragePayloadValidationFailure(
+          "Each evidence pointer must use a single relationKind per deterministic evidence key.",
+        );
+      }
+      continue;
+    }
+    relationKindByNaturalKey.set(naturalKey, pointer.relationKind);
+    deduplicatedPointers.push(pointer);
+  }
+
+  return Object.freeze(deduplicatedPointers);
+};
+
+const readPersistedProvenanceJsonFromPayloadJson = (payloadJson: string): string | null => {
+  let parsedPayload: unknown;
+  try {
+    parsedPayload = JSON.parse(payloadJson);
+  } catch (cause) {
+    const details = cause instanceof Error ? cause.message : String(cause);
+    throw new Error(`Persisted memory payload_json is not valid JSON: ${details}`);
+  }
+  if (!isDomainRecord(parsedPayload)) {
+    return null;
+  }
+
+  const provenanceValue = readPayloadProvenanceValue(parsedPayload);
+  if (provenanceValue === undefined || provenanceValue === null) {
+    return null;
+  }
+
+  return toCanonicalJsonString(provenanceValue, "persistedPayload.provenance");
 };
 
 const isDomainRecord = (value: unknown): value is DomainRecord => {
@@ -536,6 +920,17 @@ const parsePayloadProjection = (request: StorageUpsertRequest): StoragePayloadPr
       ["supersedesMemoryId", "supersedes_memory_id"],
       "payload.supersedesMemoryId",
     ) ?? null;
+  const provenanceJson = parseIncomingProvenanceJson(payload);
+  const evidencePointers = parseEvidencePointerProjections(
+    payload,
+    normalizedUpdatedAtMillis,
+    normalizedCreatedAtMillis,
+  );
+  if (request.layer === "procedural" && evidencePointers.length === 0) {
+    throw new StoragePayloadValidationFailure(
+      "Promoted procedural memory requires at least one evidence pointer.",
+    );
+  }
 
   return Object.freeze({
     scopeId: scopeControl.scopeId,
@@ -552,6 +947,8 @@ const parsePayloadProjection = (request: StorageUpsertRequest): StoragePayloadPr
     updatedAtMillis: normalizedUpdatedAtMillis,
     expiresAtMillis: normalizedExpiresAtMillis,
     tombstonedAtMillis: normalizedTombstonedAtMillis,
+    provenanceJson,
+    evidencePointers,
   });
 };
 
@@ -755,11 +1152,26 @@ export const makeSqliteStorageRepository = (
   const selectPersistedMemoryStatement = database.prepare(
     "SELECT updated_at_ms FROM memory_items WHERE tenant_id = ? AND memory_id = ?;",
   );
+  const selectExistingMemoryLayerAndPayloadStatement = database.prepare(
+    "SELECT memory_layer, payload_json FROM memory_items WHERE tenant_id = ? AND memory_id = ? LIMIT 1;",
+  );
   const selectTenantMemoryStatement = database.prepare(
     "SELECT memory_id FROM memory_items WHERE tenant_id = ? AND memory_id = ? LIMIT 1;",
   );
   const selectForeignMemoryOwnerStatement = database.prepare(
     "SELECT tenant_id FROM memory_items WHERE memory_id = ? AND tenant_id <> ? ORDER BY tenant_id ASC LIMIT 1;",
+  );
+  const insertEvidenceStatement = database.prepare(
+    "INSERT OR IGNORE INTO evidence (tenant_id, evidence_id, source_kind, source_ref, digest_sha256, payload_json, observed_at_ms, created_at_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?);",
+  );
+  const selectEvidenceIdByNaturalKeyStatement = database.prepare(
+    "SELECT evidence_id FROM evidence WHERE tenant_id = ? AND source_kind = ? AND source_ref = ? AND digest_sha256 = ? LIMIT 1;",
+  );
+  const insertMemoryEvidenceLinkStatement = database.prepare(
+    "INSERT OR IGNORE INTO memory_evidence_links (tenant_id, memory_id, evidence_id, relation_kind, created_at_ms) VALUES (?, ?, ?, ?, ?);",
+  );
+  const deleteMemoryEvidenceLinksStatement = database.prepare(
+    "DELETE FROM memory_evidence_links WHERE tenant_id = ? AND memory_id = ?;",
   );
   const deleteMemoryStatement = database.prepare(
     "DELETE FROM memory_items WHERE tenant_id = ? AND memory_id = ?;",
@@ -783,6 +1195,22 @@ export const makeSqliteStorageRepository = (
     }
 
     return scopeId;
+  };
+  const readResolvedMemoryLayer = (memoryRow: unknown, errorPrefix: string): string => {
+    const memoryLayer = readRowColumn(memoryRow, "memory_layer");
+    if (typeof memoryLayer !== "string" || memoryLayer.trim().length === 0) {
+      throw new Error(`${errorPrefix} memory_layer is not a valid string.`);
+    }
+
+    return memoryLayer;
+  };
+  const readResolvedEvidenceId = (evidenceRow: unknown, errorPrefix: string): string => {
+    const evidenceId = readRowColumn(evidenceRow, "evidence_id");
+    if (typeof evidenceId !== "string" || evidenceId.trim().length === 0) {
+      throw new Error(`${errorPrefix} evidence_id is not a valid string.`);
+    }
+
+    return evidenceId;
   };
   const emitTenantIsolationViolation = options.onTenantIsolationViolation;
   const readOwnerTenantId = (foreignOwnerRow: unknown): string => {
@@ -994,6 +1422,32 @@ export const makeSqliteStorageRepository = (
           withImmediateTransaction(database, () => {
             assertExpectedForeignKeysMode();
             const payloadProjection = parsePayloadProjection(request);
+            const existingMemoryRow = selectExistingMemoryLayerAndPayloadStatement.get(
+              request.spaceId,
+              request.memoryId,
+            );
+            if (existingMemoryRow !== undefined) {
+              const existingMemoryLayer = readResolvedMemoryLayer(
+                existingMemoryRow,
+                "Existing memory",
+              );
+              if (existingMemoryLayer === "procedural") {
+                const existingPayloadJson = readRowColumn(existingMemoryRow, "payload_json");
+                if (typeof existingPayloadJson !== "string") {
+                  throw new Error("Existing memory payload_json is not a valid string.");
+                }
+                const existingProvenanceJson =
+                  readPersistedProvenanceJsonFromPayloadJson(existingPayloadJson);
+                if (
+                  existingProvenanceJson !== null &&
+                  existingProvenanceJson !== payloadProjection.provenanceJson
+                ) {
+                  throw new StoragePayloadValidationFailure(
+                    "Promoted memory provenance metadata is immutable once memory is procedural.",
+                  );
+                }
+              }
+            }
 
             ensureTenantStatement.run(
               request.spaceId,
@@ -1101,7 +1555,7 @@ export const makeSqliteStorageRepository = (
               }
             }
 
-            upsertMemoryStatement.run(
+            const upsertMemoryResult = upsertMemoryStatement.run(
               request.spaceId,
               request.memoryId,
               resolvedScopeId,
@@ -1117,6 +1571,49 @@ export const makeSqliteStorageRepository = (
               payloadProjection.expiresAtMillis,
               payloadProjection.tombstonedAtMillis,
             );
+            const upsertChanges = toNonNegativeSafeInteger(
+              readRowColumn(upsertMemoryResult, "changes"),
+              "memory_items.upsert.changes",
+            );
+            if (upsertChanges > 0) {
+              deleteMemoryEvidenceLinksStatement.run(request.spaceId, request.memoryId);
+              if (request.layer === "procedural") {
+                for (const evidencePointer of payloadProjection.evidencePointers) {
+                  insertEvidenceStatement.run(
+                    request.spaceId,
+                    evidencePointer.proposedEvidenceId,
+                    evidencePointer.sourceKind,
+                    evidencePointer.sourceRef,
+                    evidencePointer.digestSha256,
+                    evidencePointer.payloadJson,
+                    evidencePointer.observedAtMillis,
+                    evidencePointer.createdAtMillis,
+                  );
+                  const persistedEvidenceRow = selectEvidenceIdByNaturalKeyStatement.get(
+                    request.spaceId,
+                    evidencePointer.sourceKind,
+                    evidencePointer.sourceRef,
+                    evidencePointer.digestSha256,
+                  );
+                  if (persistedEvidenceRow === undefined) {
+                    throw new Error(
+                      "Unable to resolve evidence_id after deterministic evidence upsert.",
+                    );
+                  }
+                  const persistedEvidenceId = readResolvedEvidenceId(
+                    persistedEvidenceRow,
+                    "Persisted evidence",
+                  );
+                  insertMemoryEvidenceLinkStatement.run(
+                    request.spaceId,
+                    request.memoryId,
+                    persistedEvidenceId,
+                    evidencePointer.relationKind,
+                    payloadProjection.updatedAtMillis,
+                  );
+                }
+              }
+            }
 
             const persistedRow = selectPersistedMemoryStatement.get(
               request.spaceId,

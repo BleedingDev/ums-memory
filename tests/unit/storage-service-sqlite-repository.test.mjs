@@ -120,6 +120,560 @@ const seedScopeLatticeAnchors = (
   }
 };
 
+test("ums-memory-5cb.7: promoted procedural memory without evidence pointers is rejected", async () => {
+  const storageServiceModule = await loadStorageServiceModule();
+  const db = new DatabaseSync(":memory:");
+
+  try {
+    const storageService = storageServiceModule.makeSqliteStorageService(db);
+    const upsertEither = Effect.runSync(
+      Effect.either(
+        storageService.upsertMemory({
+          spaceId: "tenant-promoted-evidence-required",
+          memoryId: "memory-procedural-without-evidence",
+          layer: "procedural",
+          payload: {
+            title: "Promoted memory missing evidence",
+            provenance: {
+              source: "shadow-replay",
+              decisionId: "decision-required",
+            },
+            updatedAtMillis: 1_700_000_010_001,
+          },
+        }),
+      ),
+    );
+    const upsertFailure = unwrapFailure(upsertEither);
+
+    assert.equal(upsertFailure._tag, "ContractValidationError");
+    assert.equal(upsertFailure.contract, "StorageUpsertRequest.payload");
+    assert.match(upsertFailure.details, /requires at least one evidence pointer/i);
+
+    const evidenceRowCount = db
+      .prepare("SELECT COUNT(*) AS row_count FROM evidence WHERE tenant_id = ?;")
+      .get("tenant-promoted-evidence-required");
+    assert.equal(Number(evidenceRowCount.row_count), 0);
+  } finally {
+    db.close();
+  }
+});
+
+test("ums-memory-5cb.7: promoted procedural memory rejects conflicting relation kinds for the same deterministic evidence pointer", async () => {
+  const storageServiceModule = await loadStorageServiceModule();
+  const db = new DatabaseSync(":memory:");
+
+  try {
+    const storageService = storageServiceModule.makeSqliteStorageService(db);
+    const upsertEither = Effect.runSync(
+      Effect.either(
+        storageService.upsertMemory({
+          spaceId: "tenant-promoted-evidence-conflict",
+          memoryId: "memory-procedural-evidence-conflict",
+          layer: "procedural",
+          payload: {
+            title: "Promoted memory with conflicting evidence relation kinds",
+            provenance: {
+              source: "shadow-replay",
+              decisionId: "decision-conflict",
+            },
+            evidencePointers: [
+              {
+                sourceKind: "event",
+                sourceRef: "event://evt-conflict",
+                digestSha256: "0".repeat(64),
+                relationKind: "supports",
+              },
+              {
+                sourceKind: "event",
+                sourceRef: "event://evt-conflict",
+                digestSha256: "0".repeat(64),
+                relationKind: "contradicts",
+              },
+            ],
+            updatedAtMillis: 1_700_000_011_001,
+          },
+        }),
+      ),
+    );
+    const upsertFailure = unwrapFailure(upsertEither);
+
+    assert.equal(upsertFailure._tag, "ContractValidationError");
+    assert.equal(upsertFailure.contract, "StorageUpsertRequest.payload");
+    assert.match(upsertFailure.details, /single relationKind per deterministic evidence key/i);
+  } finally {
+    db.close();
+  }
+});
+
+test("ums-memory-5cb.7: promoted procedural memory writes evidence and memory_evidence_links idempotently", async () => {
+  const storageServiceModule = await loadStorageServiceModule();
+  const db = new DatabaseSync(":memory:");
+
+  try {
+    const storageService = storageServiceModule.makeSqliteStorageService(db);
+    const upsertRequest = {
+      spaceId: "tenant-promoted-evidence-links",
+      memoryId: "memory-procedural-evidence-links",
+      layer: "procedural",
+      payload: {
+        title: "Procedural memory with deterministic evidence links",
+        provenance: {
+          source: "shadow-replay",
+          decisionId: "decision-evidence-links",
+        },
+        evidencePointers: [
+          {
+            sourceKind: "event",
+            sourceRef: "event://evt-b",
+            digestSha256: "b".repeat(64),
+            relationKind: "supports",
+            observedAtMillis: 1_700_000_020_010,
+            payload: {
+              eventId: "evt-b",
+            },
+          },
+          {
+            sourceKind: "event",
+            sourceRef: "event://evt-a",
+            digestSha256: "a".repeat(64),
+            relationKind: "supports",
+            observedAtMillis: 1_700_000_020_000,
+            payload: {
+              eventId: "evt-a",
+            },
+          },
+          {
+            sourceKind: "event",
+            sourceRef: "event://evt-b",
+            digestSha256: "b".repeat(64),
+            relationKind: "supports",
+            observedAtMillis: 1_700_000_020_010,
+            payload: {
+              eventId: "evt-b",
+            },
+          },
+        ],
+        updatedAtMillis: 1_700_000_020_100,
+      },
+    };
+
+    const firstResponse = Effect.runSync(storageService.upsertMemory(upsertRequest));
+    const secondReplayResponse = Effect.runSync(storageService.upsertMemory(upsertRequest));
+
+    assert.equal(firstResponse.accepted, true);
+    assert.equal(secondReplayResponse.accepted, true);
+
+    const evidenceRows = db
+      .prepare(
+        [
+          "SELECT source_kind, source_ref, digest_sha256, payload_json",
+          "FROM evidence",
+          "WHERE tenant_id = ?",
+          "ORDER BY source_kind ASC, source_ref ASC, digest_sha256 ASC;",
+        ].join("\n"),
+      )
+      .all("tenant-promoted-evidence-links");
+    assert.equal(evidenceRows.length, 2);
+    assert.deepEqual(
+      evidenceRows.map((row) => row.source_ref),
+      ["event://evt-a", "event://evt-b"],
+    );
+    assert.deepEqual(
+      evidenceRows.map((row) => row.digest_sha256),
+      ["a".repeat(64), "b".repeat(64)],
+    );
+
+    const linkRows = db
+      .prepare(
+        [
+          "SELECT memory_id, evidence_id, relation_kind",
+          "FROM memory_evidence_links",
+          "WHERE tenant_id = ?",
+          "ORDER BY memory_id ASC, evidence_id ASC;",
+        ].join("\n"),
+      )
+      .all("tenant-promoted-evidence-links");
+    assert.equal(linkRows.length, 2);
+    assert.ok(linkRows.every((row) => row.memory_id === "memory-procedural-evidence-links"));
+    assert.ok(linkRows.every((row) => row.relation_kind === "supports"));
+  } finally {
+    db.close();
+  }
+});
+
+test("ums-memory-5cb.7: promoted procedural memory merges explicit pointers with evidenceEventIds and evidenceEpisodeIds deterministically", async () => {
+  const storageServiceModule = await loadStorageServiceModule();
+  const db = new DatabaseSync(":memory:");
+
+  try {
+    const storageService = storageServiceModule.makeSqliteStorageService(db);
+    const updatedAtMillis = 1_700_000_024_200;
+    Effect.runSync(
+      storageService.upsertMemory({
+        spaceId: "tenant-promoted-evidence-fallbacks",
+        memoryId: "memory-procedural-evidence-fallbacks",
+        layer: "procedural",
+        payload: {
+          title: "Procedural memory with explicit and inferred evidence pointers",
+          provenance: {
+            source: "shadow-replay",
+            decisionId: "decision-fallbacks",
+          },
+          evidencePointers: [
+            {
+              sourceKind: "event",
+              sourceRef: "event://evt-explicit",
+              digestSha256: "1".repeat(64),
+              relationKind: "supersedes",
+            },
+          ],
+          evidenceEventIds: ["evt-generated"],
+          evidenceEpisodeIds: ["evt-episode"],
+          updatedAtMillis,
+        },
+      }),
+    );
+
+    const joinedRows = db
+      .prepare(
+        [
+          "SELECT e.source_ref, e.observed_at_ms, e.created_at_ms, l.relation_kind",
+          "FROM evidence e",
+          "INNER JOIN memory_evidence_links l ON l.tenant_id = e.tenant_id AND l.evidence_id = e.evidence_id",
+          "WHERE e.tenant_id = ? AND l.memory_id = ?",
+          "ORDER BY e.source_ref ASC;",
+        ].join("\n"),
+      )
+      .all("tenant-promoted-evidence-fallbacks", "memory-procedural-evidence-fallbacks");
+
+    assert.equal(joinedRows.length, 3);
+    assert.deepEqual(
+      joinedRows.map((row) => row.source_ref),
+      ["event://evt-episode", "event://evt-explicit", "event://evt-generated"],
+    );
+    assert.deepEqual(
+      joinedRows.map((row) => row.relation_kind),
+      ["supports", "supersedes", "supports"],
+    );
+    assert.ok(
+      joinedRows.every(
+        (row) => Number(row.observed_at_ms) === updatedAtMillis && Number(row.created_at_ms) === updatedAtMillis,
+      ),
+    );
+  } finally {
+    db.close();
+  }
+});
+
+test("ums-memory-5cb.7: promoted procedural memory reconciles evidence links on pointer removal or relation updates", async () => {
+  const storageServiceModule = await loadStorageServiceModule();
+  const db = new DatabaseSync(":memory:");
+
+  try {
+    const storageService = storageServiceModule.makeSqliteStorageService(db);
+    Effect.runSync(
+      storageService.upsertMemory({
+        spaceId: "tenant-promoted-evidence-reconcile",
+        memoryId: "memory-procedural-evidence-reconcile",
+        layer: "procedural",
+        payload: {
+          title: "Procedural memory with mutable pointer set",
+          provenance: {
+            source: "shadow-replay",
+            decisionId: "decision-reconcile",
+          },
+          evidencePointers: [
+            {
+              sourceKind: "event",
+              sourceRef: "event://evt-a",
+              digestSha256: "d".repeat(64),
+              relationKind: "supports",
+            },
+            {
+              sourceKind: "event",
+              sourceRef: "event://evt-b",
+              digestSha256: "e".repeat(64),
+              relationKind: "contradicts",
+            },
+          ],
+          updatedAtMillis: 1_700_000_025_100,
+        },
+      }),
+    );
+
+    Effect.runSync(
+      storageService.upsertMemory({
+        spaceId: "tenant-promoted-evidence-reconcile",
+        memoryId: "memory-procedural-evidence-reconcile",
+        layer: "procedural",
+        payload: {
+          title: "Procedural memory after evidence reconciliation",
+          provenance: {
+            source: "shadow-replay",
+            decisionId: "decision-reconcile",
+          },
+          evidencePointers: [
+            {
+              sourceKind: "event",
+              sourceRef: "event://evt-a",
+              digestSha256: "d".repeat(64),
+              relationKind: "supersedes",
+            },
+          ],
+          updatedAtMillis: 1_700_000_025_200,
+        },
+      }),
+    );
+
+    const linkRows = db
+      .prepare(
+        [
+          "SELECT e.source_ref, l.relation_kind",
+          "FROM memory_evidence_links l",
+          "INNER JOIN evidence e ON e.tenant_id = l.tenant_id AND e.evidence_id = l.evidence_id",
+          "WHERE l.tenant_id = ? AND l.memory_id = ?",
+          "ORDER BY e.source_ref ASC;",
+        ].join("\n"),
+      )
+      .all("tenant-promoted-evidence-reconcile", "memory-procedural-evidence-reconcile");
+    const normalizedLinkRows = linkRows.map((row) => ({
+      source_ref: row.source_ref,
+      relation_kind: row.relation_kind,
+    }));
+    assert.deepEqual(normalizedLinkRows, [
+      {
+        source_ref: "event://evt-a",
+        relation_kind: "supersedes",
+      },
+    ]);
+  } finally {
+    db.close();
+  }
+});
+
+test("ums-memory-5cb.7: stale procedural replay does not rewrite evidence links when memory upsert is ignored", async () => {
+  const storageServiceModule = await loadStorageServiceModule();
+  const db = new DatabaseSync(":memory:");
+
+  try {
+    const storageService = storageServiceModule.makeSqliteStorageService(db);
+    const latestUpdatedAtMillis = 1_700_000_026_200;
+    const staleUpdatedAtMillis = 1_700_000_026_100;
+
+    const latestResponse = Effect.runSync(
+      storageService.upsertMemory({
+        spaceId: "tenant-promoted-evidence-stale-replay",
+        memoryId: "memory-procedural-evidence-stale-replay",
+        layer: "procedural",
+        payload: {
+          title: "Procedural memory latest pointer set",
+          provenance: {
+            source: "shadow-replay",
+            decisionId: "decision-stale-replay",
+          },
+          evidencePointers: [
+            {
+              sourceKind: "event",
+              sourceRef: "event://evt-latest",
+              digestSha256: "2".repeat(64),
+              relationKind: "supports",
+            },
+          ],
+          updatedAtMillis: latestUpdatedAtMillis,
+        },
+      }),
+    );
+
+    const staleReplayResponse = Effect.runSync(
+      storageService.upsertMemory({
+        spaceId: "tenant-promoted-evidence-stale-replay",
+        memoryId: "memory-procedural-evidence-stale-replay",
+        layer: "procedural",
+        payload: {
+          title: "Procedural memory stale pointer set",
+          provenance: {
+            source: "shadow-replay",
+            decisionId: "decision-stale-replay",
+          },
+          evidencePointers: [
+            {
+              sourceKind: "event",
+              sourceRef: "event://evt-stale",
+              digestSha256: "3".repeat(64),
+              relationKind: "contradicts",
+            },
+          ],
+          updatedAtMillis: staleUpdatedAtMillis,
+        },
+      }),
+    );
+
+    assert.equal(latestResponse.persistedAtMillis, latestUpdatedAtMillis);
+    assert.equal(staleReplayResponse.persistedAtMillis, latestUpdatedAtMillis);
+
+    const linkRows = db
+      .prepare(
+        [
+          "SELECT e.source_ref, l.relation_kind",
+          "FROM memory_evidence_links l",
+          "INNER JOIN evidence e ON e.tenant_id = l.tenant_id AND e.evidence_id = l.evidence_id",
+          "WHERE l.tenant_id = ? AND l.memory_id = ?",
+          "ORDER BY e.source_ref ASC;",
+        ].join("\n"),
+      )
+      .all(
+        "tenant-promoted-evidence-stale-replay",
+        "memory-procedural-evidence-stale-replay",
+      );
+    const normalizedLinkRows = linkRows.map((row) => ({
+      source_ref: row.source_ref,
+      relation_kind: row.relation_kind,
+    }));
+    assert.deepEqual(normalizedLinkRows, [
+      {
+        source_ref: "event://evt-latest",
+        relation_kind: "supports",
+      },
+    ]);
+  } finally {
+    db.close();
+  }
+});
+
+test("ums-memory-5cb.7: promoted procedural provenance metadata is immutable on replay/update", async () => {
+  const storageServiceModule = await loadStorageServiceModule();
+  const db = new DatabaseSync(":memory:");
+
+  try {
+    const storageService = storageServiceModule.makeSqliteStorageService(db);
+    Effect.runSync(
+      storageService.upsertMemory({
+        spaceId: "tenant-promoted-provenance-immutable",
+        memoryId: "memory-procedural-provenance-immutable",
+        layer: "procedural",
+        payload: {
+          title: "Procedural provenance baseline",
+          provenance: {
+            source: "shadow-replay",
+            decisionId: "decision-1",
+          },
+          evidencePointers: [
+            {
+              sourceKind: "event",
+              sourceRef: "event://evt-provenance",
+              digestSha256: "c".repeat(64),
+              relationKind: "supports",
+            },
+          ],
+          updatedAtMillis: 1_700_000_030_100,
+        },
+      }),
+    );
+
+    const upsertEither = Effect.runSync(
+      Effect.either(
+        storageService.upsertMemory({
+          spaceId: "tenant-promoted-provenance-immutable",
+          memoryId: "memory-procedural-provenance-immutable",
+          layer: "procedural",
+          payload: {
+            title: "Procedural provenance replay should fail",
+            provenance: {
+              source: "shadow-replay",
+              decisionId: "decision-2",
+            },
+            evidencePointers: [
+              {
+                sourceKind: "event",
+                sourceRef: "event://evt-provenance",
+                digestSha256: "c".repeat(64),
+                relationKind: "supports",
+              },
+            ],
+            updatedAtMillis: 1_700_000_030_200,
+          },
+        }),
+      ),
+    );
+    const upsertFailure = unwrapFailure(upsertEither);
+
+    assert.equal(upsertFailure._tag, "ContractValidationError");
+    assert.equal(upsertFailure.contract, "StorageUpsertRequest.payload");
+    assert.match(upsertFailure.details, /provenance metadata is immutable/i);
+
+    const persistedPayloadRow = db
+      .prepare("SELECT payload_json FROM memory_items WHERE tenant_id = ? AND memory_id = ?;")
+      .get("tenant-promoted-provenance-immutable", "memory-procedural-provenance-immutable");
+    assert.ok(persistedPayloadRow);
+    const persistedPayload = JSON.parse(persistedPayloadRow.payload_json);
+    assert.equal(persistedPayload.provenance.decisionId, "decision-1");
+  } finally {
+    db.close();
+  }
+});
+
+test("ums-memory-5cb.7: promoted procedural memory can set provenance metadata once when legacy payload has none", async () => {
+  const storageServiceModule = await loadStorageServiceModule();
+  const db = new DatabaseSync(":memory:");
+
+  try {
+    const storageService = storageServiceModule.makeSqliteStorageService(db);
+    Effect.runSync(
+      storageService.upsertMemory({
+        spaceId: "tenant-promoted-provenance-bootstrap",
+        memoryId: "memory-procedural-provenance-bootstrap",
+        layer: "procedural",
+        payload: {
+          title: "Legacy procedural memory without provenance",
+          evidencePointers: [
+            {
+              sourceKind: "event",
+              sourceRef: "event://evt-bootstrap",
+              digestSha256: "f".repeat(64),
+              relationKind: "supports",
+            },
+          ],
+          updatedAtMillis: 1_700_000_040_100,
+        },
+      }),
+    );
+
+    const replayResponse = Effect.runSync(
+      storageService.upsertMemory({
+        spaceId: "tenant-promoted-provenance-bootstrap",
+        memoryId: "memory-procedural-provenance-bootstrap",
+        layer: "procedural",
+        payload: {
+          title: "Procedural memory after provenance bootstrap",
+          provenance: {
+            source: "shadow-replay",
+            decisionId: "decision-bootstrap",
+          },
+          evidencePointers: [
+            {
+              sourceKind: "event",
+              sourceRef: "event://evt-bootstrap",
+              digestSha256: "f".repeat(64),
+              relationKind: "supports",
+            },
+          ],
+          updatedAtMillis: 1_700_000_040_200,
+        },
+      }),
+    );
+
+    assert.equal(replayResponse.accepted, true);
+    const persistedPayloadRow = db
+      .prepare("SELECT payload_json FROM memory_items WHERE tenant_id = ? AND memory_id = ?;")
+      .get("tenant-promoted-provenance-bootstrap", "memory-procedural-provenance-bootstrap");
+    assert.ok(persistedPayloadRow);
+    const persistedPayload = JSON.parse(persistedPayloadRow.payload_json);
+    assert.equal(persistedPayload.provenance.decisionId, "decision-bootstrap");
+  } finally {
+    db.close();
+  }
+});
+
 test("ums-memory-5cb.4: sqlite storage service resolves common/project/job_role/user scopes when scopeId is omitted", async () => {
   const storageServiceModule = await loadStorageServiceModule();
   const db = new DatabaseSync(":memory:");
