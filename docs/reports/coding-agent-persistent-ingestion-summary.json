@@ -1,27 +1,27 @@
 {
-  "generatedAt": "2026-03-01T10:25:04.128Z",
+  "generatedAt": "2026-03-01T10:32:38.691Z",
   "mode": "coding-agent-only-persistent",
   "stateFile": ".ums-state.json",
   "storeId": "coding-agent",
-  "profile": "agent-lessons-curated-v7",
+  "profile": "agent-lessons-curated-v8",
   "sources": {
-    "codexJsonlFiles": 6807,
+    "codexJsonlFiles": 6809,
     "claudeJsonlFiles": 199,
     "planEvents": 10
   },
   "events": {
-    "prepared": 6157,
-    "ingestedAccepted": 6136,
+    "prepared": 6161,
+    "ingestedAccepted": 6140,
     "ingestedDuplicates": 21,
     "chunks": 25
   },
   "learning": {
-    "candidatesGenerated": 10,
-    "candidatesValidated": 10,
-    "rulesApplied": 10,
-    "totalRules": 10,
+    "candidatesGenerated": 15,
+    "candidatesValidated": 15,
+    "rulesApplied": 15,
+    "totalRules": 15,
     "antiPatternSignalsApplied": 8,
-    "canonicalCandidatesGenerated": 10,
+    "canonicalCandidatesGenerated": 15,
     "heuristicCandidatesGenerated": 15,
     "highSignalHeuristicCandidatesGenerated": 1,
     "auditChecks": [
@@ -127,8 +127,8 @@
       }
     ],
     "doctorStatus": {
-      "events": 6136,
-      "rules": 10,
+      "events": 6140,
+      "rules": 15,
       "feedback": 8,
       "outcomes": 0,
       "learnerProfiles": 0,

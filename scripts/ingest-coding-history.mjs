@@ -549,6 +549,26 @@ const CANONICAL_RULE_DEFINITIONS = [
     statement: "Keep failure triage actionable by linking issues to reproducible commands and checks.",
     test: (text) => /\b(ready|triage|issue|reproduc|command|check)\b/i.test(text),
   },
+  {
+    statement: "Use Effect v4 patterns (including Effect.Service) for service wiring and error modeling.",
+    test: (text) => /\b(effect v4|effectservice|effect\.service|effect-ts|effect patterns?)\b/i.test(text),
+  },
+  {
+    statement: "Use Tailwind v4 conventions and keep Tailwind lint checks in CI.",
+    test: (text) => /\b(tailwind v4|nativewind v5|lint:tailwind|tailwind)\b/i.test(text),
+  },
+  {
+    statement: "Keep TypeScript strict mode enabled across packages.",
+    test: (text) => /\b(strict typescript|strict ts|strict mode|strictnullchecks|noimplicitany)\b/i.test(text),
+  },
+  {
+    statement: "Disallow explicit any in production code; model unknown input via schemas/decoders.",
+    test: (text) => /\b(no any|avoid any|ban any|implicit any)\b/i.test(text),
+  },
+  {
+    statement: "Disallow unsafe double assertions like 'as unknown as X'.",
+    test: (text) => /\bas unknown as\b/i.test(text),
+  },
 ];
 
 function buildCanonicalRuleCandidates(events) {
