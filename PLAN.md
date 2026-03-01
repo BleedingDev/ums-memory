@@ -134,6 +134,7 @@ We adopt a modular pipeline:
 - **Diary / Digest:** structured summary of a bounded episode set.
 - **Rule:** procedural guidance with confidence and evidence.
 - **Anti-pattern:** “DON’T do X”, created from harmful outcomes.
+- **Hypothesis Rule:** candidate rule in shadow mode, not yet promotable for default recall.
 - **Decision Record:** “We chose A over B because…”
 - **Outcome:** success/failure + metrics + links to rules used.
 - **Correction:** explicit human fix of model output (strong negative signal).
@@ -142,6 +143,7 @@ We adopt a modular pipeline:
 
 ## Invariants
 - Every Rule/Anti-pattern must link to ≥1 Episode (directly or via Diary).
+- Every promoted Rule/Anti-pattern must have a passed replay evaluation record.
 - No destructive edits of Episodes; only append tombstones/annotations.
 - Any recall payload is bounded by strict token/size budgets.
 - Any cross-space retrieval requires explicit allowlist policy.
@@ -161,6 +163,10 @@ We want an interface that is:
 - `reflect`: produce candidate deltas from recent episodes.
 - `validate`: evidence-check deltas against episodic history.
 - `curate`: apply deltas deterministically.
+- `shadow_write`: write candidate procedural deltas to shadow memory.
+- `replay_eval`: run candidate memory against historical/canary tasks and compute net value.
+- `promote`: move candidate from shadow to active procedural memory when gates pass.
+- `demote`: return active rule to shadow/tombstone when net value decays.
 - `feedback / mark`: helpful/harmful signals tied to outcomes.
 - `outcome`: record task outcome + rules used.
 - `audit`: scan for violations, stale rules, contradictions.
@@ -168,6 +174,25 @@ We want an interface that is:
 - `doctor`: health check for indices, encryption, budgets.
 
 > We will define concrete JSON shapes after we agree on semantics.
+
+## 4.1 Memory CI contracts (new)
+Promotion is explicitly gated by replay-based evidence, not by reflection confidence alone.
+
+- `shadow_write` response must return: candidate id, source episode ids, initial scope, and expiration.
+- `replay_eval` input must include: candidate id, evaluation pack id, and target memory space.
+- `replay_eval` response must include:
+  - quality deltas (`success_rate_delta`, `reopen_rate_delta`)
+  - efficiency deltas (`latency_p95_delta_ms`, `token_cost_delta`)
+  - safety deltas (`policy_violations_delta`, `hallucination_flag_delta`)
+  - final `net_value_score` and pass/fail by gate
+- `promote` requires:
+  - latest replay eval status `pass`
+  - no unresolved safety regressions
+  - at least one fresh evidence pointer
+- `demote` triggers:
+  - negative net value over rolling window
+  - explicit harmful feedback threshold
+  - contradiction with newer high-confidence evidence
 
 ---
 
@@ -204,6 +229,24 @@ These signals should:
 - increase harmful weight
 - trigger rule inversion to anti-pattern
 - accelerate decay of stale advice
+
+## 5.4 Shadow promotion loop (new)
+Every candidate procedural delta follows a mandatory lifecycle:
+
+1. `reflect` proposes candidate delta.
+2. `validate` verifies minimum evidence linkage.
+3. `shadow_write` stores candidate in non-serving shadow memory.
+4. `replay_eval` runs:
+   - historical replay set (known tasks/outcomes),
+   - live canary set (small percentage of current traffic),
+   - regression guardrails (latency, token budget, policy compliance).
+5. Gate decision:
+   - pass → `promote` into active procedural memory,
+   - fail → stay shadowed or become anti-pattern candidate,
+   - severe fail → immediate `demote`/tombstone and alert.
+6. Post-promotion monitoring:
+   - rolling net value score,
+   - automatic demotion on sustained negative contribution.
 
 ---
 
@@ -289,6 +332,25 @@ Even if episodes grow, we can keep *associative recall* stable via:
 - Reflection pipeline (reflect → validate → curate)
 - Confidence decay + tombstones + anti-pattern inversion
 - Health checks + audit + drift detection
+
+## Phase P1.5 — Memory CI + Shadow Promotion (new)
+- Introduce shadow memory store for candidate rules/anti-patterns.
+- Add `shadow_write`, `replay_eval`, `promote`, `demote` APIs + CLI verbs.
+- Build replay packs:
+  - historical task/outcome corpus,
+  - canary traffic evaluator,
+  - policy/safety regression suite.
+- Implement promotion gates on measurable net value:
+  - quality lift required,
+  - no safety regressions,
+  - bounded latency/token impact.
+- Add continuous post-promotion monitoring and automatic rollback/demotion.
+
+### P1.5 exit criteria
+- 100% of newly promoted rules have replay evidence records.
+- No direct write path from reflection output to active procedural memory.
+- Automated demotion catches harmful/stale rules within defined SLA.
+- Net value dashboard is available per memory space/profile.
 
 ## Phase P2 — Enterprise sources
 - Jira + legacy tickets + docs library
