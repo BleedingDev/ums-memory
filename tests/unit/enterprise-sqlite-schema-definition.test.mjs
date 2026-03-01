@@ -16,6 +16,7 @@ const expectedTableOrder = Object.freeze([
   "user_role_assignments",
   "scopes",
   "memory_items",
+  "memory_items_fts",
   "evidence",
   "memory_evidence_links",
   "feedback",
@@ -48,6 +49,9 @@ const expectedTriggerOrder = Object.freeze([
   "trg_scopes_no_cycle_update",
   "trg_memory_items_no_supersedes_cycle_insert",
   "trg_memory_items_no_supersedes_cycle_update",
+  "trg_memory_items_fts_insert",
+  "trg_memory_items_fts_delete",
+  "trg_memory_items_fts_update",
 ]);
 
 let schemaModulePromise;
@@ -118,7 +122,7 @@ test("ums-memory-5cb.1: enterprise sqlite schema ordering is deterministic", asy
     schema.enterpriseSqliteSchemaSql,
     `${schema.enterpriseSqliteSchemaStatements.join("\n\n")}\n`,
   );
-  assert.equal(schema.enterpriseSqliteSchemaVersion, 1);
+  assert.equal(schema.enterpriseSqliteSchemaVersion, 2);
 });
 
 test("ums-memory-5cb.1: enterprise sqlite schema enforces key constraints at runtime", async () => {
@@ -460,6 +464,96 @@ test("ums-memory-5cb.1: enterprise sqlite schema enforces key constraints at run
     assert.equal(countRowsByTenant(db, "scopes", "tenant_a"), 0);
     assert.equal(countRowsByTenant(db, "memory_items", "tenant_a"), 0);
     assert.equal(countRows(db, "tenants"), 1);
+  } finally {
+    db.close();
+  }
+});
+
+test("ums-memory-5cb.6: enterprise sqlite schema keeps FTS5 index in sync and query plans use virtual table index", async () => {
+  const schema = await loadSchemaModule();
+  const db = new DatabaseSync(":memory:");
+
+  try {
+    db.exec("PRAGMA foreign_keys = ON;");
+    db.exec(schema.enterpriseSqliteSchemaSql);
+
+    const now = 1_700_000_000_001;
+    db.prepare(
+      "INSERT INTO tenants (tenant_id, tenant_slug, display_name, created_at_ms, updated_at_ms) VALUES (?, ?, ?, ?, ?)",
+    ).run("tenant_fts", "tenant-fts", "Tenant FTS", now, now);
+    db.prepare(
+      "INSERT INTO scopes (tenant_id, scope_id, scope_level, project_id, role_id, user_id, parent_scope_id, created_at_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    ).run("tenant_fts", "scope_common_fts", "common", null, null, null, null, now);
+
+    db.prepare(
+      "INSERT INTO memory_items (tenant_id, memory_id, scope_id, memory_layer, memory_kind, status, title, payload_json, created_by_user_id, supersedes_memory_id, created_at_ms, updated_at_ms, expires_at_ms, tombstoned_at_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    ).run(
+      "tenant_fts",
+      "memory_fts_1",
+      "scope_common_fts",
+      "working",
+      "note",
+      "active",
+      "Alpha retrieval seed",
+      '{"body":"contains beta keyword"}',
+      null,
+      null,
+      now,
+      now,
+      null,
+      null,
+    );
+
+    const initialSearchRows = db
+      .prepare(
+        "SELECT tenant_id, memory_id FROM memory_items_fts WHERE memory_items_fts MATCH ? AND tenant_id = ?;",
+      )
+      .all("beta", "tenant_fts");
+    assert.equal(initialSearchRows.length, 1);
+    assert.equal(initialSearchRows[0].memory_id, "memory_fts_1");
+
+    db.prepare("UPDATE memory_items SET title = ?, payload_json = ? WHERE tenant_id = ? AND memory_id = ?;").run(
+      "Gamma retrieval update",
+      '{"body":"contains gamma keyword"}',
+      "tenant_fts",
+      "memory_fts_1",
+    );
+    const oldKeywordRows = db
+      .prepare(
+        "SELECT memory_id FROM memory_items_fts WHERE memory_items_fts MATCH ? AND tenant_id = ?;",
+      )
+      .all("beta", "tenant_fts");
+    const newKeywordRows = db
+      .prepare(
+        "SELECT memory_id FROM memory_items_fts WHERE memory_items_fts MATCH ? AND tenant_id = ?;",
+      )
+      .all("gamma", "tenant_fts");
+    assert.equal(oldKeywordRows.length, 0);
+    assert.equal(newKeywordRows.length, 1);
+    assert.equal(newKeywordRows[0].memory_id, "memory_fts_1");
+
+    const queryPlanRows = db
+      .prepare(
+        "EXPLAIN QUERY PLAN SELECT memory_id FROM memory_items_fts WHERE memory_items_fts MATCH ? AND tenant_id = ? LIMIT 5;",
+      )
+      .all("gamma", "tenant_fts");
+    const planDetails = queryPlanRows.map((row) => String(row.detail ?? ""));
+    assert.ok(
+      planDetails.some(
+        (detail) => /virtual table/i.test(detail) && /memory_items_fts/i.test(detail),
+      ),
+    );
+
+    db.prepare("DELETE FROM memory_items WHERE tenant_id = ? AND memory_id = ?;").run(
+      "tenant_fts",
+      "memory_fts_1",
+    );
+    const deletedRows = db
+      .prepare(
+        "SELECT memory_id FROM memory_items_fts WHERE memory_items_fts MATCH ? AND tenant_id = ?;",
+      )
+      .all("gamma", "tenant_fts");
+    assert.equal(deletedRows.length, 0);
   } finally {
     db.close();
   }

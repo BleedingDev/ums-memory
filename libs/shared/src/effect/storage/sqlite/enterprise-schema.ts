@@ -74,6 +74,7 @@ export const enterpriseSqliteTableNames = Object.freeze([
   "user_role_assignments",
   "scopes",
   "memory_items",
+  "memory_items_fts",
   "evidence",
   "memory_evidence_links",
   "feedback",
@@ -249,6 +250,16 @@ const memoryItemsTableDdl = createStrictTableDdl("memory_items", [
   "CHECK (supersedes_memory_id IS NULL OR supersedes_memory_id <> memory_id)",
 ]);
 
+const memoryItemsFtsTableDdl = [
+  "CREATE VIRTUAL TABLE IF NOT EXISTS memory_items_fts USING fts5(",
+  "  tenant_id UNINDEXED,",
+  "  memory_id UNINDEXED,",
+  "  title,",
+  "  payload_text,",
+  "  tokenize = 'unicode61 remove_diacritics 2'",
+  ");",
+].join("\n");
+
 const evidenceTableDdl = createStrictTableDdl("evidence", [
   "tenant_id TEXT NOT NULL",
   "evidence_id TEXT NOT NULL",
@@ -354,6 +365,11 @@ export const enterpriseSqliteTables = Object.freeze([
     name: "memory_items",
     ddl: memoryItemsTableDdl,
     dependencies: ["tenants", "scopes", "users"] as const,
+  },
+  {
+    name: "memory_items_fts",
+    ddl: memoryItemsFtsTableDdl,
+    dependencies: ["memory_items"] as const,
   },
   {
     name: "evidence",
@@ -547,6 +563,36 @@ const trgMemoryItemsNoSupersedesCycleUpdateDdl = [
   "END;",
 ].join("\n");
 
+const trgMemoryItemsFtsInsertDdl = [
+  "CREATE TRIGGER IF NOT EXISTS trg_memory_items_fts_insert",
+  "AFTER INSERT ON memory_items",
+  "FOR EACH ROW",
+  "BEGIN",
+  "  INSERT INTO memory_items_fts (rowid, tenant_id, memory_id, title, payload_text)",
+  "  VALUES (NEW.rowid, NEW.tenant_id, NEW.memory_id, NEW.title, NEW.payload_json);",
+  "END;",
+].join("\n");
+
+const trgMemoryItemsFtsDeleteDdl = [
+  "CREATE TRIGGER IF NOT EXISTS trg_memory_items_fts_delete",
+  "AFTER DELETE ON memory_items",
+  "FOR EACH ROW",
+  "BEGIN",
+  "  DELETE FROM memory_items_fts WHERE rowid = OLD.rowid;",
+  "END;",
+].join("\n");
+
+const trgMemoryItemsFtsUpdateDdl = [
+  "CREATE TRIGGER IF NOT EXISTS trg_memory_items_fts_update",
+  "AFTER UPDATE ON memory_items",
+  "FOR EACH ROW",
+  "BEGIN",
+  "  DELETE FROM memory_items_fts WHERE rowid = OLD.rowid;",
+  "  INSERT INTO memory_items_fts (rowid, tenant_id, memory_id, title, payload_text)",
+  "  VALUES (NEW.rowid, NEW.tenant_id, NEW.memory_id, NEW.title, NEW.payload_json);",
+  "END;",
+].join("\n");
+
 export const enterpriseSqliteTriggerNames = Object.freeze([
   "trg_scopes_scope_level_immutable",
   "trg_scopes_anchor_immutable",
@@ -556,6 +602,9 @@ export const enterpriseSqliteTriggerNames = Object.freeze([
   "trg_scopes_no_cycle_update",
   "trg_memory_items_no_supersedes_cycle_insert",
   "trg_memory_items_no_supersedes_cycle_update",
+  "trg_memory_items_fts_insert",
+  "trg_memory_items_fts_delete",
+  "trg_memory_items_fts_update",
 ] as const);
 
 export type EnterpriseSqliteTriggerName = (typeof enterpriseSqliteTriggerNames)[number];
@@ -600,6 +649,21 @@ export const enterpriseSqliteTriggers = Object.freeze([
     name: "trg_memory_items_no_supersedes_cycle_update",
     table: "memory_items",
     ddl: trgMemoryItemsNoSupersedesCycleUpdateDdl,
+  },
+  {
+    name: "trg_memory_items_fts_insert",
+    table: "memory_items",
+    ddl: trgMemoryItemsFtsInsertDdl,
+  },
+  {
+    name: "trg_memory_items_fts_delete",
+    table: "memory_items",
+    ddl: trgMemoryItemsFtsDeleteDdl,
+  },
+  {
+    name: "trg_memory_items_fts_update",
+    table: "memory_items",
+    ddl: trgMemoryItemsFtsUpdateDdl,
   },
 ] as const);
 
@@ -781,7 +845,7 @@ export const enterpriseSqliteSchemaStatements = Object.freeze([
 
 export const enterpriseSqliteSchemaSql = `${enterpriseSqliteSchemaStatements.join("\n\n")}\n`;
 
-export const enterpriseSqliteSchemaVersion = 1 as const;
+export const enterpriseSqliteSchemaVersion = 2 as const;
 
 export const enterpriseSqliteSchema: SqliteSchemaMetadata<
   EnterpriseSqliteTableName,

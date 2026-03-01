@@ -1,9 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 
-import {
-  enterpriseSqliteSchemaStatements,
-  enterpriseSqliteSchemaVersion,
-} from "./enterprise-schema.js";
+import { enterpriseSqliteSchemaStatements } from "./enterprise-schema.js";
 
 export interface SqliteMigrationDefinition<Version extends number = number> {
   readonly version: Version;
@@ -32,7 +29,7 @@ export interface SqliteMigrationApplyResult<
 const SQLITE_USER_VERSION_MAX = 2_147_483_647;
 const SQLITE_CREATE_IF_NOT_EXISTS_PATTERN = /\bIF NOT EXISTS\b\s+/g;
 const SQLITE_SCHEMA_OBJECT_PATTERN =
-  /^CREATE\s+(?:UNIQUE\s+)?(TABLE|INDEX|TRIGGER|VIEW)\s+([A-Za-z_][A-Za-z0-9_]*)/i;
+  /^CREATE\s+(?:UNIQUE\s+)?(?:VIRTUAL\s+)?(TABLE|INDEX|TRIGGER|VIEW)\s+([A-Za-z_][A-Za-z0-9_]*)/i;
 
 type SqliteSchemaObjectType = "table" | "index" | "trigger" | "view";
 
@@ -321,26 +318,67 @@ export const applySqliteMigrations = <Migration extends SqliteMigrationDefinitio
   }
 };
 
+const toDeterministicMigrationStatements = (statements: readonly string[]): readonly string[] =>
+  Object.freeze(
+    statements.map((statement) => statement.replace(SQLITE_CREATE_IF_NOT_EXISTS_PATTERN, "")),
+  );
+
+const hasMemoryItemsFtsSchemaObject = (statement: string): boolean =>
+  statement.includes("memory_items_fts");
+
+const enterpriseSqliteSchemaObjectStatements = toDeterministicMigrationStatements(
+  enterpriseSqliteSchemaStatements,
+);
+
+const enterpriseSqliteV1Statements = Object.freeze(
+  enterpriseSqliteSchemaObjectStatements.filter(
+    (statement) => !hasMemoryItemsFtsSchemaObject(statement),
+  ),
+);
+
+const enterpriseSqliteV2Statements = Object.freeze([
+  ...enterpriseSqliteSchemaObjectStatements.filter((statement) =>
+    hasMemoryItemsFtsSchemaObject(statement),
+  ),
+  [
+    "INSERT INTO memory_items_fts (rowid, tenant_id, memory_id, title, payload_text)",
+    "SELECT rowid, tenant_id, memory_id, title, payload_json",
+    "FROM memory_items",
+    "WHERE rowid NOT IN (SELECT rowid FROM memory_items_fts);",
+  ].join("\n"),
+]);
+
 const enterpriseInitialMigration = Object.freeze({
-  version: enterpriseSqliteSchemaVersion,
+  version: 1,
   name: "enterprise_sqlite_v1",
   description:
     "Initial enterprise SQLite schema for tenant isolation, scope lattice constraints, memory lineage, evidence, and feedback.",
-  statements: Object.freeze(
-    enterpriseSqliteSchemaStatements.map((statement) =>
-      statement.replace(SQLITE_CREATE_IF_NOT_EXISTS_PATTERN, ""),
-    ),
-  ),
+  statements: enterpriseSqliteV1Statements,
   sql: "",
-} as const satisfies SqliteMigrationDefinition<typeof enterpriseSqliteSchemaVersion>);
+} as const satisfies SqliteMigrationDefinition<1>);
 
 const enterpriseInitialMigrationWithSql = Object.freeze({
   ...enterpriseInitialMigration,
   sql: `${enterpriseInitialMigration.statements.join("\n\n")}\n`,
-} as const satisfies SqliteMigrationDefinition<typeof enterpriseSqliteSchemaVersion>);
+} as const satisfies SqliteMigrationDefinition<1>);
+
+const enterpriseFtsMigration = Object.freeze({
+  version: 2,
+  name: "enterprise_sqlite_v2_fts5_memory_search",
+  description:
+    "Adds FTS5 virtual-table indexing and synchronization triggers for scalable tenant-scoped memory retrieval.",
+  statements: enterpriseSqliteV2Statements,
+  sql: "",
+} as const satisfies SqliteMigrationDefinition<2>);
+
+const enterpriseFtsMigrationWithSql = Object.freeze({
+  ...enterpriseFtsMigration,
+  sql: `${enterpriseFtsMigration.statements.join("\n\n")}\n`,
+} as const satisfies SqliteMigrationDefinition<2>);
 
 export const enterpriseSqliteMigrations = Object.freeze([
   enterpriseInitialMigrationWithSql,
+  enterpriseFtsMigrationWithSql,
 ] as const satisfies readonly SqliteMigrationDefinition[]);
 
 export type EnterpriseSqliteMigration = (typeof enterpriseSqliteMigrations)[number];
@@ -413,10 +451,17 @@ const listSqliteSchemaDefinitions = (database: DatabaseSync): readonly SqliteSch
 };
 
 const enterpriseExpectedSchemaDefinitions = Object.freeze(
-  enterpriseInitialMigrationWithSql.statements
+  enterpriseSqliteSchemaObjectStatements
     .map((statement) => parseSqliteSchemaDefinition(statement))
     .filter((definition): definition is SqliteSchemaDefinition => definition !== null),
 );
+
+const SQLITE_ALLOWED_IMPLICIT_SCHEMA_OBJECT_PATTERNS = Object.freeze([
+  /^table:memory_items_fts_(?:content|data|idx|docsize|config|segments|segdir|stat)$/,
+]);
+
+const isAllowedImplicitSchemaObject = (key: string): boolean =>
+  SQLITE_ALLOWED_IMPLICIT_SCHEMA_OBJECT_PATTERNS.some((pattern) => pattern.test(key));
 
 export const assertEnterpriseSqliteSchemaIntegrity = (database: DatabaseSync): void => {
   const definitions = listSqliteSchemaDefinitions(database);
@@ -448,7 +493,7 @@ export const assertEnterpriseSqliteSchemaIntegrity = (database: DatabaseSync): v
 
   const unexpectedObjects = definitions
     .map((definition) => `${definition.type}:${definition.name}`)
-    .filter((key) => !expectedKeys.has(key));
+    .filter((key) => !expectedKeys.has(key) && !isAllowedImplicitSchemaObject(key));
 
   if (
     missingObjects.length === 0 &&
