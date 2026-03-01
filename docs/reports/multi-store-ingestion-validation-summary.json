@@ -1,8 +1,8 @@
 {
-  "generatedAt": "2026-02-28T20:38:47.430Z",
+  "generatedAt": "2026-02-28T20:56:19.063Z",
   "sources": {
     "jiraExampleRepo": "/Users/satan/work/techsio-prototypes/ferndesk-connector",
-    "codexJsonlFiles": 6716,
+    "codexJsonlFiles": 6725,
     "claudeJsonlFiles": 188
   },
   "ingestion": {
@@ -19,13 +19,13 @@
       }
     },
     "codingAgents": {
-      "accepted": 6652,
+      "accepted": 6653,
       "duplicates": 0,
       "rejected": 0,
       "stats": {
         "storeCount": 2,
         "spaceCount": 3,
-        "totalEvents": 6656,
+        "totalEvents": 6657,
         "redactedSecrets": 153,
         "unsafeInstructions": 0
       }
@@ -34,19 +34,19 @@
   "snapshotTotals": {
     "storeCount": 2,
     "spaceCount": 3,
-    "eventCount": 6656
+    "eventCount": 6657
   },
   "stores": [
     {
       "storeId": "coding-agent",
       "totals": {
         "spaceCount": 2,
-        "eventCount": 6652
+        "eventCount": 6653
       },
       "spaces": [
         {
           "space": "codex-cli",
-          "count": 6468
+          "count": 6469
         },
         {
           "space": "claude-code",
@@ -56,7 +56,7 @@
       "topSources": [
         {
           "source": "codex-cli",
-          "count": 6468
+          "count": 6469
         },
         {
           "source": "claude-code",
@@ -98,7 +98,7 @@
         },
         {
           "term": "make",
-          "count": 695
+          "count": 696
         },
         {
           "term": "everything",

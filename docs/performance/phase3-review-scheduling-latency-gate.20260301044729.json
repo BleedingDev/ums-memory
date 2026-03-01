@@ -1,0 +1,123 @@
+{
+  "ok": false,
+  "generatedAt": "2026-03-01T04:47:29.482Z",
+  "config": {
+    "iterations": 300,
+    "volumes": [
+      64,
+      128,
+      256
+    ],
+    "nearConstantRatioThreshold": 3.5,
+    "p95ThresholdsMs": {
+      "reviewScheduleUpdate": 0.8,
+      "reviewScheduleClock": 2.2,
+      "reviewSetRebalance": 2.8
+    }
+  },
+  "throughputResults": [
+    {
+      "operation": "context",
+      "iterations": 300,
+      "elapsedMs": 2.449,
+      "opsPerSec": 122505.23
+    },
+    {
+      "operation": "reflect",
+      "iterations": 300,
+      "elapsedMs": 1.85,
+      "opsPerSec": 162198.72
+    },
+    {
+      "operation": "doctor",
+      "iterations": 300,
+      "elapsedMs": 0.963,
+      "opsPerSec": 311391.64
+    }
+  ],
+  "schedulingVolumeResults": [
+    {
+      "volume": 64,
+      "iterations": 300,
+      "updateLatency": {
+        "p50Ms": 0.0104,
+        "p95Ms": 0.043,
+        "maxMs": 0.1691
+      },
+      "clockLatency": {
+        "p50Ms": 0.3975,
+        "p95Ms": 0.7352,
+        "maxMs": 1.7095
+      },
+      "rebalanceLatency": {
+        "p50Ms": 0.446,
+        "p95Ms": 0.8475,
+        "maxMs": 1.4618
+      }
+    },
+    {
+      "volume": 128,
+      "iterations": 300,
+      "updateLatency": {
+        "p50Ms": 0.0095,
+        "p95Ms": 0.0146,
+        "maxMs": 0.0858
+      },
+      "clockLatency": {
+        "p50Ms": 0.7474,
+        "p95Ms": 1.0005,
+        "maxMs": 2.1316
+      },
+      "rebalanceLatency": {
+        "p50Ms": 0.8502,
+        "p95Ms": 1.2143,
+        "maxMs": 2.3803
+      }
+    },
+    {
+      "volume": 256,
+      "iterations": 300,
+      "updateLatency": {
+        "p50Ms": 0.0098,
+        "p95Ms": 0.0119,
+        "maxMs": 0.1614
+      },
+      "clockLatency": {
+        "p50Ms": 1.4552,
+        "p95Ms": 1.8587,
+        "maxMs": 3.5357
+      },
+      "rebalanceLatency": {
+        "p50Ms": 1.6612,
+        "p95Ms": 2.6369,
+        "maxMs": 4.078
+      }
+    }
+  ],
+  "gates": {
+    "reviewScheduleUpdateNearConstant": {
+      "pass": false,
+      "details": "p95 ratio=3.6134 threshold<=3.5"
+    },
+    "reviewScheduleClockNearConstant": {
+      "pass": true,
+      "details": "p95 ratio=2.5282 threshold<=3.5"
+    },
+    "reviewSetRebalanceNearConstant": {
+      "pass": true,
+      "details": "p95 ratio=3.1114 threshold<=3.5"
+    },
+    "reviewScheduleUpdateP95Threshold": {
+      "pass": true,
+      "details": "peak p95=0.0119ms threshold<=0.8ms"
+    },
+    "reviewScheduleClockP95Threshold": {
+      "pass": true,
+      "details": "peak p95=1.8587ms threshold<=2.2ms"
+    },
+    "reviewSetRebalanceP95Threshold": {
+      "pass": true,
+      "details": "peak p95=2.6369ms threshold<=2.8ms"
+    }
+  }
+}

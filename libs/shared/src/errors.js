@@ -3,6 +3,7 @@ export const ErrorCode = Object.freeze({
   EVIDENCE_REQUIRED: "EVIDENCE_REQUIRED",
   PAYLOAD_LIMIT: "PAYLOAD_LIMIT",
   ISOLATION_VIOLATION: "ISOLATION_VIOLATION",
+  IDENTITY_INVARIANT: "IDENTITY_INVARIANT",
   NOT_FOUND: "NOT_FOUND",
   CONFLICT: "CONFLICT",
   CONTRACT_VIOLATION: "CONTRACT_VIOLATION",
@@ -38,6 +39,12 @@ export class PayloadLimitError extends UmsError {
 export class IsolationViolationError extends UmsError {
   constructor(message, details = {}) {
     super(ErrorCode.ISOLATION_VIOLATION, message, details);
+  }
+}
+
+export class IdentityInvariantError extends UmsError {
+  constructor(message, details = {}) {
+    super(ErrorCode.IDENTITY_INVARIANT, message, details);
   }
 }
 

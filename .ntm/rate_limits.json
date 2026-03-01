@@ -1,0 +1,46 @@
+{
+  "state": {
+    "openai": {
+      "current_delay": 102515625000,
+      "consecutive_success": 0,
+      "last_rate_limit": "2026-03-01T00:58:05.186845+07:00",
+      "cooldown_until": "2026-03-01T00:59:47.70247+07:00",
+      "total_rate_limits": 6,
+      "total_successes": 19
+    }
+  },
+  "history": {
+    "openai": [
+      {
+        "time": "2026-03-01T00:58:05.186476+07:00",
+        "provider": "openai",
+        "action": "send"
+      },
+      {
+        "time": "2026-03-01T00:58:05.186628+07:00",
+        "provider": "openai",
+        "action": "send"
+      },
+      {
+        "time": "2026-03-01T00:58:05.186696+07:00",
+        "provider": "openai",
+        "action": "send"
+      },
+      {
+        "time": "2026-03-01T00:58:05.18674+07:00",
+        "provider": "openai",
+        "action": "send"
+      },
+      {
+        "time": "2026-03-01T00:58:05.186787+07:00",
+        "provider": "openai",
+        "action": "send"
+      },
+      {
+        "time": "2026-03-01T00:58:05.186845+07:00",
+        "provider": "openai",
+        "action": "send"
+      }
+    ]
+  }
+}
