@@ -40,7 +40,26 @@ type CanonicalJsonValue =
 
 class StoragePayloadValidationFailure extends Error {}
 class MissingStorageDeleteFailure extends Error {}
+class TenantIsolationViolationFailure extends Error {
+  readonly event: TenantIsolationViolationAuditEvent;
+
+  constructor(event: TenantIsolationViolationAuditEvent) {
+    super(event.details);
+    this.event = event;
+  }
+}
 const storageRuntimeFailureContract = "StorageRuntimeFailure";
+
+export interface TenantIsolationViolationAuditEvent {
+  readonly operation: "upsert" | "delete";
+  readonly spaceId: string;
+  readonly memoryId: string;
+  readonly referenceKind: "scope" | "project" | "role" | "user" | "supersedes_memory" | "memory";
+  readonly referenceId: string;
+  readonly ownerTenantId: string;
+  readonly reason: "cross_tenant_reference" | "cross_tenant_delete_probe";
+  readonly details: string;
+}
 
 interface StoragePayloadProjection {
   readonly scopeId: string | null;
@@ -62,6 +81,7 @@ interface StoragePayloadProjection {
 export interface SqliteStorageRepositoryOptions {
   readonly applyMigrations?: boolean;
   readonly enforceForeignKeys?: boolean;
+  readonly onTenantIsolationViolation?: (event: TenantIsolationViolationAuditEvent) => void;
 }
 
 export interface SqliteStorageRepository {
@@ -578,6 +598,13 @@ const mapUpsertFailure = (cause: unknown, request: StorageUpsertRequest): Storag
   if (cause instanceof ContractValidationError) {
     return cause;
   }
+  if (cause instanceof TenantIsolationViolationFailure) {
+    return new ContractValidationError({
+      contract: "StorageTenantIsolationGuardrail",
+      message: "Tenant isolation guardrail denied a cross-tenant storage reference.",
+      details: cause.message,
+    });
+  }
   if (cause instanceof StoragePayloadValidationFailure) {
     return toContractValidationError(cause.message);
   }
@@ -599,6 +626,13 @@ const mapUpsertFailure = (cause: unknown, request: StorageUpsertRequest): Storag
 const mapDeleteFailure = (cause: unknown, request: StorageDeleteRequest): StorageServiceError => {
   if (cause instanceof ContractValidationError) {
     return cause;
+  }
+  if (cause instanceof TenantIsolationViolationFailure) {
+    return new ContractValidationError({
+      contract: "StorageTenantIsolationGuardrail",
+      message: "Tenant isolation guardrail denied a cross-tenant storage delete probe.",
+      details: cause.message,
+    });
   }
   if (cause instanceof MissingStorageDeleteFailure) {
     return new StorageNotFoundError({
@@ -652,6 +686,9 @@ export const makeSqliteStorageRepository = (
   const selectProjectAnchorStatement = database.prepare(
     "SELECT project_id FROM projects WHERE tenant_id = ? AND project_id = ? LIMIT 1;",
   );
+  const selectForeignProjectAnchorOwnerStatement = database.prepare(
+    "SELECT tenant_id FROM projects WHERE project_id = ? AND tenant_id <> ? ORDER BY tenant_id ASC LIMIT 1;",
+  );
   const selectJobRoleScopeIdStatement = database.prepare(
     "SELECT scope_id FROM scopes WHERE tenant_id = ? AND scope_level = 'job_role' AND role_id = ? ORDER BY scope_id LIMIT 1;",
   );
@@ -661,6 +698,9 @@ export const makeSqliteStorageRepository = (
   const selectRoleAnchorStatement = database.prepare(
     "SELECT role_id FROM roles WHERE tenant_id = ? AND role_id = ? LIMIT 1;",
   );
+  const selectForeignRoleAnchorOwnerStatement = database.prepare(
+    "SELECT tenant_id FROM roles WHERE role_id = ? AND tenant_id <> ? ORDER BY tenant_id ASC LIMIT 1;",
+  );
   const selectUserScopeIdStatement = database.prepare(
     "SELECT scope_id, parent_scope_id FROM scopes WHERE tenant_id = ? AND scope_level = 'user' AND user_id = ? ORDER BY scope_id LIMIT 1;",
   );
@@ -669,6 +709,15 @@ export const makeSqliteStorageRepository = (
   );
   const selectUserAnchorStatement = database.prepare(
     "SELECT user_id FROM users WHERE tenant_id = ? AND user_id = ? LIMIT 1;",
+  );
+  const selectForeignUserAnchorOwnerStatement = database.prepare(
+    "SELECT tenant_id FROM users WHERE user_id = ? AND tenant_id <> ? ORDER BY tenant_id ASC LIMIT 1;",
+  );
+  const selectTenantScopedScopeStatement = database.prepare(
+    "SELECT scope_id FROM scopes WHERE tenant_id = ? AND scope_id = ? LIMIT 1;",
+  );
+  const selectForeignScopeOwnerStatement = database.prepare(
+    "SELECT tenant_id FROM scopes WHERE scope_id = ? AND tenant_id <> ? ORDER BY tenant_id ASC LIMIT 1;",
   );
   const upsertMemoryStatement = database.prepare(
     [
@@ -706,6 +755,12 @@ export const makeSqliteStorageRepository = (
   const selectPersistedMemoryStatement = database.prepare(
     "SELECT updated_at_ms FROM memory_items WHERE tenant_id = ? AND memory_id = ?;",
   );
+  const selectTenantMemoryStatement = database.prepare(
+    "SELECT memory_id FROM memory_items WHERE tenant_id = ? AND memory_id = ? LIMIT 1;",
+  );
+  const selectForeignMemoryOwnerStatement = database.prepare(
+    "SELECT tenant_id FROM memory_items WHERE memory_id = ? AND tenant_id <> ? ORDER BY tenant_id ASC LIMIT 1;",
+  );
   const deleteMemoryStatement = database.prepare(
     "DELETE FROM memory_items WHERE tenant_id = ? AND memory_id = ?;",
   );
@@ -729,14 +784,73 @@ export const makeSqliteStorageRepository = (
 
     return scopeId;
   };
+  const emitTenantIsolationViolation = options.onTenantIsolationViolation;
+  const readOwnerTenantId = (foreignOwnerRow: unknown): string => {
+    const ownerTenantId = readRowColumn(foreignOwnerRow, "tenant_id");
+    if (typeof ownerTenantId !== "string" || ownerTenantId.trim().length === 0) {
+      throw new Error("Resolved tenant_id owner column is not a valid string.");
+    }
+
+    return ownerTenantId;
+  };
+  const auditTenantIsolationViolation = (event: TenantIsolationViolationAuditEvent): void => {
+    if (emitTenantIsolationViolation === undefined) {
+      return;
+    }
+
+    try {
+      emitTenantIsolationViolation(event);
+    } catch {
+      // Guardrail audit hooks must never change repository behavior.
+    }
+  };
+  const denyTenantIsolationViolation = (
+    operation: "upsert" | "delete",
+    spaceId: string,
+    memoryId: string,
+    referenceKind: TenantIsolationViolationAuditEvent["referenceKind"],
+    referenceId: string,
+    ownerTenantId: string,
+    reason: TenantIsolationViolationAuditEvent["reason"],
+    details: string,
+  ): never => {
+    const event: TenantIsolationViolationAuditEvent = Object.freeze({
+      operation,
+      spaceId,
+      memoryId,
+      referenceKind,
+      referenceId,
+      ownerTenantId,
+      reason,
+      details,
+    });
+    auditTenantIsolationViolation(event);
+    throw new TenantIsolationViolationFailure(event);
+  };
   const assertScopeAnchorExists = (
     scopeAnchorRow: unknown,
+    foreignOwnerRow: unknown,
+    spaceId: string,
+    memoryId: string,
     anchorPath: string,
     anchorKind: "project" | "role" | "user",
     anchorId: string,
   ): void => {
     if (scopeAnchorRow !== undefined) {
       return;
+    }
+    if (foreignOwnerRow !== undefined) {
+      const ownerTenantId = readOwnerTenantId(foreignOwnerRow);
+      denyTenantIsolationViolation(
+        "upsert",
+        spaceId,
+        memoryId,
+        anchorKind,
+        anchorId,
+        ownerTenantId,
+        "cross_tenant_reference",
+        `${anchorPath} references an anchor owned by another tenant.`,
+      );
     }
 
     throw new StoragePayloadValidationFailure(
@@ -761,6 +875,7 @@ export const makeSqliteStorageRepository = (
     tenantId: string,
     projectId: string,
     commonScopeId: string,
+    memoryId: string,
   ): string => {
     const existingScopeRow = selectProjectScopeIdStatement.get(tenantId, projectId);
     if (existingScopeRow !== undefined) {
@@ -768,6 +883,9 @@ export const makeSqliteStorageRepository = (
     }
     assertScopeAnchorExists(
       selectProjectAnchorStatement.get(tenantId, projectId),
+      selectForeignProjectAnchorOwnerStatement.get(projectId, tenantId),
+      tenantId,
+      memoryId,
       "payload.scope.projectId",
       "project",
       projectId,
@@ -791,6 +909,7 @@ export const makeSqliteStorageRepository = (
     tenantId: string,
     roleId: string,
     commonScopeId: string,
+    memoryId: string,
   ): string => {
     const existingScopeRow = selectJobRoleScopeIdStatement.get(tenantId, roleId);
     if (existingScopeRow !== undefined) {
@@ -798,6 +917,9 @@ export const makeSqliteStorageRepository = (
     }
     assertScopeAnchorExists(
       selectRoleAnchorStatement.get(tenantId, roleId),
+      selectForeignRoleAnchorOwnerStatement.get(roleId, tenantId),
+      tenantId,
+      memoryId,
       "payload.scope.roleId",
       "role",
       roleId,
@@ -822,6 +944,7 @@ export const makeSqliteStorageRepository = (
     userId: string,
     requestedParentScopeId: string | null,
     defaultParentScopeId: string,
+    memoryId: string,
   ): string => {
     const existingScopeRow = selectUserScopeIdStatement.get(tenantId, userId);
     if (existingScopeRow !== undefined) {
@@ -841,6 +964,9 @@ export const makeSqliteStorageRepository = (
 
     assertScopeAnchorExists(
       selectUserAnchorStatement.get(tenantId, userId),
+      selectForeignUserAnchorOwnerStatement.get(userId, tenantId),
+      tenantId,
+      memoryId,
       "payload.scope.userId",
       "user",
       userId,
@@ -889,12 +1015,14 @@ export const makeSqliteStorageRepository = (
                         request.spaceId,
                         payloadProjection.scopeRoleId,
                         commonScopeId,
+                        request.memoryId,
                       )
                     : payloadProjection.scopeProjectId !== null
                       ? resolveProjectScopeId(
                           request.spaceId,
                           payloadProjection.scopeProjectId,
                           commonScopeId,
+                          request.memoryId,
                         )
                       : null;
                 resolvedScopeId = resolveUserScopeId(
@@ -902,21 +1030,74 @@ export const makeSqliteStorageRepository = (
                   scopeUserId,
                   requestedUserParentScopeId,
                   commonScopeId,
+                  request.memoryId,
                 );
               } else if (payloadProjection.scopeRoleId !== null) {
                 resolvedScopeId = resolveJobRoleScopeId(
                   request.spaceId,
                   payloadProjection.scopeRoleId,
                   commonScopeId,
+                  request.memoryId,
                 );
               } else if (payloadProjection.scopeProjectId !== null) {
                 resolvedScopeId = resolveProjectScopeId(
                   request.spaceId,
                   payloadProjection.scopeProjectId,
                   commonScopeId,
+                  request.memoryId,
                 );
               } else {
                 resolvedScopeId = commonScopeId;
+              }
+            }
+            if (payloadProjection.scopeId !== null) {
+              const tenantScopedRow = selectTenantScopedScopeStatement.get(
+                request.spaceId,
+                resolvedScopeId,
+              );
+              if (tenantScopedRow === undefined) {
+                const foreignScopeOwnerRow = selectForeignScopeOwnerStatement.get(
+                  resolvedScopeId,
+                  request.spaceId,
+                );
+                if (foreignScopeOwnerRow !== undefined) {
+                  const ownerTenantId = readOwnerTenantId(foreignScopeOwnerRow);
+                  denyTenantIsolationViolation(
+                    "upsert",
+                    request.spaceId,
+                    request.memoryId,
+                    "scope",
+                    resolvedScopeId,
+                    ownerTenantId,
+                    "cross_tenant_reference",
+                    "Explicit scopeId reference is owned by another tenant.",
+                  );
+                }
+              }
+            }
+            if (payloadProjection.supersedesMemoryId !== null) {
+              const tenantScopedSupersedesRow = selectTenantMemoryStatement.get(
+                request.spaceId,
+                payloadProjection.supersedesMemoryId,
+              );
+              if (tenantScopedSupersedesRow === undefined) {
+                const foreignSupersedesOwnerRow = selectForeignMemoryOwnerStatement.get(
+                  payloadProjection.supersedesMemoryId,
+                  request.spaceId,
+                );
+                if (foreignSupersedesOwnerRow !== undefined) {
+                  const ownerTenantId = readOwnerTenantId(foreignSupersedesOwnerRow);
+                  denyTenantIsolationViolation(
+                    "upsert",
+                    request.spaceId,
+                    request.memoryId,
+                    "supersedes_memory",
+                    payloadProjection.supersedesMemoryId,
+                    ownerTenantId,
+                    "cross_tenant_reference",
+                    "supersedesMemoryId references memory owned by another tenant.",
+                  );
+                }
               }
             }
 
@@ -967,6 +1148,25 @@ export const makeSqliteStorageRepository = (
               "sqlite delete changes",
             );
             if (deletedCount === 0) {
+              const foreignMemoryOwnerRow = selectForeignMemoryOwnerStatement.get(
+                request.memoryId,
+                request.spaceId,
+              );
+              if (foreignMemoryOwnerRow !== undefined) {
+                const ownerTenantId = readOwnerTenantId(foreignMemoryOwnerRow);
+                auditTenantIsolationViolation(
+                  Object.freeze({
+                    operation: "delete",
+                    spaceId: request.spaceId,
+                    memoryId: request.memoryId,
+                    referenceKind: "memory",
+                    referenceId: request.memoryId,
+                    ownerTenantId,
+                    reason: "cross_tenant_delete_probe",
+                    details: "Delete request targeted memory owned by another tenant.",
+                  }),
+                );
+              }
               throw new MissingStorageDeleteFailure();
             }
 

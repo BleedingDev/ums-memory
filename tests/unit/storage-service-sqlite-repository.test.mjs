@@ -659,6 +659,176 @@ test("ums-memory-5cb.4: rejects mixed explicit scopeId and scope anchors", async
   }
 });
 
+test("ums-memory-5cb.5: upsert denies cross-tenant references and emits audit events", async () => {
+  const storageServiceModule = await loadStorageServiceModule();
+  const db = new DatabaseSync(":memory:");
+
+  try {
+    const tenantIsolationEvents = [];
+    const storageService = storageServiceModule.makeSqliteStorageService(db, {
+      onTenantIsolationViolation: (event) => {
+        tenantIsolationEvents.push(event);
+      },
+    });
+    const ownerTenantId = "tenant-owner-guardrail";
+    const requesterTenantId = "tenant-requester-guardrail";
+    const projectId = "project-cross-tenant";
+    const ownerUserId = "user-owner-guardrail";
+
+    seedScopeLatticeAnchors(db, ownerTenantId, {
+      projectIds: [projectId],
+      userIds: [ownerUserId],
+    });
+    Effect.runSync(
+      storageService.upsertMemory({
+        spaceId: ownerTenantId,
+        memoryId: "memory-owner-base",
+        layer: "working",
+        payload: {
+          title: "Owner baseline memory",
+          updatedAtMillis: 1_700_000_000_190,
+        },
+      }),
+    );
+
+    const projectAnchorEither = Effect.runSync(
+      Effect.either(
+        storageService.upsertMemory({
+          spaceId: requesterTenantId,
+          memoryId: "memory-cross-project-anchor",
+          layer: "working",
+          payload: {
+            title: "Cross-tenant project anchor",
+            scope: {
+              projectId,
+            },
+            updatedAtMillis: 1_700_000_000_191,
+          },
+        }),
+      ),
+    );
+    const projectAnchorFailure = unwrapFailure(projectAnchorEither);
+    assert.equal(projectAnchorFailure._tag, "ContractValidationError");
+    assert.equal(projectAnchorFailure.contract, "StorageTenantIsolationGuardrail");
+
+    const scopeIdEither = Effect.runSync(
+      Effect.either(
+        storageService.upsertMemory({
+          spaceId: requesterTenantId,
+          memoryId: "memory-cross-scope-id",
+          layer: "working",
+          payload: {
+            title: "Cross-tenant explicit scope",
+            scopeId: `common:${ownerTenantId}`,
+            updatedAtMillis: 1_700_000_000_192,
+          },
+        }),
+      ),
+    );
+    const scopeIdFailure = unwrapFailure(scopeIdEither);
+    assert.equal(scopeIdFailure._tag, "ContractValidationError");
+    assert.equal(scopeIdFailure.contract, "StorageTenantIsolationGuardrail");
+
+    const supersedesEither = Effect.runSync(
+      Effect.either(
+        storageService.upsertMemory({
+          spaceId: requesterTenantId,
+          memoryId: "memory-cross-supersedes",
+          layer: "working",
+          payload: {
+            title: "Cross-tenant supersedes reference",
+            supersedesMemoryId: "memory-owner-base",
+            updatedAtMillis: 1_700_000_000_193,
+          },
+        }),
+      ),
+    );
+    const supersedesFailure = unwrapFailure(supersedesEither);
+    assert.equal(supersedesFailure._tag, "ContractValidationError");
+    assert.equal(supersedesFailure.contract, "StorageTenantIsolationGuardrail");
+
+    assert.equal(tenantIsolationEvents.length, 3);
+    assert.equal(tenantIsolationEvents[0].operation, "upsert");
+    assert.equal(tenantIsolationEvents[0].spaceId, requesterTenantId);
+    assert.equal(tenantIsolationEvents[0].memoryId, "memory-cross-project-anchor");
+    assert.equal(tenantIsolationEvents[0].referenceKind, "project");
+    assert.equal(tenantIsolationEvents[0].referenceId, projectId);
+    assert.equal(tenantIsolationEvents[0].ownerTenantId, ownerTenantId);
+    assert.equal(tenantIsolationEvents[0].reason, "cross_tenant_reference");
+
+    assert.equal(tenantIsolationEvents[1].operation, "upsert");
+    assert.equal(tenantIsolationEvents[1].spaceId, requesterTenantId);
+    assert.equal(tenantIsolationEvents[1].memoryId, "memory-cross-scope-id");
+    assert.equal(tenantIsolationEvents[1].referenceKind, "scope");
+    assert.equal(tenantIsolationEvents[1].referenceId, `common:${ownerTenantId}`);
+    assert.equal(tenantIsolationEvents[1].ownerTenantId, ownerTenantId);
+    assert.equal(tenantIsolationEvents[1].reason, "cross_tenant_reference");
+
+    assert.equal(tenantIsolationEvents[2].operation, "upsert");
+    assert.equal(tenantIsolationEvents[2].spaceId, requesterTenantId);
+    assert.equal(tenantIsolationEvents[2].memoryId, "memory-cross-supersedes");
+    assert.equal(tenantIsolationEvents[2].referenceKind, "supersedes_memory");
+    assert.equal(tenantIsolationEvents[2].referenceId, "memory-owner-base");
+    assert.equal(tenantIsolationEvents[2].ownerTenantId, ownerTenantId);
+    assert.equal(tenantIsolationEvents[2].reason, "cross_tenant_reference");
+  } finally {
+    db.close();
+  }
+});
+
+test("ums-memory-5cb.5: delete keeps not-found semantics and audits cross-tenant probes", async () => {
+  const storageServiceModule = await loadStorageServiceModule();
+  const db = new DatabaseSync(":memory:");
+
+  try {
+    const tenantIsolationEvents = [];
+    const storageService = storageServiceModule.makeSqliteStorageService(db, {
+      onTenantIsolationViolation: (event) => {
+        tenantIsolationEvents.push(event);
+      },
+    });
+    const ownerTenantId = "tenant-owner-delete";
+    const requesterTenantId = "tenant-requester-delete";
+    const memoryId = "memory-cross-delete-probe";
+
+    Effect.runSync(
+      storageService.upsertMemory({
+        spaceId: ownerTenantId,
+        memoryId,
+        layer: "working",
+        payload: {
+          title: "Owner delete probe memory",
+          updatedAtMillis: 1_700_000_000_194,
+        },
+      }),
+    );
+
+    const deleteEither = Effect.runSync(
+      Effect.either(
+        storageService.deleteMemory({
+          spaceId: requesterTenantId,
+          memoryId,
+        }),
+      ),
+    );
+    const deleteFailure = unwrapFailure(deleteEither);
+    assert.equal(deleteFailure._tag, "StorageNotFoundError");
+    assert.equal(deleteFailure.spaceId, requesterTenantId);
+    assert.equal(deleteFailure.memoryId, memoryId);
+
+    assert.equal(tenantIsolationEvents.length, 1);
+    assert.equal(tenantIsolationEvents[0].operation, "delete");
+    assert.equal(tenantIsolationEvents[0].spaceId, requesterTenantId);
+    assert.equal(tenantIsolationEvents[0].memoryId, memoryId);
+    assert.equal(tenantIsolationEvents[0].referenceKind, "memory");
+    assert.equal(tenantIsolationEvents[0].referenceId, memoryId);
+    assert.equal(tenantIsolationEvents[0].ownerTenantId, ownerTenantId);
+    assert.equal(tenantIsolationEvents[0].reason, "cross_tenant_delete_probe");
+  } finally {
+    db.close();
+  }
+});
+
 test("ums-memory-5cb.3: sqlite storage service upsert maps payload deterministically and delete succeeds", async () => {
   const storageServiceModule = await loadStorageServiceModule();
   const db = new DatabaseSync(":memory:");
