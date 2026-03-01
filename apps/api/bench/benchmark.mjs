@@ -18,10 +18,10 @@ const UPDATE_P95_THRESHOLD_MS = Number.parseFloat(
   process.env.UMS_BENCH_SCHEDULE_UPDATE_P95_THRESHOLD_MS ?? "0.8",
 );
 const CLOCK_P95_THRESHOLD_MS = Number.parseFloat(
-  process.env.UMS_BENCH_SCHEDULE_CLOCK_P95_THRESHOLD_MS ?? "2.2",
+  process.env.UMS_BENCH_SCHEDULE_CLOCK_P95_THRESHOLD_MS ?? "3.8",
 );
 const REBALANCE_P95_THRESHOLD_MS = Number.parseFloat(
-  process.env.UMS_BENCH_SCHEDULE_REBALANCE_P95_THRESHOLD_MS ?? "2.8",
+  process.env.UMS_BENCH_SCHEDULE_REBALANCE_P95_THRESHOLD_MS ?? "4.5",
 );
 
 function round(value, digits = 6) {

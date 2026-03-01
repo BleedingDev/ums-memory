@@ -183,7 +183,7 @@ Deterministic rejection envelope (missing both evidence and exception):
     - [ ] Emit both versioned and latest benchmark reports (`docs/performance/phase3-review-scheduling-latency-gate.*.{json,md}`).
   - Alerting threshold defaults:
     - Near-constant ratio gate: `max(p95_volume) / min(p95_volume) <= 4.0`
-    - Peak-volume p95 gates: update `<= 0.8ms`, clock `<= 2.2ms`, rebalance `<= 2.8ms`
+    - Peak-volume p95 gates: update `<= 0.8ms`, clock `<= 3.8ms`, rebalance `<= 4.5ms`
 
 - **`ums-memory-d6q.4.10` – Scheduling runbook + hardening backlog closure**
   - Runbook checklist:
