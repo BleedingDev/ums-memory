@@ -13,7 +13,7 @@ function printUsage() {
       "  ums serve [--host host] [--port port] [--state-file path]",
       "",
       "Examples:",
-      "  ums ingest --store-id coding-agent --input '{\"profile\":\"demo\",\"events\":[{\"type\":\"note\",\"content\":\"Use deterministic IDs\"}]}'",
+      "  ums ingest --store-id coding-agent --input '{\"events\":[{\"type\":\"note\",\"content\":\"Use deterministic IDs\"}]}'",
       "  ums serve --host 127.0.0.1 --port 8787",
       "",
       "Notes:",

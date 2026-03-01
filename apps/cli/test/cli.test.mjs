@@ -87,7 +87,7 @@ test("cli supports stdin json input", async () => {
     assert.equal(ingest.code, 0);
     const body = JSON.parse(ingest.stdout);
     assert.equal(body.ok, true);
-    assert.equal(body.data.profile, "stdin-test");
+    assert.equal(body.data.profile, "__store_default__");
   } finally {
     await rm(tempDir, { recursive: true, force: true });
   }

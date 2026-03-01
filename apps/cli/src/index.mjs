@@ -15,8 +15,8 @@ function printUsage() {
       `Operations: ${ops}`,
       "",
       "Examples:",
-      "  node apps/cli/src/index.mjs ingest --store-id coding-agent --input '{\"profile\":\"demo\",\"events\":[{\"type\":\"note\",\"content\":\"Use deterministic IDs\"}]}'",
-      "  echo '{\"profile\":\"demo\",\"query\":\"deterministic\"}' | node apps/cli/src/index.mjs context"
+      "  node apps/cli/src/index.mjs ingest --store-id coding-agent --input '{\"events\":[{\"type\":\"note\",\"content\":\"Use deterministic IDs\"}]}'",
+      "  echo '{\"query\":\"deterministic\"}' | node apps/cli/src/index.mjs context"
     ].join("\n") + "\n"
   );
 }

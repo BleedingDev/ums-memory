@@ -136,7 +136,7 @@ export function createApiServer({
         storeSelection: {
           bodyField: "storeId",
           header: "x-ums-store",
-          defaultStore: "default",
+          defaultStore: "coding-agent",
         },
       });
     }

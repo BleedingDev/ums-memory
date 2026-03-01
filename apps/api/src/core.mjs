@@ -104,6 +104,8 @@ const DEFAULT_RECOMMENDATION_WEIGHTS = Object.freeze({
   due: 0.15,
   evidence: 0.05,
 });
+const DEFAULT_STORE_ID = "coding-agent";
+const INTERNAL_PROFILE_ID = "__store_default__";
 
 function stableSortObject(value) {
   if (Array.isArray(value)) {
@@ -145,14 +147,11 @@ function defaultStoreId(value) {
   if (typeof value === "string" && value.trim()) {
     return value.trim();
   }
-  return "default";
+  return DEFAULT_STORE_ID;
 }
 
-function defaultProfile(value) {
-  if (typeof value === "string" && value.trim()) {
-    return value.trim();
-  }
-  return "default";
+function defaultProfile() {
+  return INTERNAL_PROFILE_ID;
 }
 
 function isPlainObject(value) {
@@ -1620,7 +1619,7 @@ function normalizeRuleCandidate(raw) {
 function normalizeRequest(operation, request) {
   requireObject(request);
   const storeId = defaultStoreId(request.storeId ?? request.store);
-  const profile = defaultProfile(request.profile);
+  const profile = defaultProfile();
   return {
     storeId,
     profile,
@@ -1844,8 +1843,8 @@ function appendPolicyAuditTrail(state, rawEvent) {
   const timestamp = normalizeIsoTimestampOrFallback(event.timestamp, DEFAULT_VERSION_TIMESTAMP);
   const material = stableSortObject({
     operation: event.operation ?? "unknown",
-    storeId: event.storeId ?? "default",
-    profile: event.profile ?? "default",
+    storeId: event.storeId ?? DEFAULT_STORE_ID,
+    profile: event.profile ?? INTERNAL_PROFILE_ID,
     entityId: event.entityId ?? null,
     outcome: event.outcome ?? "recorded",
     reasonCodes: normalizeBoundedStringArray(event.reasonCodes, "policyAuditTrail.reasonCodes"),
@@ -1858,8 +1857,8 @@ function appendPolicyAuditTrail(state, rawEvent) {
   const nextEvent = {
     auditEventId,
     operation: String(event.operation ?? "unknown"),
-    storeId: String(event.storeId ?? "default"),
-    profile: String(event.profile ?? "default"),
+    storeId: String(event.storeId ?? DEFAULT_STORE_ID),
+    profile: String(event.profile ?? INTERNAL_PROFILE_ID),
     entityId: event.entityId ?? null,
     outcome: String(event.outcome ?? "recorded"),
     reasonCodes: normalizeBoundedStringArray(event.reasonCodes, "policyAuditTrail.reasonCodes"),
@@ -4742,7 +4741,7 @@ function cloneIdentityGraphEdgeRecord(edge) {
   };
 }
 
-export function snapshotProfile(profile = "default", storeId = "default") {
+export function snapshotProfile(profile = INTERNAL_PROFILE_ID, storeId = DEFAULT_STORE_ID) {
   const state = getProfileState(defaultStoreId(storeId), defaultProfile(profile));
   return {
     events: state.events.map((event) => ({ ...event })),
@@ -5094,7 +5093,7 @@ export function importStoreSnapshot(snapshot) {
   }
 
   if (snapshot.profiles && typeof snapshot.profiles === "object") {
-    importProfiles("default", snapshot.profiles);
+    importProfiles(DEFAULT_STORE_ID, snapshot.profiles);
   }
 }
 
@@ -5102,7 +5101,7 @@ export function resetStore() {
   stores.clear();
 }
 
-export function findRuleByDigestPrefix(profile, digestPrefix, storeId = "default") {
+export function findRuleByDigestPrefix(profile, digestPrefix, storeId = DEFAULT_STORE_ID) {
   const state = getProfileState(defaultStoreId(storeId), defaultProfile(profile));
   return findByDigestPrefix(state.rules, digestPrefix, "ruleId");
 }

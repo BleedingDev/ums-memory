@@ -1,6 +1,6 @@
 {
   "ok": true,
-  "generatedAt": "2026-03-01T09:35:55.641Z",
+  "generatedAt": "2026-03-01T11:18:59.212Z",
   "config": {
     "iterations": 300,
     "volumes": [
@@ -19,20 +19,20 @@
     {
       "operation": "context",
       "iterations": 300,
-      "elapsedMs": 2.476,
-      "opsPerSec": 121150.93
+      "elapsedMs": 4.422,
+      "opsPerSec": 67836.22
     },
     {
       "operation": "reflect",
       "iterations": 300,
-      "elapsedMs": 1.691,
-      "opsPerSec": 177370.48
+      "elapsedMs": 1.553,
+      "opsPerSec": 193231.61
     },
     {
       "operation": "doctor",
       "iterations": 300,
-      "elapsedMs": 0.467,
-      "opsPerSec": 641768.89
+      "elapsedMs": 0.484,
+      "opsPerSec": 619301.14
     }
   ],
   "schedulingVolumeResults": [
@@ -40,19 +40,19 @@
       "volume": 64,
       "iterations": 300,
       "updateLatency": {
-        "p50Ms": 0.0105,
-        "p95Ms": 0.021,
-        "maxMs": 0.0831
+        "p50Ms": 0.0104,
+        "p95Ms": 0.0191,
+        "maxMs": 0.1839
       },
       "clockLatency": {
-        "p50Ms": 0.3935,
-        "p95Ms": 0.5375,
-        "maxMs": 1.1257
+        "p50Ms": 0.39,
+        "p95Ms": 0.5041,
+        "maxMs": 3.5532
       },
       "rebalanceLatency": {
-        "p50Ms": 0.4432,
-        "p95Ms": 0.6074,
-        "maxMs": 1.163
+        "p50Ms": 0.4394,
+        "p95Ms": 0.5764,
+        "maxMs": 1.2385
       }
     },
     {
@@ -60,64 +60,64 @@
       "iterations": 300,
       "updateLatency": {
         "p50Ms": 0.0095,
-        "p95Ms": 0.0145,
-        "maxMs": 0.0446
+        "p95Ms": 0.0214,
+        "maxMs": 0.081
       },
       "clockLatency": {
-        "p50Ms": 0.7386,
-        "p95Ms": 1.0608,
-        "maxMs": 2.018
+        "p50Ms": 0.7358,
+        "p95Ms": 1.211,
+        "maxMs": 1.8772
       },
       "rebalanceLatency": {
-        "p50Ms": 0.8393,
-        "p95Ms": 1.4106,
-        "maxMs": 2.2639
+        "p50Ms": 0.839,
+        "p95Ms": 1.2866,
+        "maxMs": 2.1779
       }
     },
     {
       "volume": 256,
       "iterations": 300,
       "updateLatency": {
-        "p50Ms": 0.0099,
-        "p95Ms": 0.0313,
-        "maxMs": 0.0634
+        "p50Ms": 0.0103,
+        "p95Ms": 0.0164,
+        "maxMs": 0.0534
       },
       "clockLatency": {
-        "p50Ms": 1.4457,
-        "p95Ms": 2.252,
-        "maxMs": 4.6647
+        "p50Ms": 1.4575,
+        "p95Ms": 2.2534,
+        "maxMs": 3.787
       },
       "rebalanceLatency": {
-        "p50Ms": 1.6537,
-        "p95Ms": 2.7053,
-        "maxMs": 4.0497
+        "p50Ms": 1.6465,
+        "p95Ms": 2.4527,
+        "maxMs": 3.761
       }
     }
   ],
   "gates": {
     "reviewScheduleUpdateNearConstant": {
       "pass": true,
-      "details": "p95 ratio=2.1586 threshold<=6"
+      "details": "p95 ratio=1.3049 threshold<=6"
     },
     "reviewScheduleClockNearConstant": {
       "pass": true,
-      "details": "p95 ratio=4.1898 threshold<=6"
+      "details": "p95 ratio=4.4701 threshold<=6"
     },
     "reviewSetRebalanceNearConstant": {
       "pass": true,
-      "details": "p95 ratio=4.4539 threshold<=6"
+      "details": "p95 ratio=4.2552 threshold<=6"
     },
     "reviewScheduleUpdateP95Threshold": {
       "pass": true,
-      "details": "peak p95=0.0313ms threshold<=0.8ms"
+      "details": "peak p95=0.0164ms threshold<=0.8ms"
     },
     "reviewScheduleClockP95Threshold": {
       "pass": true,
-      "details": "peak p95=2.252ms threshold<=3.8ms"
+      "details": "peak p95=2.2534ms threshold<=3.8ms"
     },
     "reviewSetRebalanceP95Threshold": {
       "pass": true,
-      "details": "peak p95=2.7053ms threshold<=4.5ms"
+      "details": "peak p95=2.4527ms threshold<=4.5ms"
     }
   }
 }
