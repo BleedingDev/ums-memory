@@ -6,3 +6,8 @@
 
 # local sibling repo checkout
 mcp_agent_mail/
+
+# generated build artifacts and runtime state
+dist/
+.ums-state.json
+.ums-state.json.lock

@@ -34,7 +34,7 @@ function runCli(args, stdin = "") {
 
 test("http server exposes deterministic JSON operation routes", async () => {
   resetStore();
-  const { server, host, port } = await startApiServer({ host: "127.0.0.1", port: 0 });
+  const { server, host, port } = await startApiServer({ host: "127.0.0.1", port: 0, stateFile: null });
   const address = server.address();
   assert(address && typeof address === "object");
   const base = `http://${host}:${address.port}`;
@@ -75,7 +75,7 @@ test("http server exposes deterministic JSON operation routes", async () => {
 
 test("ums-memory-d6q.2.4/3.4/4.4/5.4 http routes expose deterministic P3 contract handlers", async () => {
   resetStore();
-  const { server, host } = await startApiServer({ host: "127.0.0.1", port: 0 });
+  const { server, host } = await startApiServer({ host: "127.0.0.1", port: 0, stateFile: null });
   const address = server.address();
   assert(address && typeof address === "object");
   const base = `http://${host}:${address.port}`;
@@ -156,7 +156,7 @@ test("ums-memory-d6q.2.4/3.4/4.4/5.4 http routes expose deterministic P3 contrac
 
 test("ums-memory-d6q.1.4 http routes learner profile + identity graph updates via dynamic operations", async () => {
   resetStore();
-  const { server, host } = await startApiServer({ host: "127.0.0.1", port: 0 });
+  const { server, host } = await startApiServer({ host: "127.0.0.1", port: 0, stateFile: null });
   const address = server.address();
   assert(address && typeof address === "object");
   const base = `http://${host}:${address.port}`;
@@ -242,7 +242,7 @@ test("ums-memory-d6q.1.4 http routes learner profile + identity graph updates vi
 
 test("http server rejects non-object JSON payloads", async () => {
   resetStore();
-  const { server, host } = await startApiServer({ host: "127.0.0.1", port: 0 });
+  const { server, host } = await startApiServer({ host: "127.0.0.1", port: 0, stateFile: null });
   const address = server.address();
   assert(address && typeof address === "object");
   const base = `http://${host}:${address.port}`;
@@ -266,7 +266,7 @@ test("http server rejects non-object JSON payloads", async () => {
 
 test("ums-memory-d6q.1.11/ums-memory-d6q.1.9 http routes reject missing evidence pointers and expose policy exception observability", async () => {
   resetStore();
-  const { server, host } = await startApiServer({ host: "127.0.0.1", port: 0 });
+  const { server, host } = await startApiServer({ host: "127.0.0.1", port: 0, stateFile: null });
   const address = server.address();
   assert(address && typeof address === "object");
   const base = `http://${host}:${address.port}`;
@@ -319,7 +319,7 @@ test("ums-memory-d6q.1.11/ums-memory-d6q.1.9 http routes reject missing evidence
 
 test("ums-memory-d6q.2.6/ums-memory-d6q.3.6/ums-memory-d6q.4.6/ums-memory-d6q.5.6 http guardrails reject invalid domain payloads", async () => {
   resetStore();
-  const { server, host } = await startApiServer({ host: "127.0.0.1", port: 0 });
+  const { server, host } = await startApiServer({ host: "127.0.0.1", port: 0, stateFile: null });
   const address = server.address();
   assert(address && typeof address === "object");
   const base = `http://${host}:${address.port}`;
@@ -386,7 +386,7 @@ test("ums-memory-d6q.2.6/ums-memory-d6q.3.6/ums-memory-d6q.4.6/ums-memory-d6q.5.
 
 test("ums-memory-d6q.2.7/ums-memory-d6q.2.9/ums-memory-d6q.3.7/ums-memory-d6q.3.9/ums-memory-d6q.4.7/ums-memory-d6q.4.9/ums-memory-d6q.5.7/ums-memory-d6q.5.9 http domain operations return positive observability payloads", async () => {
   resetStore();
-  const { server, host } = await startApiServer({ host: "127.0.0.1", port: 0 });
+  const { server, host } = await startApiServer({ host: "127.0.0.1", port: 0, stateFile: null });
   const address = server.address();
   assert(address && typeof address === "object");
   const base = `http://${host}:${address.port}`;
@@ -482,7 +482,7 @@ test("ums-memory-d6q.2.7/ums-memory-d6q.2.9/ums-memory-d6q.3.7/ums-memory-d6q.3.
 
 test("ums-memory-d6q.3.11/ums-memory-d6q.4.11/ums-memory-d6q.4.12/ums-memory-d6q.5.11/ums-memory-d6q.5.12/ums-memory-d6q.5.13/ums-memory-d6q.5.14 http routes preserve explanation, scheduler, and security payload paths", async () => {
   resetStore();
-  const { server, host } = await startApiServer({ host: "127.0.0.1", port: 0 });
+  const { server, host } = await startApiServer({ host: "127.0.0.1", port: 0, stateFile: null });
   const address = server.address();
   assert(address && typeof address === "object");
   const base = `http://${host}:${address.port}`;

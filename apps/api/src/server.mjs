@@ -122,7 +122,7 @@ function toErrorResponse(error) {
 }
 
 export function createApiServer({
-  stateFile = null,
+  stateFile = DEFAULT_SHARED_STATE_FILE,
 } = {}) {
   return createServer(async (req, res) => {
     const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
@@ -178,7 +178,7 @@ export function createApiServer({
 export function startApiServer({
   host = HOST,
   port = PORT,
-  stateFile = null,
+  stateFile = DEFAULT_SHARED_STATE_FILE,
 } = {}) {
   const server = createApiServer({ stateFile });
   return new Promise((resolve) => {
@@ -206,7 +206,7 @@ const isMainModule =
 let activeServerHandle = null;
 
 if (isMainModule) {
-  startApiServer({ stateFile: DEFAULT_SHARED_STATE_FILE })
+  startApiServer()
     .then(({ server, host, port }) => {
       activeServerHandle = server;
       process.stdout.write(`UMS API listening on http://${host}:${port}\n`);
