@@ -3,8 +3,9 @@ import { mkdir } from "node:fs/promises";
 import { resolve } from "node:path";
 
 const DEFAULT_TARGETS = ["bun-linux-x64", "bun-windows-x64"];
-const DEFAULT_APPS = ["cli", "api"];
+const DEFAULT_APPS = ["single"];
 const SUPPORTED_APPS = new Map([
+  ["single", { entry: "apps/ums/src/index.mjs", artifact: "ums" }],
   ["cli", { entry: "apps/cli/src/index.mjs", artifact: "ums-cli" }],
   ["api", { entry: "apps/api/src/server.mjs", artifact: "ums-api" }],
 ]);
@@ -53,7 +54,7 @@ function parseArgs(argv) {
     throw new Error("At least one target is required. Example: --targets bun-linux-x64,bun-windows-x64");
   }
   if (parsed.apps.length === 0) {
-    throw new Error("At least one app is required. Example: --apps cli,api");
+    throw new Error("At least one app is required. Example: --apps single");
   }
   if (!parsed.outdir) {
     throw new Error("Outdir must be a non-empty path.");
@@ -80,8 +81,8 @@ function printUsage() {
       "",
       "Examples:",
       "  node scripts/build-sfe-matrix.mjs",
-      "  node scripts/build-sfe-matrix.mjs --targets bun-linux-x64 --apps cli",
-      "  node scripts/build-sfe-matrix.mjs --targets bun-windows-x64,bun-linux-x64 --apps cli,api",
+      "  node scripts/build-sfe-matrix.mjs --targets bun-linux-x64 --apps single",
+      "  node scripts/build-sfe-matrix.mjs --targets bun-windows-x64,bun-linux-x64 --apps single,cli,api",
     ].join("\n") + "\n"
   );
 }

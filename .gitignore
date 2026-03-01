@@ -11,3 +11,4 @@ mcp_agent_mail/
 dist/
 .ums-state.json
 .ums-state.json.lock
+.DS_Store
