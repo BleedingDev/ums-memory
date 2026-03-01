@@ -1,6 +1,6 @@
 # UMS Phase 1/2 Latency Baseline
 
-Generated at: 2026-03-01T09:02:06.161Z
+Generated at: 2026-03-01T09:17:10.567Z
 Implementation: ./apps/api/src/ums/engine.mjs#createUmsEngine
 
 ## Workload
@@ -13,9 +13,9 @@ Implementation: ./apps/api/src/ums/engine.mjs#createUmsEngine
 ## Aggregated Metrics
 | metric | p50 | p95 | max |
 | --- | ---: | ---: | ---: |
-| ingest (ms) | 0.0015 | 0.003 | 0.6178 |
-| replay (ms) | 0.001 | 0.0026 | 0.3665 |
-| recall (ms) | 2.2735 | 3.0567 | 5.6327 |
+| ingest (ms) | 0.0015 | 0.0044 | 0.4502 |
+| replay (ms) | 0.0009 | 0.0011 | 0.2584 |
+| recall (ms) | 2.2072 | 3.4473 | 7.2518 |
 | recall payload bytes | 3615.5 | 3660.75 | 3675 |
 
 ## Per-Store Metrics
@@ -23,18 +23,18 @@ Implementation: ./apps/api/src/ums/engine.mjs#createUmsEngine
 
 | metric | p50 | p95 | max |
 | --- | ---: | ---: | ---: |
-| ingest (ms) | 0.0017 | 0.0037 | 0.494 |
-| replay (ms) | 0.001 | 0.0027 | 0.3665 |
-| recall (ms) | 2.3364 | 3.3396 | 5.5648 |
+| ingest (ms) | 0.0016 | 0.0056 | 0.4502 |
+| replay (ms) | 0.0009 | 0.0013 | 0.2584 |
+| recall (ms) | 2.2641 | 3.7339 | 7.2518 |
 | recall payload bytes | 3578 | 3635 | 3635 |
 
 ### Store: jira-history
 
 | metric | p50 | p95 | max |
 | --- | ---: | ---: | ---: |
-| ingest (ms) | 0.0015 | 0.0019 | 0.6178 |
-| replay (ms) | 0.0009 | 0.0011 | 0.0019 |
-| recall (ms) | 2.139 | 2.8394 | 5.6327 |
+| ingest (ms) | 0.0014 | 0.0018 | 0.0311 |
+| replay (ms) | 0.0009 | 0.001 | 0.007 |
+| recall (ms) | 2.0793 | 2.9751 | 5.2971 |
 | recall payload bytes | 3620 | 3675 | 3675 |
 
 ## Aggregated Guardrail Gates

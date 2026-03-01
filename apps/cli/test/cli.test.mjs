@@ -8,10 +8,11 @@ import { resetStore } from "../../api/src/core.mjs";
 
 const CLI_PATH = resolve(process.cwd(), "apps/cli/src/index.mjs");
 
-function runCli(args, stdin = "") {
+function runCli(args, stdin = "", { env = process.env } = {}) {
   return new Promise((resolvePromise) => {
     const proc = spawn(process.execPath, [CLI_PATH, ...args], {
-      stdio: ["pipe", "pipe", "pipe"]
+      stdio: ["pipe", "pipe", "pipe"],
+      env,
     });
     let stdout = "";
     let stderr = "";
@@ -87,6 +88,49 @@ test("cli supports stdin json input", async () => {
     const body = JSON.parse(ingest.stdout);
     assert.equal(body.ok, true);
     assert.equal(body.data.profile, "stdin-test");
+  } finally {
+    await rm(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("cli honors UMS_STATE_FILE as shared default state path", async () => {
+  const tempDir = await mkdtemp(resolve(tmpdir(), "ums-cli-shared-default-"));
+  const sharedStateFile = resolve(tempDir, "shared-state.json");
+  const env = {
+    ...process.env,
+    UMS_STATE_FILE: sharedStateFile,
+  };
+  try {
+    const ingest = await runCli(
+      [
+        "ingest",
+        "--input",
+        JSON.stringify({
+          profile: "shared-default",
+          events: [{ type: "note", source: "cli", content: "shared default state file" }],
+        }),
+      ],
+      "",
+      { env },
+    );
+    assert.equal(ingest.code, 0);
+
+    const context = await runCli(
+      [
+        "context",
+        "--input",
+        JSON.stringify({
+          profile: "shared-default",
+          query: "shared default state file",
+        }),
+      ],
+      "",
+      { env },
+    );
+    assert.equal(context.code, 0);
+    const contextBody = JSON.parse(context.stdout);
+    assert.equal(contextBody.ok, true);
+    assert.equal(contextBody.data.matches.length, 1);
   } finally {
     await rm(tempDir, { recursive: true, force: true });
   }

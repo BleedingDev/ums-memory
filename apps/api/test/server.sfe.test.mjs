@@ -143,7 +143,9 @@ test(
   "compiled API executable serves root + ingest/context routes",
   { skip: !BUN_AVAILABLE || !CURL_AVAILABLE },
   async () => {
-    const server = await startBinaryServer(apiBinaryPath);
+    const tempDir = await mkdtemp(resolve(tmpdir(), "ums-api-sfe-state-"));
+    const stateFile = resolve(tempDir, "state.json");
+    const server = await startBinaryServer(apiBinaryPath, { UMS_STATE_FILE: stateFile });
     const base = `http://${server.host}:${server.port}`;
     try {
       const rootRes = await requestJson(`${base}/`);
@@ -185,6 +187,7 @@ test(
       assert.equal(contextBody.data.matches.length, 1);
     } finally {
       await stopBinaryServer(server.proc);
+      await rm(tempDir, { recursive: true, force: true });
     }
   },
 );
@@ -193,7 +196,9 @@ test(
   "compiled API executable preserves deterministic error envelopes",
   { skip: !BUN_AVAILABLE || !CURL_AVAILABLE },
   async () => {
-    const server = await startBinaryServer(apiBinaryPath);
+    const tempDir = await mkdtemp(resolve(tmpdir(), "ums-api-sfe-state-"));
+    const stateFile = resolve(tempDir, "state.json");
+    const server = await startBinaryServer(apiBinaryPath, { UMS_STATE_FILE: stateFile });
     const base = `http://${server.host}:${server.port}`;
     try {
       const notFound = await requestJson(`${base}/v1/not-real`, {
@@ -217,6 +222,7 @@ test(
       assert.equal(badJsonBody.error.code, "INVALID_JSON");
     } finally {
       await stopBinaryServer(server.proc);
+      await rm(tempDir, { recursive: true, force: true });
     }
   },
 );

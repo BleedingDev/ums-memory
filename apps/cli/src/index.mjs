@@ -1,11 +1,9 @@
-import { readFile, writeFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { readFile } from "node:fs/promises";
 import {
   executeOperation,
-  exportStoreSnapshot,
-  importStoreSnapshot,
   listOperations
 } from "../../api/src/core.mjs";
+import { DEFAULT_SHARED_STATE_FILE, executeOperationWithSharedState } from "../../api/src/persistence.mjs";
 
 function printUsage() {
   const ops = listOperations().join(", ");
@@ -25,12 +23,16 @@ function printUsage() {
 
 function parseArgs(argv) {
   const args = [...argv];
+  const cliStateFileEnv =
+    typeof process.env.UMS_CLI_STATE_FILE === "string" && process.env.UMS_CLI_STATE_FILE.trim()
+      ? process.env.UMS_CLI_STATE_FILE.trim()
+      : null;
   const operation = args.shift();
   const flags = {
     pretty: false,
     input: null,
     file: null,
-    stateFile: process.env.UMS_CLI_STATE_FILE ?? ".ums-cli-state.json",
+    stateFile: cliStateFileEnv ?? DEFAULT_SHARED_STATE_FILE,
     storeId: null,
     help: false
   };
@@ -102,31 +104,6 @@ function safeJsonParse(raw) {
   return JSON.parse(raw);
 }
 
-async function loadCliState(stateFile) {
-  if (!stateFile || !stateFile.trim()) {
-    return;
-  }
-  try {
-    const file = resolve(stateFile);
-    const raw = await readFile(file, "utf8");
-    importStoreSnapshot(safeJsonParse(raw));
-  } catch (error) {
-    if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
-      return;
-    }
-    throw error;
-  }
-}
-
-async function saveCliState(stateFile) {
-  if (!stateFile || !stateFile.trim()) {
-    return;
-  }
-  const file = resolve(stateFile);
-  const snapshot = exportStoreSnapshot();
-  await writeFile(file, `${JSON.stringify(snapshot, null, 2)}\n`, "utf8");
-}
-
 async function main(argv = process.argv.slice(2)) {
   const parsed = parseArgs(argv);
   if (parsed.help || !parsed.operation) {
@@ -134,7 +111,6 @@ async function main(argv = process.argv.slice(2)) {
     return parsed.help ? 0 : 1;
   }
 
-  await loadCliState(parsed.stateFile);
   const requestRaw = await readInput(parsed);
   const requestBody = safeJsonParse(requestRaw);
   if (
@@ -146,8 +122,11 @@ async function main(argv = process.argv.slice(2)) {
   ) {
     requestBody.storeId = parsed.storeId;
   }
-  const data = executeOperation(parsed.operation, requestBody);
-  await saveCliState(parsed.stateFile);
+  const data = await executeOperationWithSharedState({
+    operation: parsed.operation,
+    stateFile: parsed.stateFile,
+    executor: () => executeOperation(parsed.operation, requestBody),
+  });
   const payload = {
     ok: true,
     data

@@ -1,5 +1,6 @@
 import { createServer } from "node:http";
 import { executeOperation, listOperations } from "./core.mjs";
+import { DEFAULT_SHARED_STATE_FILE, executeOperationWithSharedState } from "./persistence.mjs";
 
 const HOST = process.env.UMS_API_HOST ?? "127.0.0.1";
 const PORT = Number.parseInt(process.env.UMS_API_PORT ?? "8787", 10);
@@ -84,6 +85,30 @@ function toErrorResponse(error) {
       }
     };
   }
+  if (error && typeof error === "object" && error.code === "STATE_LOCK_TIMEOUT") {
+    return {
+      statusCode: 503,
+      body: {
+        ok: false,
+        error: {
+          code: "STATE_LOCK_TIMEOUT",
+          message: error.message
+        }
+      }
+    };
+  }
+  if (error && typeof error === "object" && error.code === "STATE_FILE_CORRUPT") {
+    return {
+      statusCode: 500,
+      body: {
+        ok: false,
+        error: {
+          code: "STATE_FILE_CORRUPT",
+          message: error.message
+        }
+      }
+    };
+  }
   return {
     statusCode: 400,
     body: {
@@ -96,7 +121,9 @@ function toErrorResponse(error) {
   };
 }
 
-export function createApiServer() {
+export function createApiServer({
+  stateFile = null,
+} = {}) {
   return createServer(async (req, res) => {
     const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
     if (url.pathname === "/" && req.method === "GET") {
@@ -135,7 +162,11 @@ export function createApiServer() {
       ) {
         requestBody = { ...requestBody, storeId: headerStore };
       }
-      const data = executeOperation(operation, requestBody);
+      const data = await executeOperationWithSharedState({
+        operation,
+        stateFile,
+        executor: () => executeOperation(operation, requestBody),
+      });
       return json(res, 200, { ok: true, data });
     } catch (error) {
       const failure = toErrorResponse(error);
@@ -146,9 +177,10 @@ export function createApiServer() {
 
 export function startApiServer({
   host = HOST,
-  port = PORT
+  port = PORT,
+  stateFile = null,
 } = {}) {
-  const server = createApiServer();
+  const server = createApiServer({ stateFile });
   return new Promise((resolve) => {
     server.listen(port, host, () => {
       const address = server.address();
@@ -174,7 +206,7 @@ const isMainModule =
 let activeServerHandle = null;
 
 if (isMainModule) {
-  startApiServer()
+  startApiServer({ stateFile: DEFAULT_SHARED_STATE_FILE })
     .then(({ server, host, port }) => {
       activeServerHandle = server;
       process.stdout.write(`UMS API listening on http://${host}:${port}\n`);

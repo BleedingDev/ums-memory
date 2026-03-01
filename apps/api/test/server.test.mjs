@@ -1,7 +1,36 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { resolve } from "node:path";
 import { startApiServer } from "../src/server.mjs";
 import { resetStore } from "../src/core.mjs";
+
+const CLI_PATH = resolve(process.cwd(), "apps/cli/src/index.mjs");
+
+function runCli(args, stdin = "") {
+  return new Promise((resolvePromise) => {
+    const proc = spawn(process.execPath, [CLI_PATH, ...args], {
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    let stdout = "";
+    let stderr = "";
+    proc.stdout.on("data", (chunk) => {
+      stdout += chunk.toString("utf8");
+    });
+    proc.stderr.on("data", (chunk) => {
+      stderr += chunk.toString("utf8");
+    });
+    proc.on("close", (code) => {
+      resolvePromise({ code, stdout, stderr });
+    });
+    if (stdin) {
+      proc.stdin.write(stdin);
+    }
+    proc.stdin.end();
+  });
+}
 
 test("http server exposes deterministic JSON operation routes", async () => {
   resetStore();
@@ -613,5 +642,114 @@ test("ums-memory-d6q.3.11/ums-memory-d6q.4.11/ums-memory-d6q.4.12/ums-memory-d6q
     await new Promise((resolve, reject) => {
       server.close((error) => (error ? reject(error) : resolve()));
     });
+  }
+});
+
+test("api and cli share persisted state file across restart boundaries", async () => {
+  resetStore();
+  const tempDir = await mkdtemp(resolve(tmpdir(), "ums-shared-state-"));
+  const stateFile = resolve(tempDir, "ums-state.json");
+
+  try {
+    const cliIngest = await runCli([
+      "ingest",
+      "--state-file",
+      stateFile,
+      "--store-id",
+      "coding-agent",
+      "--input",
+      JSON.stringify({
+        profile: "shared-profile",
+        events: [{ type: "note", source: "cli", content: "event-from-cli" }],
+      }),
+    ]);
+    assert.equal(cliIngest.code, 0);
+
+    const firstServer = await startApiServer({
+      host: "127.0.0.1",
+      port: 0,
+      stateFile,
+    });
+    const firstAddress = firstServer.server.address();
+    assert(firstAddress && typeof firstAddress === "object");
+    const firstBase = `http://${firstServer.host}:${firstAddress.port}`;
+
+    try {
+      const contextRes = await fetch(`${firstBase}/v1/context`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-ums-store": "coding-agent" },
+        body: JSON.stringify({
+          profile: "shared-profile",
+          query: "event-from-cli",
+        }),
+      });
+      assert.equal(contextRes.status, 200);
+      const contextBody = await contextRes.json();
+      assert.equal(contextBody.ok, true);
+      assert.equal(contextBody.data.matches.length, 1);
+
+      const apiIngestRes = await fetch(`${firstBase}/v1/ingest`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-ums-store": "coding-agent" },
+        body: JSON.stringify({
+          profile: "shared-profile",
+          events: [{ type: "note", source: "api", content: "event-from-api" }],
+        }),
+      });
+      assert.equal(apiIngestRes.status, 200);
+      const apiIngestBody = await apiIngestRes.json();
+      assert.equal(apiIngestBody.ok, true);
+      assert.equal(apiIngestBody.data.accepted, 1);
+    } finally {
+      await new Promise((resolvePromise, rejectPromise) => {
+        firstServer.server.close((error) => (error ? rejectPromise(error) : resolvePromise()));
+      });
+    }
+
+    const secondServer = await startApiServer({
+      host: "127.0.0.1",
+      port: 0,
+      stateFile,
+    });
+    const secondAddress = secondServer.server.address();
+    assert(secondAddress && typeof secondAddress === "object");
+    const secondBase = `http://${secondServer.host}:${secondAddress.port}`;
+    try {
+      const contextAfterRestart = await fetch(`${secondBase}/v1/context`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-ums-store": "coding-agent" },
+        body: JSON.stringify({
+          profile: "shared-profile",
+          query: "event-from-api",
+        }),
+      });
+      assert.equal(contextAfterRestart.status, 200);
+      const restartBody = await contextAfterRestart.json();
+      assert.equal(restartBody.ok, true);
+      assert.equal(restartBody.data.matches.length, 1);
+    } finally {
+      await new Promise((resolvePromise, rejectPromise) => {
+        secondServer.server.close((error) => (error ? rejectPromise(error) : resolvePromise()));
+      });
+    }
+
+    const cliContext = await runCli([
+      "context",
+      "--state-file",
+      stateFile,
+      "--store-id",
+      "coding-agent",
+      "--input",
+      JSON.stringify({
+        profile: "shared-profile",
+        query: "event-from-api",
+      }),
+    ]);
+    assert.equal(cliContext.code, 0);
+    const cliContextBody = JSON.parse(cliContext.stdout);
+    assert.equal(cliContextBody.ok, true);
+    assert.equal(cliContextBody.data.matches.length, 1);
+  } finally {
+    await rm(tempDir, { recursive: true, force: true });
   }
 });
