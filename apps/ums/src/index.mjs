@@ -1,6 +1,6 @@
 import { main as runCliMain } from "../../cli/src/index.mjs";
 import { startApiServer } from "../../api/src/server.mjs";
-import { DEFAULT_SHARED_STATE_FILE } from "../../api/src/persistence.mjs";
+import { DEFAULT_RUNTIME_STATE_FILE } from "../../api/src/runtime-adapter.mjs";
 
 const DEFAULT_API_HOST = process.env.UMS_API_HOST ?? "127.0.0.1";
 const DEFAULT_API_PORT = Number.parseInt(process.env.UMS_API_PORT ?? "8787", 10);
@@ -28,7 +28,7 @@ function parseServeArgs(argv) {
   const parsed = {
     host: DEFAULT_API_HOST,
     port: DEFAULT_API_PORT,
-    stateFile: DEFAULT_SHARED_STATE_FILE,
+    stateFile: DEFAULT_RUNTIME_STATE_FILE,
   };
 
   while (args.length > 0) {

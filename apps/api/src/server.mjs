@@ -1,6 +1,9 @@
 import { createServer } from "node:http";
-import { executeOperation, listOperations } from "./core.mjs";
-import { DEFAULT_SHARED_STATE_FILE, executeOperationWithSharedState } from "./persistence.mjs";
+import {
+  DEFAULT_RUNTIME_STATE_FILE,
+  executeRuntimeOperation,
+  listRuntimeOperations,
+} from "./runtime-adapter.mjs";
 
 const HOST = process.env.UMS_API_HOST ?? "127.0.0.1";
 const PORT = Number.parseInt(process.env.UMS_API_PORT ?? "8787", 10);
@@ -109,6 +112,30 @@ function toErrorResponse(error) {
       }
     };
   }
+  if (error && typeof error === "object" && error.code === "RUNTIME_ADAPTER_LOAD_ERROR") {
+    return {
+      statusCode: 500,
+      body: {
+        ok: false,
+        error: {
+          code: "RUNTIME_ADAPTER_LOAD_ERROR",
+          message: error.message
+        }
+      }
+    };
+  }
+  if (error && typeof error === "object" && error.code === "RUNTIME_ADAPTER_CONTRACT_ERROR") {
+    return {
+      statusCode: 500,
+      body: {
+        ok: false,
+        error: {
+          code: "RUNTIME_ADAPTER_CONTRACT_ERROR",
+          message: error.message
+        }
+      }
+    };
+  }
   return {
     statusCode: 400,
     body: {
@@ -122,23 +149,29 @@ function toErrorResponse(error) {
 }
 
 export function createApiServer({
-  stateFile = DEFAULT_SHARED_STATE_FILE,
+  stateFile = DEFAULT_RUNTIME_STATE_FILE,
 } = {}) {
   return createServer(async (req, res) => {
     const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
     if (url.pathname === "/" && req.method === "GET") {
-      return json(res, 200, {
-        ok: true,
-        service: "ums-api",
-        version: "v1",
-        operations: listOperations().map((operation) => `${API_PREFIX}/${operation}`),
-        deterministic: true,
-        storeSelection: {
-          bodyField: "storeId",
-          header: "x-ums-store",
-          defaultStore: "coding-agent",
-        },
-      });
+      try {
+        const operations = await listRuntimeOperations();
+        return json(res, 200, {
+          ok: true,
+          service: "ums-api",
+          version: "v1",
+          operations: operations.map((operation) => `${API_PREFIX}/${operation}`),
+          deterministic: true,
+          storeSelection: {
+            bodyField: "storeId",
+            header: "x-ums-store",
+            defaultStore: "coding-agent",
+          },
+        });
+      } catch (error) {
+        const failure = toErrorResponse(error);
+        return json(res, failure.statusCode, failure.body);
+      }
     }
 
     const operation = parseOperation(url.pathname);
@@ -162,10 +195,10 @@ export function createApiServer({
       ) {
         requestBody = { ...requestBody, storeId: headerStore };
       }
-      const data = await executeOperationWithSharedState({
+      const data = await executeRuntimeOperation({
         operation,
+        requestBody,
         stateFile,
-        executor: () => executeOperation(operation, requestBody),
       });
       return json(res, 200, { ok: true, data });
     } catch (error) {
@@ -178,7 +211,7 @@ export function createApiServer({
 export function startApiServer({
   host = HOST,
   port = PORT,
-  stateFile = DEFAULT_SHARED_STATE_FILE,
+  stateFile = DEFAULT_RUNTIME_STATE_FILE,
 } = {}) {
   const server = createApiServer({ stateFile });
   return new Promise((resolve) => {

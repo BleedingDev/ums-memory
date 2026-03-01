@@ -1,0 +1,12 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "composite": true,
+    "declaration": true,
+    "emitDeclarationOnly": true,
+    "outDir": "../../dist/typecheck/apps/ums",
+    "tsBuildInfoFile": "../../dist/typecheck/apps/ums.tsbuildinfo"
+  },
+  "include": ["**/*.mjs"],
+  "references": [{ "path": "../../libs/shared" }, { "path": "../api" }, { "path": "../cli" }]
+}

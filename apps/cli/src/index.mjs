@@ -1,12 +1,17 @@
 import { readFile } from "node:fs/promises";
 import {
-  executeOperation,
-  listOperations
-} from "../../api/src/core.mjs";
-import { DEFAULT_SHARED_STATE_FILE, executeOperationWithSharedState } from "../../api/src/persistence.mjs";
+  DEFAULT_RUNTIME_STATE_FILE,
+  executeRuntimeOperation,
+  listRuntimeOperations,
+} from "../../api/src/runtime-adapter.mjs";
 
-function printUsage() {
-  const ops = listOperations().join(", ");
+async function printUsage() {
+  let ops = "unknown";
+  try {
+    ops = (await listRuntimeOperations()).join(", ");
+  } catch {
+    ops = "unavailable (runtime adapter failed to load)";
+  }
   process.stderr.write(
     [
       "Usage:",
@@ -32,10 +37,14 @@ function parseArgs(argv) {
     pretty: false,
     input: null,
     file: null,
-    stateFile: cliStateFileEnv ?? DEFAULT_SHARED_STATE_FILE,
+    stateFile: cliStateFileEnv ?? DEFAULT_RUNTIME_STATE_FILE,
     storeId: null,
     help: false
   };
+
+  if (operation === "--help" || operation === "-h" || operation === "help") {
+    flags.help = true;
+  }
 
   while (args.length > 0) {
     const token = args.shift();
@@ -70,7 +79,7 @@ function parseArgs(argv) {
   }
 
   return {
-    operation,
+    operation: flags.help ? null : operation,
     ...flags
   };
 }
@@ -107,7 +116,7 @@ function safeJsonParse(raw) {
 async function main(argv = process.argv.slice(2)) {
   const parsed = parseArgs(argv);
   if (parsed.help || !parsed.operation) {
-    printUsage();
+    await printUsage();
     return parsed.help ? 0 : 1;
   }
 
@@ -122,10 +131,10 @@ async function main(argv = process.argv.slice(2)) {
   ) {
     requestBody.storeId = parsed.storeId;
   }
-  const data = await executeOperationWithSharedState({
+  const data = await executeRuntimeOperation({
     operation: parsed.operation,
+    requestBody,
     stateFile: parsed.stateFile,
-    executor: () => executeOperation(parsed.operation, requestBody),
   });
   const payload = {
     ok: true,

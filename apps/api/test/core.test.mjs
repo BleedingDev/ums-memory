@@ -1,6 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { executeOperation, listOperations, resetStore, snapshotProfile } from "../src/core.mjs";
+import {
+  executeOperation,
+  exportStoreSnapshot,
+  importStoreSnapshot,
+  listOperations,
+  resetStore,
+  snapshotProfile,
+} from "../src/core.mjs";
 import { createIdentityGraphEdge, IdentityGraphRelationKind } from "../../../libs/shared/src/entities.js";
 import { ErrorCode } from "../../../libs/shared/src/errors.js";
 
@@ -15,6 +22,10 @@ test("core exposes the full required operation surface", () => {
     "reflect",
     "validate",
     "curate",
+    "shadow_write",
+    "replay_eval",
+    "promote",
+    "demote",
     "learner_profile_update",
     "identity_graph_update",
     "misconception_update",
@@ -56,6 +67,39 @@ test("ingest is deterministic for identical request payload", () => {
   assert.equal(first.ledgerDigest, second.ledgerDigest);
   assert.equal(first.storeId, "coding-agent");
   assert.deepEqual(first.eventRefs, second.eventRefs);
+});
+
+test("shadow candidates and replay evaluations survive export/import round-trips", () => {
+  const shadow = executeOperation("shadow_write", {
+    profile: "snapshot-shadow",
+    statement: "Prefer deterministic adapters with strict contracts.",
+    sourceEventIds: ["evt-snapshot-shadow-1"],
+    evidenceEventIds: ["evt-snapshot-shadow-1"],
+  });
+  const candidateId = shadow.applied[0].candidateId;
+  const replay = executeOperation("replay_eval", {
+    profile: "snapshot-shadow",
+    candidateId,
+    successRateDelta: 1,
+  });
+
+  const snapshot = exportStoreSnapshot();
+  resetStore();
+  importStoreSnapshot(snapshot);
+
+  const restored = snapshotProfile("snapshot-shadow");
+  assert.equal(restored.shadowCandidates.length, 1);
+  assert.equal(restored.replayEvaluations.length, 1);
+  assert.equal(restored.shadowCandidates[0].candidateId, candidateId);
+  assert.equal(restored.replayEvaluations[0].replayEvalId, replay.replayEvalId);
+
+  const replayFromRestoredStore = executeOperation("replay_eval", {
+    profile: "snapshot-shadow",
+    candidateId,
+    replayEvalId: replay.replayEvalId,
+    successRateDelta: 1,
+  });
+  assert.equal(replayFromRestoredStore.action, "noop");
 });
 
 test("context and curate operate on shared profile state", () => {

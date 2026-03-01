@@ -1,0 +1,9 @@
+{
+  "files": [],
+  "references": [
+    { "path": "./libs/shared" },
+    { "path": "./apps/api" },
+    { "path": "./apps/cli" },
+    { "path": "./apps/ums" }
+  ]
+}

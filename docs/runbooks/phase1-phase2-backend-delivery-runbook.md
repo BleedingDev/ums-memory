@@ -10,6 +10,12 @@ Operational runbook for delivering Phase 1 and Phase 2 epics under shared backen
 This runbook is paired with [ADR-0001](../adr/0001-phase1-phase2-baseline-constraints.md).
 For source-domain partitioning, see [Multi-Store Source Ingestion](./multi-store-source-ingestion.md).
 
+## Engineering Standards
+
+All backend beads in this runbook must comply with the strict TypeScript + Effect standard for new and touched migration code.
+Legacy `.mjs` entrypoints are allowed only as compatibility shims until migrated:
+[Strict TypeScript + Effect Engineering Standard](../standards/strict-ts-effect-standard.md).
+
 ## Mandatory Delivery Boundaries
 1. `No frontend`
 No pages, visual components, design systems, or browser-only artifacts are part of this runbook.
@@ -46,6 +52,18 @@ Unsafe instruction content is filtered by default, secret values are redacted.
 5. Latency check:
 Ingest/replay/recall p95 latency stays below configured thresholds.
 
+Automation mapping:
+1. CI-enforced checks:
+Determinism/idempotency/bounded-recall/guardrail regressions are covered by `npm run test` and `npm run test:sfe`.
+Reference suites:
+- determinism: `tests/unit/determinism.test.mjs`
+- idempotency: `tests/unit/idempotent-ingestion.test.mjs`
+- bounded recall + guardrails: `tests/unit/recall-bounds-guardrails.test.mjs`
+- API/CLI/SFE contract behavior: `apps/api/test/*.test.mjs`, `apps/cli/test/*.test.mjs`, `apps/*/test/*.sfe.test.mjs`
+2. Operational benchmark checks:
+Latency SLO validation uses benchmark reports from `node benchmarks/ums-latency-benchmark.mjs` and is reviewed as part of release hardening.
+Reference baseline and threshold evidence in `docs/performance/phase1-phase2-latency-baseline.md`.
+
 ## Test and Benchmark Commands (Node Built-in Tooling)
 1. Run unit + integration tests:
 ```bash
@@ -59,6 +77,25 @@ node benchmarks/ums-latency-benchmark.mjs
 ```bash
 UMS_IMPL_MODULE=./apps/api/src/ums/engine.mjs UMS_IMPL_EXPORT=createUmsEngine node --test tests/unit/*.test.mjs tests/integration/*.test.mjs
 UMS_IMPL_MODULE=./apps/api/src/ums/engine.mjs UMS_IMPL_EXPORT=createUmsEngine node benchmarks/ums-latency-benchmark.mjs
+```
+
+## CI Quality Gates
+
+The GitHub Actions workflow at `.github/workflows/ci.yml` runs on both push and pull request and fails fast on regressions in:
+
+1. TypeScript quality:
+   `npm run quality:ts`
+2. Tests:
+   `npm run test`
+3. SFE runtime tests:
+   `npm run test:sfe`
+4. Deterministic single-file build:
+   `npm run build:sfe:single`
+
+Local equivalent:
+
+```bash
+npm run ci:verify
 ```
 
 ## Failure Response

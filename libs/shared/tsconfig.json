@@ -1,0 +1,11 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "composite": true,
+    "declaration": true,
+    "emitDeclarationOnly": true,
+    "outDir": "../../dist/typecheck/libs/shared",
+    "tsBuildInfoFile": "../../dist/typecheck/libs/shared.tsbuildinfo"
+  },
+  "include": ["src/**/*.js", "src/**/*.ts"]
+}

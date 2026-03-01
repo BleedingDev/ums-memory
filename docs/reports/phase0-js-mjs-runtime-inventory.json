@@ -1,0 +1,391 @@
+{
+  "schemaVersion": 1,
+  "scope": "Tracked repository JS/MJS files plus currently present dist executable outputs",
+  "jsMjsFiles": {
+    "all": [
+      "apps/api/bench/benchmark.mjs",
+      "apps/api/src/core.mjs",
+      "apps/api/src/persistence.mjs",
+      "apps/api/src/server.mjs",
+      "apps/api/src/ums/engine.mjs",
+      "apps/api/test/core.test.mjs",
+      "apps/api/test/default-shared-state.test.mjs",
+      "apps/api/test/server.sfe.test.mjs",
+      "apps/api/test/server.test.mjs",
+      "apps/cli/src/index.mjs",
+      "apps/cli/test/cli.sfe.test.mjs",
+      "apps/cli/test/cli.test.mjs",
+      "apps/cli/test/single.sfe.test.mjs",
+      "apps/ums/src/index.mjs",
+      "benchmarks/ums-latency-benchmark.mjs",
+      "libs/shared/src/capability-catalog.js",
+      "libs/shared/src/entities.js",
+      "libs/shared/src/errors.js",
+      "libs/shared/src/memory-models.js",
+      "libs/shared/src/metrics.js",
+      "libs/shared/src/repositories.js",
+      "libs/shared/src/storage.js",
+      "libs/shared/src/utils.js",
+      "libs/shared/src/validation.js",
+      "scripts/build-sfe-matrix.mjs",
+      "scripts/ingest-coding-history.mjs",
+      "scripts/validate-ingestion.mjs",
+      "tests/integration/multi-store-ingestion.integration.test.mjs",
+      "tests/integration/ums-contract.integration.test.mjs",
+      "tests/support/engine-adapter.mjs",
+      "tests/support/fixtures.mjs",
+      "tests/support/reference-ums-engine.mjs",
+      "tests/unit/adr-p3-curriculum-scope-coverage.test.mjs",
+      "tests/unit/adr-p3-misconception-scope-coverage.test.mjs",
+      "tests/unit/adr-p3-personalization-safety-scope-coverage.test.mjs",
+      "tests/unit/adr-p3-scope-coverage.test.mjs",
+      "tests/unit/adr-p3-spaced-repetition-scope-coverage.test.mjs",
+      "tests/unit/determinism.test.mjs",
+      "tests/unit/domain-entity-models.test.mjs",
+      "tests/unit/idempotent-ingestion.test.mjs",
+      "tests/unit/learner-profile-identity-graph-entities.test.mjs",
+      "tests/unit/learner-profile-repositories-index.test.mjs",
+      "tests/unit/p3-repository-contracts.test.mjs",
+      "tests/unit/phase-scope-adr-coverage.test.mjs",
+      "tests/unit/recall-bounds-guardrails.test.mjs",
+      "tests/unit/source-ingestion-normalization.test.mjs"
+    ],
+    "byCategory": {
+      "api": [
+        "apps/api/bench/benchmark.mjs",
+        "apps/api/src/core.mjs",
+        "apps/api/src/persistence.mjs",
+        "apps/api/src/server.mjs",
+        "apps/api/src/ums/engine.mjs",
+        "apps/api/test/core.test.mjs",
+        "apps/api/test/default-shared-state.test.mjs",
+        "apps/api/test/server.sfe.test.mjs",
+        "apps/api/test/server.test.mjs"
+      ],
+      "benchmarks": [
+        "benchmarks/ums-latency-benchmark.mjs"
+      ],
+      "cli": [
+        "apps/cli/src/index.mjs",
+        "apps/cli/test/cli.sfe.test.mjs",
+        "apps/cli/test/cli.test.mjs",
+        "apps/cli/test/single.sfe.test.mjs"
+      ],
+      "scripts": [
+        "scripts/build-sfe-matrix.mjs",
+        "scripts/ingest-coding-history.mjs",
+        "scripts/validate-ingestion.mjs"
+      ],
+      "shared": [
+        "libs/shared/src/capability-catalog.js",
+        "libs/shared/src/entities.js",
+        "libs/shared/src/errors.js",
+        "libs/shared/src/memory-models.js",
+        "libs/shared/src/metrics.js",
+        "libs/shared/src/repositories.js",
+        "libs/shared/src/storage.js",
+        "libs/shared/src/utils.js",
+        "libs/shared/src/validation.js"
+      ],
+      "tests": [
+        "tests/integration/multi-store-ingestion.integration.test.mjs",
+        "tests/integration/ums-contract.integration.test.mjs",
+        "tests/support/engine-adapter.mjs",
+        "tests/support/fixtures.mjs",
+        "tests/support/reference-ums-engine.mjs",
+        "tests/unit/adr-p3-curriculum-scope-coverage.test.mjs",
+        "tests/unit/adr-p3-misconception-scope-coverage.test.mjs",
+        "tests/unit/adr-p3-personalization-safety-scope-coverage.test.mjs",
+        "tests/unit/adr-p3-scope-coverage.test.mjs",
+        "tests/unit/adr-p3-spaced-repetition-scope-coverage.test.mjs",
+        "tests/unit/determinism.test.mjs",
+        "tests/unit/domain-entity-models.test.mjs",
+        "tests/unit/idempotent-ingestion.test.mjs",
+        "tests/unit/learner-profile-identity-graph-entities.test.mjs",
+        "tests/unit/learner-profile-repositories-index.test.mjs",
+        "tests/unit/p3-repository-contracts.test.mjs",
+        "tests/unit/phase-scope-adr-coverage.test.mjs",
+        "tests/unit/recall-bounds-guardrails.test.mjs",
+        "tests/unit/source-ingestion-normalization.test.mjs"
+      ],
+      "ums": [
+        "apps/ums/src/index.mjs"
+      ]
+    },
+    "counts": {
+      "api": 9,
+      "benchmarks": 1,
+      "cli": 4,
+      "docs": 0,
+      "js": 9,
+      "mjs": 37,
+      "scripts": 3,
+      "shared": 9,
+      "tests": 19,
+      "total": 46,
+      "ums": 1
+    }
+  },
+  "packageEntrypoints": {
+    "packagesScanned": [
+      "libs/shared/package.json",
+      "package.json"
+    ],
+    "runtimeEntrypoints": [
+      {
+        "command": "node apps/api/src/server.mjs",
+        "package": "package.json",
+        "script": "api"
+      },
+      {
+        "command": "node apps/api/bench/benchmark.mjs",
+        "package": "package.json",
+        "script": "bench:api"
+      },
+      {
+        "command": "UMS_IMPL_MODULE=./apps/api/src/ums/engine.mjs UMS_IMPL_EXPORT=createUmsEngine node benchmarks/ums-latency-benchmark.mjs",
+        "package": "package.json",
+        "script": "bench:ums"
+      },
+      {
+        "command": "node apps/cli/src/index.mjs",
+        "package": "package.json",
+        "script": "cli"
+      },
+      {
+        "command": "node apps/ums/src/index.mjs",
+        "package": "package.json",
+        "script": "ums"
+      }
+    ],
+    "testEntrypoints": [
+      {
+        "command": "node --test apps/api/test/*.test.mjs apps/cli/test/*.test.mjs",
+        "package": "package.json",
+        "script": "test:api"
+      },
+      {
+        "command": "node --test apps/cli/test/cli.sfe.test.mjs apps/api/test/server.sfe.test.mjs apps/cli/test/single.sfe.test.mjs",
+        "package": "package.json",
+        "script": "test:sfe"
+      },
+      {
+        "command": "UMS_IMPL_MODULE=./apps/api/src/ums/engine.mjs UMS_IMPL_EXPORT=createUmsEngine node --test tests/unit/*.test.mjs tests/integration/*.test.mjs",
+        "package": "package.json",
+        "script": "test:ums"
+      },
+      {
+        "command": "node --test ./tests/**/*.test.js",
+        "package": "libs/shared/package.json",
+        "script": "test"
+      }
+    ],
+    "scriptFilesCalledDirectly": [
+      {
+        "package": "package.json",
+        "script": "bench:api",
+        "targetFile": "apps/api/bench/benchmark.mjs"
+      },
+      {
+        "package": "package.json",
+        "script": "bench:ums",
+        "targetFile": "benchmarks/ums-latency-benchmark.mjs"
+      },
+      {
+        "package": "package.json",
+        "script": "build:sfe:api:linux-x64",
+        "targetFile": "scripts/build-sfe-matrix.mjs"
+      },
+      {
+        "package": "package.json",
+        "script": "build:sfe:api:windows-x64",
+        "targetFile": "scripts/build-sfe-matrix.mjs"
+      },
+      {
+        "package": "package.json",
+        "script": "build:sfe:cli:linux-x64",
+        "targetFile": "scripts/build-sfe-matrix.mjs"
+      },
+      {
+        "package": "package.json",
+        "script": "build:sfe:cli:windows-x64",
+        "targetFile": "scripts/build-sfe-matrix.mjs"
+      },
+      {
+        "package": "package.json",
+        "script": "build:sfe:linux-x64",
+        "targetFile": "scripts/build-sfe-matrix.mjs"
+      },
+      {
+        "package": "package.json",
+        "script": "build:sfe:matrix",
+        "targetFile": "scripts/build-sfe-matrix.mjs"
+      },
+      {
+        "package": "package.json",
+        "script": "build:sfe:matrix:split",
+        "targetFile": "scripts/build-sfe-matrix.mjs"
+      },
+      {
+        "package": "package.json",
+        "script": "build:sfe:windows-x64",
+        "targetFile": "scripts/build-sfe-matrix.mjs"
+      },
+      {
+        "package": "package.json",
+        "script": "ingest:coding-history",
+        "targetFile": "scripts/ingest-coding-history.mjs"
+      },
+      {
+        "package": "package.json",
+        "script": "validate:ingestion",
+        "targetFile": "scripts/validate-ingestion.mjs"
+      }
+    ],
+    "allPackageScripts": {
+      "libs/shared/package.json": {
+        "test": "node --test ./tests/**/*.test.js"
+      },
+      "package.json": {
+        "api": "node apps/api/src/server.mjs",
+        "bench": "npm run bench:api && npm run bench:ums",
+        "bench:api": "node apps/api/bench/benchmark.mjs",
+        "bench:ums": "UMS_IMPL_MODULE=./apps/api/src/ums/engine.mjs UMS_IMPL_EXPORT=createUmsEngine node benchmarks/ums-latency-benchmark.mjs",
+        "build:sfe": "npm run build:sfe:single",
+        "build:sfe:api": "node -e \"require('node:fs').mkdirSync('dist',{recursive:true})\" && bun build --compile --minify --sourcemap --bytecode apps/api/src/server.mjs --outfile dist/ums-api",
+        "build:sfe:api:linux-x64": "node scripts/build-sfe-matrix.mjs --targets bun-linux-x64 --apps api",
+        "build:sfe:api:windows-x64": "node scripts/build-sfe-matrix.mjs --targets bun-windows-x64 --apps api",
+        "build:sfe:cli": "node -e \"require('node:fs').mkdirSync('dist',{recursive:true})\" && bun build --compile --minify --sourcemap --bytecode apps/cli/src/index.mjs --outfile dist/ums-cli",
+        "build:sfe:cli:linux-x64": "node scripts/build-sfe-matrix.mjs --targets bun-linux-x64 --apps cli",
+        "build:sfe:cli:windows-x64": "node scripts/build-sfe-matrix.mjs --targets bun-windows-x64 --apps cli",
+        "build:sfe:linux-x64": "node scripts/build-sfe-matrix.mjs --targets bun-linux-x64",
+        "build:sfe:matrix": "node scripts/build-sfe-matrix.mjs",
+        "build:sfe:matrix:split": "node scripts/build-sfe-matrix.mjs --apps cli,api",
+        "build:sfe:single": "node -e \"require('node:fs').mkdirSync('dist',{recursive:true})\" && bun build --compile --minify --sourcemap --bytecode apps/ums/src/index.mjs --outfile dist/ums",
+        "build:sfe:windows-x64": "node scripts/build-sfe-matrix.mjs --targets bun-windows-x64",
+        "cli": "node apps/cli/src/index.mjs",
+        "ingest:coding-history": "node scripts/ingest-coding-history.mjs",
+        "test": "npm run test:api && npm run test:ums",
+        "test:api": "node --test apps/api/test/*.test.mjs apps/cli/test/*.test.mjs",
+        "test:sfe": "node --test apps/cli/test/cli.sfe.test.mjs apps/api/test/server.sfe.test.mjs apps/cli/test/single.sfe.test.mjs",
+        "test:ums": "UMS_IMPL_MODULE=./apps/api/src/ums/engine.mjs UMS_IMPL_EXPORT=createUmsEngine node --test tests/unit/*.test.mjs tests/integration/*.test.mjs",
+        "ums": "node apps/ums/src/index.mjs",
+        "validate:ingestion": "node scripts/validate-ingestion.mjs"
+      }
+    }
+  },
+  "compiledBinaryEntrypoints": {
+    "declaredDirectBuildOutputs": [
+      {
+        "entry": "apps/api/src/server.mjs",
+        "outfile": "dist/ums-api",
+        "script": "build:sfe:api"
+      },
+      {
+        "entry": "apps/cli/src/index.mjs",
+        "outfile": "dist/ums-cli",
+        "script": "build:sfe:cli"
+      },
+      {
+        "entry": "apps/ums/src/index.mjs",
+        "outfile": "dist/ums",
+        "script": "build:sfe:single"
+      }
+    ],
+    "matrixBuildDefaults": {
+      "defaultApps": [
+        "single"
+      ],
+      "defaultTargets": [
+        "bun-linux-x64",
+        "bun-windows-x64"
+      ],
+      "defaultDeclaredOutputs": [
+        "dist/bun-linux-x64/ums",
+        "dist/bun-windows-x64/ums.exe"
+      ],
+      "supportedApps": {
+        "api": {
+          "artifact": "ums-api",
+          "entry": "apps/api/src/server.mjs"
+        },
+        "cli": {
+          "artifact": "ums-cli",
+          "entry": "apps/cli/src/index.mjs"
+        },
+        "single": {
+          "artifact": "ums",
+          "entry": "apps/ums/src/index.mjs"
+        }
+      }
+    },
+    "observedDistExecutables": [
+      "dist/bun-linux-x64/ums",
+      "dist/bun-windows-x64/ums.exe"
+    ],
+    "observedDistNonExecutableCompanionFiles": [
+      "dist/.DS_Store",
+      "dist/bun-linux-x64/index.js.map",
+      "dist/bun-windows-x64/index.js.map"
+    ]
+  },
+  "migrationNotes": {
+    "api": [
+      "9 JS/MJS files under apps/api (runtime, benchmark, and tests).",
+      "Runtime API entrypoint is apps/api/src/server.mjs via npm script api.",
+      "UMS engine runtime dependency surface includes apps/api/src/ums/engine.mjs."
+    ],
+    "cli": [
+      "4 JS/MJS files under apps/cli (runtime and tests).",
+      "CLI runtime entrypoint is apps/cli/src/index.mjs via npm script cli."
+    ],
+    "ums": [
+      "Single UMS app runtime entrypoint: apps/ums/src/index.mjs via npm script ums.",
+      "Also used as the direct compile entry for build:sfe:single."
+    ],
+    "shared": [
+      "9 JS files under libs/shared/src (no .mjs files in this subtree).",
+      "libs/shared/package.json defines only one test script and no runtime bin/main/exports entrypoint."
+    ],
+    "tests": [
+      "19 top-level test/support JS/MJS files in tests/ plus app-local tests in apps/api/test and apps/cli/test.",
+      "Root test entrypoints are script-driven globs (test:api, test:sfe, test:ums).",
+      "libs/shared/package.json references ./tests/**/*.test.js, but no tracked files exist under libs/shared/tests."
+    ],
+    "scripts": [
+      "3 tracked automation scripts in scripts/: build-sfe-matrix.mjs, ingest-coding-history.mjs, validate-ingestion.mjs.",
+      "10 root npm scripts invoke these script files directly.",
+      "Root package has 24 scripts total; several scripts shell-chain into other scripts."
+    ],
+    "docs": [
+      "No tracked .js/.mjs files under docs/.",
+      "docs/reports currently stores JSON outputs written by scripts/validate-ingestion.mjs and scripts/ingest-coding-history.mjs."
+    ]
+  },
+  "riskHotspots": [
+    {
+      "category": "shared",
+      "evidence": "libs/shared uses .js modules while most runtime/app code uses .mjs modules."
+    },
+    {
+      "category": "tests",
+      "evidence": "libs/shared/package.json test script targets ./tests/**/*.test.js, but libs/shared has no tracked tests directory."
+    },
+    {
+      "category": "build",
+      "evidence": "Compiled entrypoints are produced by bun build --compile; output paths vary between direct scripts and matrix script targets."
+    },
+    {
+      "category": "runtime-contract",
+      "evidence": "test:ums and bench:ums depend on env-injected module path/export pair (UMS_IMPL_MODULE and UMS_IMPL_EXPORT)."
+    },
+    {
+      "category": "scripts",
+      "evidence": "scripts/ingest-coding-history.mjs and scripts/validate-ingestion.mjs import app internals directly from apps/api/src/*.mjs."
+    },
+    {
+      "category": "dist-state",
+      "evidence": "Current dist folder contains only matrix-style single-app binaries (ums, ums.exe) and sourcemaps, not all declared direct build outputs."
+    }
+  ]
+}

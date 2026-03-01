@@ -23,10 +23,27 @@
     "test:sfe": "node --test apps/cli/test/cli.sfe.test.mjs apps/api/test/server.sfe.test.mjs apps/cli/test/single.sfe.test.mjs",
     "test:ums": "UMS_IMPL_MODULE=./apps/api/src/ums/engine.mjs UMS_IMPL_EXPORT=createUmsEngine node --test tests/unit/*.test.mjs tests/integration/*.test.mjs",
     "test": "npm run test:api && npm run test:ums",
+    "lint:ts": "eslint --no-error-on-unmatched-pattern --max-warnings=0 \"apps/**/*.ts\" \"libs/**/*.ts\" \"tsconfig*.json\" \"apps/*/tsconfig.json\" \"libs/shared/tsconfig.json\"",
+    "format:check:ts": "prettier --check \"{apps,libs}/**/*.ts\" \"tsconfig*.json\" \"apps/*/tsconfig.json\" \"libs/shared/tsconfig.json\"",
+    "quality:ts": "npm run lint:ts && npm run format:check:ts && npm run typecheck",
+    "ci:verify": "npm run quality:ts && npm run test && npm run test:sfe && npm run build:sfe:single",
+    "typecheck": "tsc -b --pretty false",
     "bench:api": "node apps/api/bench/benchmark.mjs",
     "bench:ums": "UMS_IMPL_MODULE=./apps/api/src/ums/engine.mjs UMS_IMPL_EXPORT=createUmsEngine node benchmarks/ums-latency-benchmark.mjs",
     "bench": "npm run bench:api && npm run bench:ums",
     "validate:ingestion": "node scripts/validate-ingestion.mjs",
     "ingest:coding-history": "node scripts/ingest-coding-history.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "22.13.10",
+    "eslint": "10.0.2",
+    "eslint-plugin-jsonc": "3.1.1",
+    "jsonc-eslint-parser": "3.1.0",
+    "prettier": "3.8.1",
+    "typescript-eslint": "8.56.1",
+    "typescript": "5.8.2"
+  },
+  "dependencies": {
+    "effect": "^3.19.19"
   }
 }

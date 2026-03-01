@@ -6,6 +6,10 @@ const OPS = [
   "reflect",
   "validate",
   "curate",
+  "shadow_write",
+  "replay_eval",
+  "promote",
+  "demote",
   "learner_profile_update",
   "identity_graph_update",
   "misconception_update",
@@ -69,6 +73,12 @@ const POLICY_REASON_CODES_CONTRACT_ERROR =
   "VALIDATION_CONTRACT_VIOLATION: policy_decision_update deny outcome requires reasonCodes.";
 const POLICY_PROVENANCE_EVENT_CONTRACT_ERROR =
   "EVIDENCE_POINTER_CONTRACT_VIOLATION: policy_decision_update requires provenanceEventIds.";
+const SHADOW_WRITE_EVIDENCE_CONTRACT_ERROR =
+  "EVIDENCE_POINTER_CONTRACT_VIOLATION: shadow_write requires at least one sourceEventId or evidenceEventId.";
+const REPLAY_EVAL_CANDIDATE_CONTRACT_ERROR =
+  "VALIDATION_CONTRACT_VIOLATION: replay_eval requires an existing shadow candidate.";
+const PROMOTE_GATE_CONTRACT_ERROR =
+  "VALIDATION_CONTRACT_VIOLATION: promote requires latest replay_eval status pass and no safety regressions.";
 const PROFILE_LINEAGE_ATTRIBUTES = Object.freeze([
   "status",
   "profileConfidence",
@@ -1579,6 +1589,8 @@ function getProfileState(storeId, profile) {
     degradedTutorSessions: [],
     policyDecisions: [],
     policyAuditTrail: [],
+    shadowCandidates: [],
+    replayEvaluations: [],
   };
   profiles.set(profile, created);
   return created;
@@ -1614,6 +1626,131 @@ function normalizeRuleCandidate(raw) {
     sourceEventId: source,
     confidence: Number.isFinite(candidate.confidence) ? Number(candidate.confidence) : 0.5,
   };
+}
+
+function normalizeShadowCandidate(rawCandidate, request, storeId, profile, timestamp) {
+  const candidate = isPlainObject(rawCandidate) ? rawCandidate : {};
+  const statement =
+    normalizeBoundedString(
+      candidate.statement ?? request.statement,
+      "shadow_write.statement",
+      1024,
+    ) ?? "";
+  if (!statement) {
+    throw new Error("shadow_write requires candidate.statement to be a non-empty string.");
+  }
+
+  const requestedSourceEventIds =
+    candidate.sourceEventIds ??
+    (candidate.sourceEventId ? [candidate.sourceEventId] : null) ??
+    request.sourceEventIds ??
+    (request.sourceEventId ? [request.sourceEventId] : null) ??
+    request.evidenceEventIds ??
+    request.evidenceEpisodeIds;
+  const sourceEventIds = normalizeGuardedStringArray(requestedSourceEventIds, "sourceEventIds", {
+    required: true,
+    requiredError: SHADOW_WRITE_EVIDENCE_CONTRACT_ERROR,
+  });
+
+  const requestedEvidenceEventIds =
+    candidate.evidenceEventIds ??
+    candidate.evidenceEpisodeIds ??
+    request.evidenceEventIds ??
+    request.evidenceEpisodeIds ??
+    sourceEventIds;
+  const evidenceEventIds = normalizeGuardedStringArray(requestedEvidenceEventIds, "evidenceEventIds", {
+    required: true,
+    requiredError: SHADOW_WRITE_EVIDENCE_CONTRACT_ERROR,
+  });
+
+  const scope = normalizeBoundedString(candidate.scope ?? request.scope, "shadow_write.scope", 128) ?? "global";
+  const confidence = clamp01(candidate.confidence ?? request.confidence, 0.5);
+  const policyException = normalizePolicyException(candidate.policyException ?? request.policyException ?? null);
+  const createdAt = normalizeIsoTimestamp(
+    candidate.createdAt ?? candidate.timestamp ?? request.createdAt ?? request.timestamp,
+    "shadow_write.createdAt",
+    timestamp,
+  );
+  const expiresAt = normalizeIsoTimestamp(
+    candidate.expiresAt ?? request.expiresAt,
+    "shadow_write.expiresAt",
+    addDaysToIso(createdAt, 30),
+  );
+  const candidateSeed = hash(
+    stableStringify({
+      storeId,
+      profile,
+      statement,
+      scope,
+      sourceEventIds,
+      evidenceEventIds,
+    }),
+  );
+  const candidateId =
+    normalizeBoundedString(candidate.candidateId ?? request.candidateId, "shadow_write.candidateId", 64) ??
+    makeId("mcand", candidateSeed);
+  const ruleId =
+    normalizeBoundedString(candidate.ruleId ?? request.ruleId, "shadow_write.ruleId", 64) ??
+    makeId("rule", hash(stableStringify({ candidateId, statement, scope })));
+
+  return {
+    candidateId,
+    ruleId,
+    statement,
+    scope,
+    confidence,
+    sourceEventIds,
+    evidenceEventIds,
+    metadata: normalizeMetadata({
+      ...(isPlainObject(request.metadata) ? request.metadata : {}),
+      ...(isPlainObject(candidate.metadata) ? candidate.metadata : {}),
+    }),
+    policyException,
+    createdAt,
+    updatedAt: createdAt,
+    expiresAt,
+    status: "shadow",
+    latestReplayEvalId: null,
+    latestReplayStatus: "unevaluated",
+    latestNetValueScore: null,
+    promotedAt: null,
+    demotedAt: null,
+    latestDemotionReasonCodes: [],
+  };
+}
+
+function resolveMemoryCandidate(state, candidateId) {
+  const candidates = Array.isArray(state.shadowCandidates) ? state.shadowCandidates : [];
+  const candidateIndex = candidates.findIndex((candidate) => candidate?.candidateId === candidateId);
+  if (candidateIndex < 0) {
+    return { candidateIndex: -1, candidate: null };
+  }
+  return {
+    candidateIndex,
+    candidate: candidates[candidateIndex],
+  };
+}
+
+function normalizeReplayEvalMetrics(request) {
+  return {
+    successRateDelta: stableScore(request.successRateDelta ?? request.success_rate_delta, 0),
+    reopenRateDelta: stableScore(request.reopenRateDelta ?? request.reopen_rate_delta, 0),
+    latencyP95DeltaMs: stableScore(request.latencyP95DeltaMs ?? request.latency_p95_delta_ms, 0),
+    tokenCostDelta: stableScore(request.tokenCostDelta ?? request.token_cost_delta, 0),
+    policyViolationsDelta: stableScore(request.policyViolationsDelta ?? request.policy_violations_delta, 0),
+    hallucinationFlagDelta: stableScore(request.hallucinationFlagDelta ?? request.hallucination_flag_delta, 0),
+  };
+}
+
+function computeNetValueScore(metrics) {
+  const score =
+    metrics.successRateDelta * 100 -
+    metrics.reopenRateDelta * 80 -
+    metrics.latencyP95DeltaMs * 0.05 -
+    metrics.tokenCostDelta * 0.1 -
+    metrics.policyViolationsDelta * 200 -
+    metrics.hallucinationFlagDelta * 120;
+  return roundNumber(score, 6);
 }
 
 function normalizeRequest(operation, request) {
@@ -1911,6 +2048,16 @@ function stableScore(value, fallback = 0) {
     return fallback;
   }
   return parsed;
+}
+
+function roundNumber(value, decimals = 6) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    return 0;
+  }
+  const safeDecimals = Number.isInteger(decimals) && decimals >= 0 ? decimals : 6;
+  const factor = 10 ** safeDecimals;
+  return Math.round(parsed * factor) / factor;
 }
 
 function toFiniteNumber(value, fallback = 0) {
@@ -2739,6 +2886,352 @@ function runCurate(request) {
     applied,
     skipped,
     totalRules: state.rules.length,
+  };
+}
+
+function runShadowWrite(request) {
+  const { storeId, profile, input } = normalizeRequest("shadow_write", request);
+  const state = getProfileState(storeId, profile);
+  const timestamp = normalizeIsoTimestamp(
+    request.timestamp ?? request.createdAt,
+    "shadow_write.timestamp",
+    DEFAULT_VERSION_TIMESTAMP,
+  );
+  const rawCandidates =
+    Array.isArray(request.candidates) && request.candidates.length > 0 ? request.candidates : [request];
+  const applied = [];
+
+  if (!Array.isArray(state.shadowCandidates)) {
+    state.shadowCandidates = [];
+  }
+
+  for (const rawCandidate of rawCandidates) {
+    const incoming = normalizeShadowCandidate(rawCandidate, request, storeId, profile, timestamp);
+    const resolved = resolveMemoryCandidate(state, incoming.candidateId);
+    if (!resolved.candidate) {
+      state.shadowCandidates.push(incoming);
+      applied.push({
+        candidateId: incoming.candidateId,
+        ruleId: incoming.ruleId,
+        action: "created",
+        status: incoming.status,
+      });
+      continue;
+    }
+
+    const merged = {
+      ...resolved.candidate,
+      ruleId: incoming.ruleId,
+      statement: incoming.statement,
+      scope: incoming.scope,
+      confidence: incoming.confidence,
+      sourceEventIds: mergeStringLists(resolved.candidate.sourceEventIds, incoming.sourceEventIds),
+      evidenceEventIds: mergeStringLists(resolved.candidate.evidenceEventIds, incoming.evidenceEventIds),
+      metadata: stableSortObject({
+        ...(resolved.candidate.metadata ?? {}),
+        ...(incoming.metadata ?? {}),
+      }),
+      policyException: incoming.policyException ?? resolved.candidate.policyException ?? null,
+      expiresAt: incoming.expiresAt ?? resolved.candidate.expiresAt,
+      updatedAt: timestamp,
+      status: resolved.candidate.status === "promoted" ? "promoted" : "shadow",
+    };
+
+    if (stableStringify(resolved.candidate) === stableStringify(merged)) {
+      applied.push({
+        candidateId: incoming.candidateId,
+        ruleId: incoming.ruleId,
+        action: "noop",
+        status: resolved.candidate.status,
+      });
+      continue;
+    }
+
+    state.shadowCandidates[resolved.candidateIndex] = merged;
+    applied.push({
+      candidateId: incoming.candidateId,
+      ruleId: incoming.ruleId,
+      action: "updated",
+      status: merged.status,
+    });
+  }
+
+  state.shadowCandidates = sortByTimestampAndId(state.shadowCandidates, "updatedAt", "candidateId");
+  const createdCount = applied.filter((entry) => entry.action === "created").length;
+  const updatedCount = applied.filter((entry) => entry.action === "updated").length;
+  const noopCount = applied.filter((entry) => entry.action === "noop").length;
+  const meta = buildMeta("shadow_write", storeId, profile, input);
+
+  return {
+    ...meta,
+    applied,
+    counts: {
+      created: createdCount,
+      updated: updatedCount,
+      noop: noopCount,
+      total: state.shadowCandidates.length,
+    },
+    observability: {
+      candidateCount: rawCandidates.length,
+      replaySafe: true,
+      evidenceLinked: true,
+      slo: buildSloObservability(meta.requestDigest, "shadow_write", 40),
+    },
+  };
+}
+
+function runReplayEval(request) {
+  const { storeId, profile, input } = normalizeRequest("replay_eval", request);
+  const state = getProfileState(storeId, profile);
+  const candidateId = requireNonEmptyString(request.candidateId, "candidateId");
+  const resolved = resolveMemoryCandidate(state, candidateId);
+  if (!resolved.candidate) {
+    throw new Error(REPLAY_EVAL_CANDIDATE_CONTRACT_ERROR);
+  }
+
+  if (!Array.isArray(state.replayEvaluations)) {
+    state.replayEvaluations = [];
+  }
+
+  const evaluatedAt = normalizeIsoTimestamp(
+    request.timestamp ?? request.evaluatedAt,
+    "replay_eval.timestamp",
+    DEFAULT_VERSION_TIMESTAMP,
+  );
+  const metrics = normalizeReplayEvalMetrics(request);
+  const netValueScore = computeNetValueScore(metrics);
+  const gateThreshold = stableScore(request.gateThreshold, 0);
+  const safetyRegressionCount = [metrics.policyViolationsDelta, metrics.hallucinationFlagDelta].filter(
+    (delta) => delta > 0,
+  ).length;
+  const pass = safetyRegressionCount === 0 && netValueScore >= gateThreshold;
+  const evaluationPackId =
+    normalizeBoundedString(request.evaluationPackId, "replay_eval.evaluationPackId", 64) ??
+    makeId(
+      "pack",
+      hash(stableStringify({ storeId, profile, candidateId, gateThreshold, evaluatedAt })),
+    );
+  const replayEvalId =
+    normalizeBoundedString(request.replayEvalId, "replay_eval.replayEvalId", 64) ??
+    makeId(
+      "reval",
+      hash(stableStringify({ candidateId, evaluationPackId, metrics, gateThreshold })),
+    );
+
+  const evaluation = {
+    replayEvalId,
+    candidateId,
+    evaluationPackId,
+    metrics: stableSortObject(metrics),
+    netValueScore,
+    gateThreshold,
+    safetyRegressionCount,
+    pass,
+    evaluatedAt,
+    metadata: normalizeMetadata(request.metadata),
+  };
+  const existingIndex = state.replayEvaluations.findIndex((entry) => entry?.replayEvalId === replayEvalId);
+  let action = "created";
+  if (existingIndex >= 0) {
+    if (stableStringify(state.replayEvaluations[existingIndex]) === stableStringify(evaluation)) {
+      action = "noop";
+    } else {
+      action = "updated";
+      state.replayEvaluations[existingIndex] = evaluation;
+    }
+  } else {
+    state.replayEvaluations.push(evaluation);
+  }
+  state.replayEvaluations = sortByTimestampAndId(state.replayEvaluations, "evaluatedAt", "replayEvalId");
+
+  const nextCandidate = {
+    ...resolved.candidate,
+    latestReplayEvalId: replayEvalId,
+    latestReplayStatus: pass ? "pass" : "fail",
+    latestNetValueScore: netValueScore,
+    updatedAt: evaluatedAt,
+  };
+  state.shadowCandidates[resolved.candidateIndex] = nextCandidate;
+  state.shadowCandidates = sortByTimestampAndId(state.shadowCandidates, "updatedAt", "candidateId");
+  const meta = buildMeta("replay_eval", storeId, profile, input);
+
+  return {
+    ...meta,
+    action,
+    candidateId,
+    replayEvalId,
+    evaluation,
+    gate: {
+      pass,
+      gateThreshold,
+      safetyRegressionCount,
+    },
+    observability: {
+      replaySafe: true,
+      hasSafetyRegression: safetyRegressionCount > 0,
+      slo: buildSloObservability(meta.requestDigest, "replay_eval", 45),
+    },
+  };
+}
+
+function runPromote(request) {
+  const { storeId, profile, input } = normalizeRequest("promote", request);
+  const state = getProfileState(storeId, profile);
+  const candidateId = requireNonEmptyString(request.candidateId, "candidateId");
+  const resolved = resolveMemoryCandidate(state, candidateId);
+  if (!resolved.candidate) {
+    throw new Error(REPLAY_EVAL_CANDIDATE_CONTRACT_ERROR);
+  }
+
+  const replayEvaluations = Array.isArray(state.replayEvaluations) ? state.replayEvaluations : [];
+  const latestEvaluation =
+    replayEvaluations.find((entry) => entry?.replayEvalId === resolved.candidate.latestReplayEvalId) ??
+    sortByTimestampAndId(
+      replayEvaluations.filter((entry) => entry?.candidateId === candidateId),
+      "evaluatedAt",
+      "replayEvalId",
+    ).slice(-1)[0] ??
+    null;
+  if (!latestEvaluation || latestEvaluation.pass !== true || latestEvaluation.safetyRegressionCount > 0) {
+    throw new Error(PROMOTE_GATE_CONTRACT_ERROR);
+  }
+
+  const promotedAt = normalizeIsoTimestamp(
+    request.timestamp ?? request.promotedAt,
+    "promote.timestamp",
+    DEFAULT_VERSION_TIMESTAMP,
+  );
+  const nextCandidate = {
+    ...resolved.candidate,
+    status: "promoted",
+    promotedAt: resolved.candidate.promotedAt ?? promotedAt,
+    demotedAt: null,
+    latestReplayEvalId: latestEvaluation.replayEvalId,
+    latestReplayStatus: "pass",
+    latestNetValueScore: latestEvaluation.netValueScore,
+    updatedAt: promotedAt,
+  };
+  state.shadowCandidates[resolved.candidateIndex] = nextCandidate;
+  state.shadowCandidates = sortByTimestampAndId(state.shadowCandidates, "updatedAt", "candidateId");
+
+  const promotedConfidence = clamp01(
+    resolved.candidate.confidence + latestEvaluation.netValueScore / 200,
+    resolved.candidate.confidence,
+  );
+  const nextRule = {
+    ruleId: resolved.candidate.ruleId,
+    statement: resolved.candidate.statement,
+    confidence: roundNumber(promotedConfidence, 6),
+    scope: resolved.candidate.scope,
+    sourceEventIds: [...resolved.candidate.sourceEventIds],
+    evidenceEventIds: [...resolved.candidate.evidenceEventIds],
+    promotedFromCandidateId: resolved.candidate.candidateId,
+    promotedByReplayEvalId: latestEvaluation.replayEvalId,
+    promotedAt: nextCandidate.promotedAt,
+    updatedAt: promotedAt,
+  };
+  const existingRuleIndex = state.rules.findIndex((rule) => rule.ruleId === nextRule.ruleId);
+  let ruleAction = "created";
+  if (existingRuleIndex >= 0) {
+    if (stableStringify(state.rules[existingRuleIndex]) === stableStringify(nextRule)) {
+      ruleAction = "noop";
+    } else {
+      ruleAction = "updated";
+      state.rules[existingRuleIndex] = nextRule;
+    }
+  } else {
+    state.rules.push(nextRule);
+  }
+  const meta = buildMeta("promote", storeId, profile, input);
+
+  return {
+    ...meta,
+    action: resolved.candidate.status === "promoted" && ruleAction === "noop" ? "noop" : "promoted",
+    candidate: nextCandidate,
+    rule: nextRule,
+    ruleAction,
+    replayEvalId: latestEvaluation.replayEvalId,
+    observability: {
+      replayGatePass: true,
+      safetyRegressionCount: latestEvaluation.safetyRegressionCount,
+      replaySafe: true,
+      slo: buildSloObservability(meta.requestDigest, "promote", 45),
+    },
+  };
+}
+
+function runDemote(request) {
+  const { storeId, profile, input } = normalizeRequest("demote", request);
+  const state = getProfileState(storeId, profile);
+  const candidateId = requireNonEmptyString(request.candidateId, "candidateId");
+  const resolved = resolveMemoryCandidate(state, candidateId);
+  if (!resolved.candidate) {
+    throw new Error(REPLAY_EVAL_CANDIDATE_CONTRACT_ERROR);
+  }
+
+  const demotedAt = normalizeIsoTimestamp(
+    request.timestamp ?? request.demotedAt,
+    "demote.timestamp",
+    DEFAULT_VERSION_TIMESTAMP,
+  );
+  const netValueThreshold = stableScore(request.netValueThreshold, 0);
+  const force = request.force === true;
+  const replayFailed = resolved.candidate.latestReplayStatus === "fail";
+  const belowThreshold = stableScore(resolved.candidate.latestNetValueScore, 0) < netValueThreshold;
+  const shouldDemote = force || replayFailed || belowThreshold;
+  const defaultReasons = asSortedUniqueStrings([
+    replayFailed ? "replay_eval_fail" : null,
+    belowThreshold ? "net_value_below_threshold" : null,
+    force ? "manual_override" : null,
+  ].filter(Boolean));
+  const providedReasonCodes = normalizeGuardedStringArray(request.reasonCodes, "reasonCodes");
+  const reasonCodes = providedReasonCodes.length > 0 ? providedReasonCodes : defaultReasons;
+  const meta = buildMeta("demote", storeId, profile, input);
+
+  if (!shouldDemote) {
+    return {
+      ...meta,
+      action: "noop",
+      candidate: resolved.candidate,
+      reasonCodes,
+      threshold: netValueThreshold,
+      observability: {
+        replaySafe: true,
+        demotionApplied: false,
+        slo: buildSloObservability(meta.requestDigest, "demote", 40),
+      },
+    };
+  }
+
+  const nextCandidate = {
+    ...resolved.candidate,
+    status: "demoted",
+    demotedAt,
+    updatedAt: demotedAt,
+    latestDemotionReasonCodes: reasonCodes,
+  };
+  state.shadowCandidates[resolved.candidateIndex] = nextCandidate;
+  state.shadowCandidates = sortByTimestampAndId(state.shadowCandidates, "updatedAt", "candidateId");
+
+  const existingRuleIndex = state.rules.findIndex((rule) => rule.ruleId === resolved.candidate.ruleId);
+  let removedRule = null;
+  if (existingRuleIndex >= 0) {
+    removedRule = state.rules.splice(existingRuleIndex, 1)[0];
+  }
+
+  return {
+    ...meta,
+    action: "demoted",
+    candidate: nextCandidate,
+    removedRuleId: removedRule?.ruleId ?? null,
+    reasonCodes,
+    threshold: netValueThreshold,
+    observability: {
+      replaySafe: true,
+      demotionApplied: true,
+      ruleRemoved: Boolean(removedRule),
+      slo: buildSloObservability(meta.requestDigest, "demote", 40),
+    },
   };
 }
 
@@ -4637,6 +5130,8 @@ function runDoctor(request) {
     reviewArchivalRecords: state.reviewArchivalTiers?.archivedRecords?.length ?? 0,
     policyDecisions: state.policyDecisions.length,
     policyAuditTrail: state.policyAuditTrail.length,
+    shadowCandidates: Array.isArray(state.shadowCandidates) ? state.shadowCandidates.length : 0,
+    replayEvaluations: Array.isArray(state.replayEvaluations) ? state.replayEvaluations.length : 0,
   };
 
   return {
@@ -4657,6 +5152,10 @@ const runners = {
   reflect: runReflect,
   validate: runValidate,
   curate: runCurate,
+  shadow_write: runShadowWrite,
+  replay_eval: runReplayEval,
+  promote: runPromote,
+  demote: runDemote,
   curate_guarded: runCurateGuarded,
   guarded_curate: runCurateGuarded,
   secure_curate: runCurateGuarded,
@@ -4784,6 +5283,8 @@ export function snapshotProfile(profile = INTERNAL_PROFILE_ID, storeId = DEFAULT
       metadata: { ...(decision.metadata ?? {}) },
     })),
     policyAuditTrail: cloneStable(state.policyAuditTrail ?? [], []),
+    shadowCandidates: cloneStable(state.shadowCandidates ?? [], []),
+    replayEvaluations: cloneStable(state.replayEvaluations ?? [], []),
   };
 }
 
@@ -4829,6 +5330,8 @@ function serializeState(state) {
       metadata: { ...(decision.metadata ?? {}) },
     })),
     policyAuditTrail: cloneStable(state.policyAuditTrail ?? [], []),
+    shadowCandidates: cloneStable(state.shadowCandidates ?? [], []),
+    replayEvaluations: cloneStable(state.replayEvaluations ?? [], []),
   };
 }
 
@@ -4866,6 +5369,8 @@ function normalizeState(rawState) {
   const degradedTutorSessions = Array.isArray(state.degradedTutorSessions) ? state.degradedTutorSessions : [];
   const policyDecisions = Array.isArray(state.policyDecisions) ? state.policyDecisions : [];
   const policyAuditTrail = Array.isArray(state.policyAuditTrail) ? state.policyAuditTrail : [];
+  const shadowCandidates = Array.isArray(state.shadowCandidates) ? state.shadowCandidates : [];
+  const replayEvaluations = Array.isArray(state.replayEvaluations) ? state.replayEvaluations : [];
   const eventDigests = new Set(
     events
       .map((event) => (event && typeof event === "object" ? event.digest : null))
@@ -4975,6 +5480,31 @@ function normalizeState(rawState) {
       })),
       "recordedAt",
       "failureSignalId",
+    ),
+    shadowCandidates: sortByTimestampAndId(
+      shadowCandidates.map((candidate) => ({
+        ...candidate,
+        candidateId:
+          normalizeBoundedString(candidate?.candidateId, "shadowCandidates.candidateId", 64) ??
+          makeId("cand", hash(stableStringify(candidate))),
+        updatedAt: normalizeIsoTimestampOrFallback(candidate?.updatedAt, DEFAULT_VERSION_TIMESTAMP),
+        metadata: isPlainObject(candidate?.metadata) ? { ...candidate.metadata } : {},
+      })),
+      "updatedAt",
+      "candidateId",
+    ),
+    replayEvaluations: sortByTimestampAndId(
+      replayEvaluations.map((evaluation) => ({
+        ...evaluation,
+        replayEvalId:
+          normalizeBoundedString(evaluation?.replayEvalId, "replayEvaluations.replayEvalId", 64) ??
+          makeId("reval", hash(stableStringify(evaluation))),
+        evaluatedAt: normalizeIsoTimestampOrFallback(evaluation?.evaluatedAt, DEFAULT_VERSION_TIMESTAMP),
+        metrics: isPlainObject(evaluation?.metrics) ? stableSortObject(evaluation.metrics) : {},
+        metadata: isPlainObject(evaluation?.metadata) ? { ...evaluation.metadata } : {},
+      })),
+      "evaluatedAt",
+      "replayEvalId",
     ),
     schedulerClocks: {
       interactionTick: toNonNegativeInteger(state.schedulerClocks?.interactionTick, 0),

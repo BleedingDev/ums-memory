@@ -9,6 +9,7 @@ mcp_agent_mail/
 
 # generated build artifacts and runtime state
 dist/
+node_modules/
 .ums-state.json
 .ums-state.json.lock
 .DS_Store
