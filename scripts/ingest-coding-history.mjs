@@ -5,7 +5,7 @@ import { executeOperation } from "../apps/api/src/core.mjs";
 import { DEFAULT_SHARED_STATE_FILE, executeOperationWithSharedState } from "../apps/api/src/persistence.mjs";
 
 const DEFAULT_STORE_ID = "coding-agent";
-const DEFAULT_PROFILE = "agent-history";
+const DEFAULT_PROFILE = "agent-lessons-curated";
 const DEFAULT_REPORT_PATH = resolve(
   process.cwd(),
   "docs/reports/coding-agent-persistent-ingestion-summary.json",
@@ -14,6 +14,30 @@ const MAX_CONTENT_LENGTH = Number.parseInt(process.env.UMS_INGEST_MAX_CONTENT ||
 const MAX_FILES_PER_SOURCE = Number.parseInt(process.env.UMS_INGEST_MAX_FILES || "0", 10);
 const MAX_LINES_PER_FILE = Number.parseInt(process.env.UMS_INGEST_MAX_LINES || "0", 10);
 const CHUNK_SIZE = Number.parseInt(process.env.UMS_INGEST_CHUNK_SIZE || "250", 10);
+const MAX_LINE_LENGTH = Number.parseInt(process.env.UMS_INGEST_MAX_LINE_LENGTH || "12000", 10);
+const MIN_RULE_FREQUENCY = Number.parseInt(process.env.UMS_INGEST_MIN_RULE_FREQUENCY || "2", 10);
+const MIN_ANTIPATTERN_FREQUENCY = Number.parseInt(process.env.UMS_INGEST_MIN_ANTIPATTERN_FREQUENCY || "2", 10);
+const MAX_RULE_CANDIDATES = Number.parseInt(process.env.UMS_INGEST_MAX_RULE_CANDIDATES || "32", 10);
+const MAX_ANTIPATTERN_NOTES = Number.parseInt(process.env.UMS_INGEST_MAX_ANTIPATTERNS || "12", 10);
+
+const SENSITIVE_LINE_PATTERN =
+  /\b(?:openai|anthropic|claude|codex|github|stripe|aws|azure|gcp)[-_]?(?:api[_-]?)?key\b|\b(?:id_token|access_token|refresh_token|client_secret|bearer|jwt|password|passphrase)\b/i;
+const SENSITIVE_VALUE_PATTERN =
+  /(?:sk-[a-z0-9]{16,}|ghp_[a-z0-9]{16,}|github_pat_[a-z0-9_]{24,}|eyJ[a-zA-Z0-9_-]{20,}\.[a-zA-Z0-9._-]{20,}\.[a-zA-Z0-9._-]{20,})/i;
+const JSONISH_NOISE_PATTERN =
+  /\\[nrt]|"id_token"|"access_token"|"refresh_token"|"client_secret"|__typename|content-type:/i;
+
+const RULE_DIRECTIVE_PATTERN = /\b(always|must|should|need to|make sure|prefer|ensure|verify|run|avoid)\b/i;
+const RULE_WORKFLOW_PATTERN =
+  /\b(test|tests|benchmark|lint|typecheck|build|artifact|dist|state|store|memory|ingest|validate|deterministic|replay|timeout|flaky|regression|persistence)\b/i;
+const RULE_ACTION_PATTERN =
+  /\b(cli|api|db|sqlite|json|schema|contract|migration|release|deploy|command|flag|option|parameter|coverage|e2e|unit|integration|perf|performance|benchmark)\b/i;
+const RULE_BANNED_PATTERN =
+  /\b(?:http:\/\/|https:\/\/|www\.|token|id_token|openai_api_key|bearer|jwt|click|button|screenshot|image|browser|coderabbit|jira|pull request|pr|fucking|schaltwerk|gh cli|codex-native|@techsio|worktree)\b/i;
+
+const ANTIPATTERN_FAILURE_PATTERN = /\b(fail(?:ed|ure)?|blocked|timeout|flaky|regression|broken|error|crash)\b/i;
+const ANTIPATTERN_WORKFLOW_PATTERN =
+  /\b(build|test|tests|lint|typecheck|deploy|pipeline|validate|ingest|replay|ci|e2e|integration|unit|artifact|dist)\b/i;
 
 function parseArgs(argv) {
   const args = [...argv];
@@ -83,6 +107,11 @@ function printUsage() {
       "  UMS_INGEST_MAX_LINES=0 (all lines)",
       "  UMS_INGEST_MAX_CONTENT=2200",
       "  UMS_INGEST_CHUNK_SIZE=250",
+      "  UMS_INGEST_MAX_LINE_LENGTH=12000",
+      "  UMS_INGEST_MIN_RULE_FREQUENCY=2",
+      "  UMS_INGEST_MIN_ANTIPATTERN_FREQUENCY=2",
+      "  UMS_INGEST_MAX_RULE_CANDIDATES=32",
+      "  UMS_INGEST_MAX_ANTIPATTERNS=12",
     ].join("\n") + "\n",
   );
 }
@@ -100,6 +129,65 @@ function normalizeText(value) {
     return "";
   }
   return String(value).trim();
+}
+
+function shouldSkipRawLine(line) {
+  const text = normalizeText(line);
+  if (!text) {
+    return true;
+  }
+  if (text.length > MAX_LINE_LENGTH) {
+    return true;
+  }
+  if (SENSITIVE_LINE_PATTERN.test(text) || SENSITIVE_VALUE_PATTERN.test(text)) {
+    return true;
+  }
+  return false;
+}
+
+function redactSensitiveContent(value) {
+  let text = String(value ?? "");
+  text = text
+    .replace(
+      /\b(?:openai|anthropic|claude|codex|github|stripe|aws|azure|gcp)[-_]?(?:api[_-]?)?key\s*[:=]\s*["']?[^\s"']{6,}["']?/gi,
+      "[REDACTED_API_KEY]",
+    )
+    .replace(
+      /\b(?:id_token|access_token|refresh_token|client_secret|password|passphrase)\s*[:=]\s*["']?[^\s"']{6,}["']?/gi,
+      "[REDACTED_SECRET]",
+    )
+    .replace(/\b(?:bearer|jwt)\s+[a-z0-9._-]{16,}/gi, "[REDACTED_TOKEN]")
+    .replace(SENSITIVE_VALUE_PATTERN, "[REDACTED_TOKEN]");
+  return text;
+}
+
+function looksLikeNoiseBlob(value) {
+  const text = normalizeText(value);
+  if (!text) {
+    return true;
+  }
+  if (JSONISH_NOISE_PATTERN.test(text) && (text.match(/[:{}[\]"]/g)?.length ?? 0) > 24) {
+    return true;
+  }
+  const letterCount = (text.match(/[a-z]/gi) ?? []).length;
+  if (letterCount > 0) {
+    const nonWordRatio = (text.match(/[^\w\s]/g) ?? []).length / text.length;
+    if (nonWordRatio > 0.35 && letterCount / text.length < 0.45) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function sanitizeEventContent(value) {
+  const redacted = normalizeText(redactSensitiveContent(value));
+  if (!redacted) {
+    return "";
+  }
+  if (looksLikeNoiseBlob(redacted)) {
+    return "";
+  }
+  return truncate(redacted);
 }
 
 function listJsonlFiles(rootDirectory) {
@@ -237,6 +325,9 @@ async function loadConversationEvents({ files, source, storeId, profile }) {
       if (MAX_LINES_PER_FILE > 0 && lineIndex > MAX_LINES_PER_FILE) {
         break;
       }
+      if (shouldSkipRawLine(line)) {
+        continue;
+      }
       const parsed = tryParseJson(line);
       if (!parsed) {
         continue;
@@ -245,14 +336,19 @@ async function loadConversationEvents({ files, source, storeId, profile }) {
       if (!content) {
         continue;
       }
+      const safeContent = sanitizeEventContent(content);
+      if (!safeContent) {
+        continue;
+      }
       const role = pickRole(parsed).toLowerCase();
       const fileLabel = relative("/Users/satan", filePath) || filePath;
       const event = {
+        id: `${source}-${fileLabel}-${lineIndex - 1}`,
         type: "note",
         source,
-        content: truncate(content),
+        content: safeContent,
         timestamp: pickTimestamp(parsed),
-        tags: buildTags(content, source, role),
+        tags: buildTags(safeContent, source, role),
         metadata: {
           role,
           file: fileLabel,
@@ -281,13 +377,15 @@ function loadCassNcmPlanEvents({ storeId, profile }) {
     .filter(Boolean);
 
   const events = [];
-  for (const section of sections) {
+  for (let index = 0; index < sections.length; index += 1) {
+    const section = sections[index];
     const normalized = section.toLowerCase();
     if (!normalized.includes("cass") && !normalized.includes("ncm")) {
       continue;
     }
     const title = section.split("\n")[0] ?? "plan-section";
     events.push({
+      id: `implementation-plan-${index}`,
       type: "note",
       source: "implementation-plan",
       content: truncate(section, 1800),
@@ -312,18 +410,325 @@ function chunk(items, chunkSize) {
   return chunks;
 }
 
-function uniqueCandidates(candidates) {
-  const seen = new Set();
-  const deduped = [];
-  for (const candidate of Array.isArray(candidates) ? candidates : []) {
-    const statement = normalizeText(candidate?.statement).toLowerCase();
-    if (!statement || seen.has(statement)) {
+function normalizeLineForLesson(line) {
+  return normalizeText(line)
+    .replace(/^[-*>\d\).\s]+/, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function splitContentLines(content) {
+  return normalizeText(content)
+    .replace(/\r/g, "\n")
+    .split(/[\n.!?]+/g)
+    .map(normalizeLineForLesson)
+    .filter(Boolean);
+}
+
+function normalizeCandidateKey(line) {
+  return normalizeText(line)
+    .toLowerCase()
+    .replace(/[`"'()[\]{}<>]/g, " ")
+    .replace(/[:;,.!?/\\|]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function sanitizeRuleText(line) {
+  let text = normalizeText(line).replace(/[`*]/g, "").replace(/\s+/g, " ").trim();
+  if (!text) {
+    return "";
+  }
+  const openParens = (text.match(/\(/g) ?? []).length;
+  const closeParens = (text.match(/\)/g) ?? []).length;
+  if (openParens > closeParens) {
+    text = text.replace(/\([^)]*$/, "").trim();
+  }
+  if (text.length > 180) {
+    text = `${text.slice(0, 177).trimEnd()}...`;
+  }
+  return text;
+}
+
+function isActionableRuleLine(line) {
+  const text = normalizeText(line);
+  if (!text) {
+    return false;
+  }
+  if (text.length < 36 || text.length > 220) {
+    return false;
+  }
+  if ((text.match(/\s+/g)?.length ?? 0) < 5) {
+    return false;
+  }
+  if (text.startsWith("/") || text.includes('\\"') || text.includes("\\/")) {
+    return false;
+  }
+  if (text.endsWith(":") || text.includes("?")) {
+    return false;
+  }
+  if (/^(are|did|can|could|would|is|was|were|do you|did you)\b/i.test(text)) {
+    return false;
+  }
+  if (text.includes("\\n") || text.includes("```")) {
+    return false;
+  }
+  if (RULE_BANNED_PATTERN.test(text)) {
+    return false;
+  }
+  if (!RULE_DIRECTIVE_PATTERN.test(text) || !RULE_WORKFLOW_PATTERN.test(text)) {
+    return false;
+  }
+  if (!RULE_ACTION_PATTERN.test(text)) {
+    return false;
+  }
+  return true;
+}
+
+function isActionableAntiPatternLine(line) {
+  const text = normalizeText(line);
+  if (!text) {
+    return false;
+  }
+  if (text.length < 28 || text.length > 220) {
+    return false;
+  }
+  if ((text.match(/\s+/g)?.length ?? 0) < 3) {
+    return false;
+  }
+  if (text.includes("?") || text.includes("\\n") || text.endsWith(":")) {
+    return false;
+  }
+  if (RULE_BANNED_PATTERN.test(text)) {
+    return false;
+  }
+  if (!ANTIPATTERN_FAILURE_PATTERN.test(text) || !ANTIPATTERN_WORKFLOW_PATTERN.test(text)) {
+    return false;
+  }
+  return true;
+}
+
+const CANONICAL_RULE_DEFINITIONS = [
+  {
+    statement: "Run lint, typecheck, and build before closing an implementation task.",
+    test: (text) => /\blint\b/i.test(text) && /\b(typecheck|tsc)\b/i.test(text) && /\bbuild\b/i.test(text),
+  },
+  {
+    statement: "Run E2E tests for critical flows before release or handoff.",
+    test: (text) => /\b(e2e|playwright)\b/i.test(text),
+  },
+  {
+    statement: "Benchmark after performance-affecting changes and compare against a baseline.",
+    test: (text) => /\b(benchmark|perf|performance|latency|throughput)\b/i.test(text),
+  },
+  {
+    statement: "Validate tests against built artifacts, not only source files.",
+    test: (text) => /\b(artifact|dist|tarball|packed cli|compiled)\b/i.test(text),
+  },
+  {
+    statement: "Keep tests deterministic and preserve replay information (such as seeds) on failure.",
+    test: (text) => /\b(seed|deterministic|replay|fuzz)\b/i.test(text),
+  },
+  {
+    statement: "Validate integrations in realistic conditions before marking work complete.",
+    test: (text) => /\b(integration|real-world|real world|smoke test)\b/i.test(text),
+  },
+  {
+    statement: "Track benchmark deltas and enforce regression gates in CI.",
+    test: (text) => /\b(bench|regression|ci)\b/i.test(text),
+  },
+  {
+    statement: "Prefer one shared persisted state model across CLI and API surfaces.",
+    test: (text) => /\b(shared state|same state|cli and api|persistence|sqlite)\b/i.test(text),
+  },
+  {
+    statement: "Add or update automated tests whenever behavior or interfaces change.",
+    test: (text) => /\b(test|tests|coverage|unit|integration)\b/i.test(text) && /\b(change|new|update|behavior|interface)\b/i.test(text),
+  },
+  {
+    statement: "Keep failure triage actionable by linking issues to reproducible commands and checks.",
+    test: (text) => /\b(ready|triage|issue|reproduc|command|check)\b/i.test(text),
+  },
+];
+
+function buildCanonicalRuleCandidates(events) {
+  const matches = CANONICAL_RULE_DEFINITIONS.map((definition) => ({
+    statement: definition.statement,
+    sourceEventId: "unknown",
+    frequency: 0,
+  }));
+
+  for (const event of events) {
+    const text = normalizeText(event.content);
+    if (!text) {
       continue;
     }
-    seen.add(statement);
-    deduped.push(candidate);
+    for (let index = 0; index < CANONICAL_RULE_DEFINITIONS.length; index += 1) {
+      const definition = CANONICAL_RULE_DEFINITIONS[index];
+      if (!definition.test(text)) {
+        continue;
+      }
+      const entry = matches[index];
+      entry.frequency += 1;
+      if (entry.sourceEventId === "unknown" && event.id) {
+        entry.sourceEventId = event.id;
+      }
+    }
   }
-  return deduped;
+
+  return matches
+    .filter((entry) => entry.frequency > 0)
+    .sort((left, right) => right.frequency - left.frequency || left.statement.localeCompare(right.statement))
+    .map((entry) => ({
+      statement: entry.statement,
+      sourceEventId: entry.sourceEventId,
+      confidence: Math.min(0.96, 0.68 + Math.log2(entry.frequency + 1) * 0.07),
+      frequency: entry.frequency,
+    }));
+}
+
+function buildHeuristicRuleCandidates(events, maxCandidates = MAX_RULE_CANDIDATES) {
+  const buckets = new Map();
+
+  for (const event of events) {
+    const lines = splitContentLines(event.content);
+    for (const line of lines) {
+      const statement = sanitizeRuleText(line);
+      if (!isActionableRuleLine(statement)) {
+        continue;
+      }
+      const key = normalizeCandidateKey(statement);
+      if (!key) {
+        continue;
+      }
+      const existing = buckets.get(key) ?? {
+        statement,
+        sourceEventId: event.id,
+        count: 0,
+        sources: new Set(),
+      };
+      existing.count += 1;
+      existing.sources.add(event.source);
+      if (!existing.sourceEventId && event.id) {
+        existing.sourceEventId = event.id;
+      }
+      buckets.set(key, existing);
+    }
+  }
+
+  const sorted = [...buckets.values()].sort(
+    (left, right) =>
+      right.count - left.count ||
+      right.sources.size - left.sources.size ||
+      left.statement.localeCompare(right.statement),
+  );
+  const frequent = sorted.filter((entry) => entry.count >= MIN_RULE_FREQUENCY);
+  const selected = [...frequent];
+  if (selected.length < maxCandidates) {
+    for (const entry of sorted) {
+      if (selected.length >= maxCandidates) {
+        break;
+      }
+      if (selected.includes(entry)) {
+        continue;
+      }
+      selected.push(entry);
+    }
+  }
+
+  return selected.slice(0, maxCandidates).map((entry) => ({
+      statement: entry.statement,
+      sourceEventId: entry.sourceEventId || "unknown",
+      confidence: Math.min(0.97, 0.62 + Math.log2(entry.count + 1) * 0.08 + entry.sources.size * 0.03),
+      frequency: entry.count,
+    }));
+}
+
+function mergeRuleCandidates(candidateGroups, maxCandidates = MAX_RULE_CANDIDATES) {
+  const merged = new Map();
+  for (const group of candidateGroups) {
+    for (const candidate of Array.isArray(group) ? group : []) {
+      const statement = sanitizeRuleText(candidate?.statement);
+      if (!statement) {
+        continue;
+      }
+      const key = normalizeCandidateKey(statement);
+      if (!key) {
+        continue;
+      }
+      const existing = merged.get(key);
+      const normalizedCandidate = {
+        statement,
+        sourceEventId: candidate?.sourceEventId || "unknown",
+        confidence: Number(candidate?.confidence ?? 0.62),
+        frequency: Number(candidate?.frequency ?? 1),
+      };
+      if (!existing) {
+        merged.set(key, normalizedCandidate);
+        continue;
+      }
+      existing.frequency = Math.max(existing.frequency, normalizedCandidate.frequency);
+      existing.confidence = Math.max(existing.confidence, normalizedCandidate.confidence);
+      if (existing.sourceEventId === "unknown" && normalizedCandidate.sourceEventId !== "unknown") {
+        existing.sourceEventId = normalizedCandidate.sourceEventId;
+      }
+    }
+  }
+  return [...merged.values()]
+    .sort((left, right) => right.frequency - left.frequency || right.confidence - left.confidence)
+    .slice(0, maxCandidates);
+}
+
+function sanitizeAntiPatternText(value) {
+  return normalizeText(value)
+    .replace(/[✖✔⚠️✅•◆]/g, "")
+    .replace(/`/g, "")
+    .replace(/\s+/g, " ")
+    .replace(/[:\-–—]{2,}/g, ":")
+    .trim()
+    .replace(/["']+$/, "")
+    .replace(/[.!?]+$/, "")
+    .trim();
+}
+
+function extractActionableAntiPatterns(values, maxNotes = MAX_ANTIPATTERN_NOTES) {
+  const deduped = Array.from(
+    new Map(
+      (Array.isArray(values) ? values : [])
+        .map((raw) => sanitizeAntiPatternText(raw))
+        .filter((note) => isActionableAntiPatternLine(note))
+        .map((note) => [normalizeCandidateKey(note), note]),
+    ).values(),
+  );
+  return deduped.slice(0, maxNotes);
+}
+
+function buildHeuristicAntiPatternNotes(events, maxNotes = MAX_ANTIPATTERN_NOTES) {
+  const buckets = new Map();
+
+  for (const event of events) {
+    const lines = splitContentLines(event.content);
+    for (const line of lines) {
+      const note = sanitizeAntiPatternText(line);
+      if (!isActionableAntiPatternLine(note)) {
+        continue;
+      }
+      const key = normalizeCandidateKey(note);
+      if (!key) {
+        continue;
+      }
+      const existing = buckets.get(key) ?? { note, count: 0 };
+      existing.count += 1;
+      buckets.set(key, existing);
+    }
+  }
+
+  const notes = [...buckets.values()]
+    .filter((entry) => entry.count >= MIN_ANTIPATTERN_FREQUENCY)
+    .sort((left, right) => right.count - left.count || left.note.localeCompare(right.note))
+    .slice(0, maxNotes * 2)
+    .map((entry) => entry.note);
+  return extractActionableAntiPatterns(notes, maxNotes);
 }
 
 function toLearningInsights(contextPayload) {
@@ -395,27 +800,42 @@ async function main(argv = process.argv.slice(2)) {
     operation: "curate",
     stateFile: parsed.stateFile,
     executor: () => {
-      const reflect = executeOperation("reflect", {
-        storeId: parsed.storeId,
-        profile: parsed.profile,
-        maxCandidates: 48,
-      });
+      const canonicalCandidates = buildCanonicalRuleCandidates(allEvents);
+      const heuristicCandidates = buildHeuristicRuleCandidates(allEvents, MAX_RULE_CANDIDATES);
+      const highSignalHeuristics = heuristicCandidates.filter(
+        (candidate) =>
+          candidate.confidence >= 0.82 &&
+          !/[^\x00-\x7F]/.test(candidate.statement) &&
+          !/\b(@techsio|gskill|api keys|dockerfile|playwright_workers)\b/i.test(candidate.statement),
+      );
+      const combinedCandidates = mergeRuleCandidates([canonicalCandidates], MAX_RULE_CANDIDATES);
       const validate = executeOperation("validate", {
         storeId: parsed.storeId,
         profile: parsed.profile,
-        candidates: reflect.candidates,
+        candidates: combinedCandidates,
       });
-      const validCandidateIds = new Set(
-        validate.validations.filter((entry) => entry.valid).map((entry) => entry.candidateId),
-      );
-      const curatedCandidates = uniqueCandidates(
-        reflect.candidates.filter((candidate) => validCandidateIds.has(candidate.candidateId)),
-      );
+      const curatedCandidates = combinedCandidates.filter((_, index) => validate.validations[index]?.valid);
       const curate = executeOperation("curate", {
         storeId: parsed.storeId,
         profile: parsed.profile,
         candidates: curatedCandidates,
       });
+      const antiPatternNotes =
+        ingestion.accepted > 0 ? buildHeuristicAntiPatternNotes(allEvents, MAX_ANTIPATTERN_NOTES) : [];
+      const antiPatternSignals = [];
+      if (antiPatternNotes.length > 0) {
+        const defaultRuleId = curate.applied[0]?.ruleId ?? "history-ingest";
+        for (const note of antiPatternNotes) {
+          const feedback = executeOperation("feedback", {
+            storeId: parsed.storeId,
+            profile: parsed.profile,
+            targetRuleId: defaultRuleId,
+            signal: "harmful",
+            note,
+          });
+          antiPatternSignals.push(feedback);
+        }
+      }
       const audit = executeOperation("audit", {
         storeId: parsed.storeId,
         profile: parsed.profile,
@@ -441,9 +861,13 @@ async function main(argv = process.argv.slice(2)) {
         profile: parsed.profile,
       });
       return {
-        reflect,
+        canonicalCandidates,
+        heuristicCandidates,
+        highSignalHeuristics,
+        combinedCandidates,
         validate,
         curate,
+        antiPatternSignals,
         audit,
         exported,
         cassContext,
@@ -471,13 +895,17 @@ async function main(argv = process.argv.slice(2)) {
       chunks: ingestion.chunkCount,
     },
     learning: {
-      candidatesGenerated: learning.reflect.candidateCount,
+      candidatesGenerated: learning.combinedCandidates.length,
       candidatesValidated: learning.validate.checked,
       rulesApplied: learning.curate.applied.length,
       totalRules: learning.curate.totalRules,
+      antiPatternSignalsApplied: learning.antiPatternSignals.length,
+      canonicalCandidatesGenerated: learning.canonicalCandidates.length,
+      heuristicCandidatesGenerated: learning.heuristicCandidates.length,
+      highSignalHeuristicCandidatesGenerated: learning.highSignalHeuristics.length,
       auditChecks: learning.audit.checks,
       topRules: learning.exported.playbook.topRules,
-      antiPatterns: learning.exported.playbook.antiPatterns,
+      antiPatterns: extractActionableAntiPatterns(learning.exported.playbook.antiPatterns, MAX_ANTIPATTERN_NOTES),
       cassEvidence: toLearningInsights(learning.cassContext),
       ncmEvidence: toLearningInsights(learning.ncmContext),
       doctorStatus: learning.doctor.status,

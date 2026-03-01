@@ -1,25 +1,29 @@
 {
-  "generatedAt": "2026-03-01T09:50:15.445Z",
+  "generatedAt": "2026-03-01T10:25:04.128Z",
   "mode": "coding-agent-only-persistent",
   "stateFile": ".ums-state.json",
   "storeId": "coding-agent",
-  "profile": "agent-history",
+  "profile": "agent-lessons-curated-v7",
   "sources": {
-    "codexJsonlFiles": 6802,
-    "claudeJsonlFiles": 194,
+    "codexJsonlFiles": 6807,
+    "claudeJsonlFiles": 199,
     "planEvents": 10
   },
   "events": {
-    "prepared": 6746,
-    "ingestedAccepted": 0,
-    "ingestedDuplicates": 6746,
-    "chunks": 27
+    "prepared": 6157,
+    "ingestedAccepted": 6136,
+    "ingestedDuplicates": 21,
+    "chunks": 25
   },
   "learning": {
-    "candidatesGenerated": 48,
-    "candidatesValidated": 48,
-    "rulesApplied": 2,
-    "totalRules": 48,
+    "candidatesGenerated": 10,
+    "candidatesValidated": 10,
+    "rulesApplied": 10,
+    "totalRules": 10,
+    "antiPatternSignalsApplied": 8,
+    "canonicalCandidatesGenerated": 10,
+    "heuristicCandidatesGenerated": 15,
+    "highSignalHeuristicCandidatesGenerated": 1,
     "auditChecks": [
       {
         "name": "events_present",
@@ -31,95 +35,101 @@
       },
       {
         "name": "duplicate_rules",
-        "status": "warn"
+        "status": "pass"
       }
     ],
     "topRules": [
       {
-        "ruleId": "cand_55d2a36c6cd4",
-        "statement": "Prefer source=claude-code for type=note",
-        "confidence": 0.6
+        "ruleId": "cand_5342421e4cd4",
+        "statement": "Keep failure triage actionable by linking issues to reproducible commands and checks.",
+        "confidence": 0.96
       },
       {
-        "ruleId": "cand_796abff38b92",
-        "statement": "Prefer source=claude-code for type=note",
-        "confidence": 0.6
+        "ruleId": "cand_321282cda756",
+        "statement": "Benchmark after performance-affecting changes and compare against a baseline.",
+        "confidence": 0.96
       },
       {
-        "ruleId": "cand_13f2f4ba2ad8",
-        "statement": "Prefer source=claude-code for type=note",
-        "confidence": 0.6
+        "ruleId": "cand_4d71edcd7a2c",
+        "statement": "Add or update automated tests whenever behavior or interfaces change.",
+        "confidence": 0.96
       },
       {
-        "ruleId": "cand_2436715e11e9",
-        "statement": "Prefer source=claude-code for type=note",
-        "confidence": 0.6
+        "ruleId": "cand_ee09999062fb",
+        "statement": "Track benchmark deltas and enforce regression gates in CI.",
+        "confidence": 0.96
       },
       {
-        "ruleId": "cand_c2f7757e9ef8",
-        "statement": "Prefer source=claude-code for type=note",
-        "confidence": 0.6
+        "ruleId": "cand_6f8ab5dcca45",
+        "statement": "Validate integrations in realistic conditions before marking work complete.",
+        "confidence": 0.96
       }
     ],
-    "antiPatterns": [],
+    "antiPatterns": [
+      "TypeScript typecheck via tsc failed",
+      "Are random/fuzz tests seeded + seed printed on failure",
+      "error: Recipe lint failed on line 35 with exit code 1",
+      "Show a test that would fail if mapping is off-by-one",
+      "Show bench baseline + latest bench delta; what fails CI on regression"
+    ],
     "cassEvidence": [
       {
-        "eventId": "evt_ccd93e97cded",
+        "eventId": "codex-cli-.codex/history.jsonl-5430",
         "source": "codex-cli",
         "content": "But I was told this:\n# Launch the swarm with NTM\nntm spawn cass-memory --cc=6 --cod=3 --gmi=2\n\n# Each agent runs this workflow:\n# 1. Check what's ready\nbv --robot-triage\n\n# 2. Clai"
       },
       {
-        "eventId": "evt_2d03422d2593",
+        "eventId": "codex-cli-.codex/history.jsonl-5542",
         "source": "codex-cli",
         "content": "Alright, can we now let ums go through ALL my history with agents and learn from it (both CASS part and NCM part of our implementation)."
       },
       {
-        "eventId": "evt_8af8cb9b5988",
+        "eventId": "implementation-plan-0",
         "source": "implementation-plan",
         "content": "# PLAN_FOR_UNIVERSAL_MEMORY_SYSTEM.md\n**Project:** Universal Memory System (UMS) — persistent memory across coding agents + chat UIs  \n**Goal:** One memory substrate, many LLMs. Mu"
       },
       {
-        "eventId": "evt_5194aeb1eeeb",
+        "eventId": "implementation-plan-1",
         "source": "implementation-plan",
         "content": "Table of Contents (11 Major Sections)\n1. Executive Summary  \n2. Core Architecture  \n3. Conceptual Data Model (no schema yet)  \n4. API / CLI Surface (commands & JSON contracts)  \n5."
       },
       {
-        "eventId": "evt_df393dbab56e",
+        "eventId": "implementation-plan-3",
         "source": "implementation-plan",
         "content": "The Solution (UMS)\nA memory system that treats “memory” as a **closed-loop control system**, not just a database:\n\n### Three-layer cognitive architecture (CASS-style)\n- **Episodic "
       }
     ],
     "ncmEvidence": [
       {
-        "eventId": "evt_2d03422d2593",
+        "eventId": "codex-cli-.codex/history.jsonl-5542",
         "source": "codex-cli",
         "content": "Alright, can we now let ums go through ALL my history with agents and learn from it (both CASS part and NCM part of our implementation)."
       },
       {
-        "eventId": "evt_47f297c50754",
+        "eventId": "codex-cli-.codex/history.jsonl-5545",
         "source": "codex-cli",
         "content": "> vytvoř systémový diagram pls\n\n  Tohle po nás chce kamarád Jirka, který se mnou na memory systému spolupracuje (není to autor NCM, ale má stejnou/podobnou myšlenku)."
       },
       {
-        "eventId": "evt_2a433ae620ae",
-        "source": "codex-cli",
-        "content": "{\"output\":\"{\\n  \\\"OPENAI_API_KEY\\\": null,\\n  \\\"tokens\\\": {\\n    \\\"id_token\\\": \\\"eyJhbGciOiJSUzI1NiIsImtpZCI6ImIxZGQzZjhmLTlhYWQtNDdmZS1iMGU3LWVkYjAwOTc3N2Q2YiIsInR5cCI6IkpXVCJ9.eyJ"
-      },
-      {
-        "eventId": "evt_8af8cb9b5988",
+        "eventId": "implementation-plan-0",
         "source": "implementation-plan",
         "content": "# PLAN_FOR_UNIVERSAL_MEMORY_SYSTEM.md\n**Project:** Universal Memory System (UMS) — persistent memory across coding agents + chat UIs  \n**Goal:** One memory substrate, many LLMs. Mu"
       },
       {
-        "eventId": "evt_5194aeb1eeeb",
+        "eventId": "implementation-plan-1",
         "source": "implementation-plan",
         "content": "Table of Contents (11 Major Sections)\n1. Executive Summary  \n2. Core Architecture  \n3. Conceptual Data Model (no schema yet)  \n4. API / CLI Surface (commands & JSON contracts)  \n5."
+      },
+      {
+        "eventId": "implementation-plan-3",
+        "source": "implementation-plan",
+        "content": "The Solution (UMS)\nA memory system that treats “memory” as a **closed-loop control system**, not just a database:\n\n### Three-layer cognitive architecture (CASS-style)\n- **Episodic "
       }
     ],
     "doctorStatus": {
-      "events": 6727,
-      "rules": 48,
-      "feedback": 0,
+      "events": 6136,
+      "rules": 10,
+      "feedback": 8,
       "outcomes": 0,
       "learnerProfiles": 0,
       "identityGraphEdges": 0,
