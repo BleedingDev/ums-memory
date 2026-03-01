@@ -87,6 +87,578 @@ const unwrapFailure = (eitherResult) => {
   return eitherResult.left;
 };
 
+const seedScopeLatticeAnchors = (
+  db,
+  tenantId,
+  {
+    projectIds = [],
+    roleIds = [],
+    userIds = [],
+  } = {},
+) => {
+  const now = 1_700_000_000_000;
+  db.prepare(
+    "INSERT OR IGNORE INTO tenants (tenant_id, tenant_slug, display_name, created_at_ms, updated_at_ms) VALUES (?, ?, ?, ?, ?);",
+  ).run(tenantId, tenantId, tenantId, now, now);
+
+  for (const userId of userIds) {
+    db.prepare(
+      "INSERT OR IGNORE INTO users (tenant_id, user_id, email, display_name, status, created_at_ms, updated_at_ms) VALUES (?, ?, ?, ?, ?, ?, ?);",
+    ).run(tenantId, userId, `${userId}@example.com`, userId, "active", now, now);
+  }
+
+  for (const projectId of projectIds) {
+    db.prepare(
+      "INSERT OR IGNORE INTO projects (tenant_id, project_id, project_key, display_name, status, created_at_ms, archived_at_ms) VALUES (?, ?, ?, ?, ?, ?, ?);",
+    ).run(tenantId, projectId, `KEY_${projectId}`, projectId, "active", now, null);
+  }
+
+  for (const roleId of roleIds) {
+    db.prepare(
+      "INSERT OR IGNORE INTO roles (tenant_id, role_id, role_code, display_name, role_type, created_at_ms) VALUES (?, ?, ?, ?, ?, ?);",
+    ).run(tenantId, roleId, `ROLE_${roleId}`, roleId, "project", now);
+  }
+};
+
+test("ums-memory-5cb.4: sqlite storage service resolves common/project/job_role/user scopes when scopeId is omitted", async () => {
+  const storageServiceModule = await loadStorageServiceModule();
+  const db = new DatabaseSync(":memory:");
+
+  try {
+    const storageService = storageServiceModule.makeSqliteStorageService(db);
+    const tenantId = "tenant-scope-lattice";
+    const projectId = "project-alpha";
+    const roleId = "role-editor";
+    const userId = "user-learner";
+    seedScopeLatticeAnchors(db, tenantId, {
+      projectIds: [projectId],
+      roleIds: [roleId],
+      userIds: [userId],
+    });
+
+    Effect.runSync(
+      storageService.upsertMemory({
+        spaceId: tenantId,
+        memoryId: "memory-common",
+        layer: "working",
+        payload: {
+          title: "Common fallback write",
+          updatedAtMillis: 1_700_000_000_001,
+        },
+      }),
+    );
+    Effect.runSync(
+      storageService.upsertMemory({
+        spaceId: tenantId,
+        memoryId: "memory-project",
+        layer: "working",
+        payload: {
+          title: "Project anchored write",
+          scope: {
+            projectId,
+          },
+          updatedAtMillis: 1_700_000_000_002,
+        },
+      }),
+    );
+    Effect.runSync(
+      storageService.upsertMemory({
+        spaceId: tenantId,
+        memoryId: "memory-role",
+        layer: "working",
+        payload: {
+          title: "Role anchored write",
+          scope: {
+            roleId,
+          },
+          updatedAtMillis: 1_700_000_000_003,
+        },
+      }),
+    );
+    Effect.runSync(
+      storageService.upsertMemory({
+        spaceId: tenantId,
+        memoryId: "memory-user",
+        layer: "working",
+        payload: {
+          title: "User anchored write",
+          scope: {
+            userId,
+          },
+          updatedAtMillis: 1_700_000_000_004,
+        },
+      }),
+    );
+
+    const persistedScopeRows = db
+      .prepare(
+        "SELECT memory_id, scope_id FROM memory_items WHERE tenant_id = ? ORDER BY memory_id ASC;",
+      )
+      .all(tenantId);
+    const scopeIdByMemoryId = new Map(
+      persistedScopeRows.map((row) => [row.memory_id, row.scope_id]),
+    );
+    assert.equal(scopeIdByMemoryId.get("memory-common"), `common:${tenantId}`);
+    assert.equal(scopeIdByMemoryId.get("memory-project"), `project:${tenantId}:${projectId}`);
+    assert.equal(scopeIdByMemoryId.get("memory-role"), `job_role:${tenantId}:${roleId}`);
+    assert.equal(scopeIdByMemoryId.get("memory-user"), `user:${tenantId}:${userId}`);
+
+    const commonScopeRow = db
+      .prepare(
+        "SELECT scope_id, parent_scope_id FROM scopes WHERE tenant_id = ? AND scope_level = 'common';",
+      )
+      .get(tenantId);
+    const projectScopeRow = db
+      .prepare(
+        "SELECT scope_id, parent_scope_id FROM scopes WHERE tenant_id = ? AND scope_level = 'project' AND project_id = ?;",
+      )
+      .get(tenantId, projectId);
+    const roleScopeRow = db
+      .prepare(
+        "SELECT scope_id, parent_scope_id FROM scopes WHERE tenant_id = ? AND scope_level = 'job_role' AND role_id = ?;",
+      )
+      .get(tenantId, roleId);
+    const userScopeRow = db
+      .prepare(
+        "SELECT scope_id, parent_scope_id FROM scopes WHERE tenant_id = ? AND scope_level = 'user' AND user_id = ?;",
+      )
+      .get(tenantId, userId);
+
+    assert.ok(commonScopeRow);
+    assert.ok(projectScopeRow);
+    assert.ok(roleScopeRow);
+    assert.ok(userScopeRow);
+    assert.equal(commonScopeRow.scope_id, `common:${tenantId}`);
+    assert.equal(commonScopeRow.parent_scope_id, null);
+    assert.equal(projectScopeRow.parent_scope_id, commonScopeRow.scope_id);
+    assert.equal(roleScopeRow.parent_scope_id, commonScopeRow.scope_id);
+    assert.equal(userScopeRow.parent_scope_id, commonScopeRow.scope_id);
+  } finally {
+    db.close();
+  }
+});
+
+test("ums-memory-5cb.4: sqlite storage service applies deterministic precedence and stable scope reuse", async () => {
+  const storageServiceModule = await loadStorageServiceModule();
+  const db = new DatabaseSync(":memory:");
+
+  try {
+    const storageService = storageServiceModule.makeSqliteStorageService(db);
+    const tenantId = "tenant-scope-precedence";
+    const projectId = "project-saturn";
+    const roleId = "role-mentor";
+    const userId = "user-priority";
+    seedScopeLatticeAnchors(db, tenantId, {
+      projectIds: [projectId],
+      roleIds: [roleId],
+      userIds: [userId],
+    });
+
+    Effect.runSync(
+      storageService.upsertMemory({
+        spaceId: tenantId,
+        memoryId: "memory-user-priority",
+        layer: "working",
+        payload: {
+          title: "User wins over role and project",
+          scope: {
+            userId,
+            roleId,
+            projectId,
+          },
+          updatedAtMillis: 1_700_000_000_101,
+        },
+      }),
+    );
+    Effect.runSync(
+      storageService.upsertMemory({
+        spaceId: tenantId,
+        memoryId: "memory-user-replay",
+        layer: "working",
+        payload: {
+          title: "Replay with user-only anchor must reuse existing user scope",
+          scope: {
+            userId,
+          },
+          updatedAtMillis: 1_700_000_000_102,
+        },
+      }),
+    );
+    Effect.runSync(
+      storageService.upsertMemory({
+        spaceId: tenantId,
+        memoryId: "memory-role-priority",
+        layer: "working",
+        payload: {
+          title: "Role wins over project",
+          scope: {
+            roleId,
+            projectId,
+          },
+          updatedAtMillis: 1_700_000_000_103,
+        },
+      }),
+    );
+    Effect.runSync(
+      storageService.upsertMemory({
+        spaceId: tenantId,
+        memoryId: "memory-project-priority",
+        layer: "working",
+        payload: {
+          title: "Project wins over common",
+          scope: {
+            projectId,
+          },
+          updatedAtMillis: 1_700_000_000_104,
+        },
+      }),
+    );
+
+    const scopeIdRows = db
+      .prepare("SELECT memory_id, scope_id FROM memory_items WHERE tenant_id = ? ORDER BY memory_id ASC;")
+      .all(tenantId);
+    const scopeIdByMemoryId = new Map(scopeIdRows.map((row) => [row.memory_id, row.scope_id]));
+    assert.equal(scopeIdByMemoryId.get("memory-user-priority"), `user:${tenantId}:${userId}`);
+    assert.equal(scopeIdByMemoryId.get("memory-user-replay"), `user:${tenantId}:${userId}`);
+    assert.equal(scopeIdByMemoryId.get("memory-role-priority"), `job_role:${tenantId}:${roleId}`);
+    assert.equal(scopeIdByMemoryId.get("memory-project-priority"), `project:${tenantId}:${projectId}`);
+
+    const userScopeRow = db
+      .prepare(
+        "SELECT scope_id, parent_scope_id FROM scopes WHERE tenant_id = ? AND scope_level = 'user' AND user_id = ?;",
+      )
+      .get(tenantId, userId);
+    assert.ok(userScopeRow);
+    assert.equal(userScopeRow.scope_id, `user:${tenantId}:${userId}`);
+    assert.equal(userScopeRow.parent_scope_id, `job_role:${tenantId}:${roleId}`);
+
+    const scopeCountRows = db
+      .prepare(
+        "SELECT scope_level, COUNT(*) AS row_count FROM scopes WHERE tenant_id = ? GROUP BY scope_level ORDER BY scope_level ASC;",
+      )
+      .all(tenantId);
+    const rowCountByScopeLevel = new Map(
+      scopeCountRows.map((row) => [row.scope_level, Number(row.row_count)]),
+    );
+    assert.equal(rowCountByScopeLevel.get("common"), 1);
+    assert.equal(rowCountByScopeLevel.get("project"), 1);
+    assert.equal(rowCountByScopeLevel.get("job_role"), 1);
+    assert.equal(rowCountByScopeLevel.get("user"), 1);
+  } finally {
+    db.close();
+  }
+});
+
+test("ums-memory-5cb.4: createdByUserId remains audit-only and does not select scope", async () => {
+  const storageServiceModule = await loadStorageServiceModule();
+  const db = new DatabaseSync(":memory:");
+
+  try {
+    const storageService = storageServiceModule.makeSqliteStorageService(db);
+    const tenantId = "tenant-scope-metadata";
+    const projectId = "project-meta";
+    const roleId = "role-meta";
+    const userId = "user-meta";
+    seedScopeLatticeAnchors(db, tenantId, {
+      projectIds: [projectId],
+      roleIds: [roleId],
+      userIds: [userId],
+    });
+
+    Effect.runSync(
+      storageService.upsertMemory({
+        spaceId: tenantId,
+        memoryId: "memory-metadata-opaque",
+        layer: "working",
+        payload: {
+          title: "createdByUserId should not select scope",
+          projectHint: projectId,
+          roleHint: roleId,
+          userHint: userId,
+          createdByUserId: userId,
+          updatedAtMillis: 1_700_000_000_150,
+        },
+      }),
+    );
+
+    const persistedRow = db
+      .prepare(
+        "SELECT scope_id, created_by_user_id FROM memory_items WHERE tenant_id = ? AND memory_id = ?;",
+      )
+      .get(tenantId, "memory-metadata-opaque");
+    assert.ok(persistedRow);
+    assert.equal(persistedRow.scope_id, `common:${tenantId}`);
+    assert.equal(persistedRow.created_by_user_id, userId);
+  } finally {
+    db.close();
+  }
+});
+
+test("ums-memory-5cb.4: conflicting user parent anchors fail deterministically", async () => {
+  const storageServiceModule = await loadStorageServiceModule();
+  const db = new DatabaseSync(":memory:");
+
+  try {
+    const storageService = storageServiceModule.makeSqliteStorageService(db);
+    const tenantId = "tenant-scope-conflict";
+    const projectId = "project-conflict";
+    const roleId = "role-conflict";
+    const userId = "user-conflict";
+    seedScopeLatticeAnchors(db, tenantId, {
+      projectIds: [projectId],
+      roleIds: [roleId],
+      userIds: [userId],
+    });
+
+    Effect.runSync(
+      storageService.upsertMemory({
+        spaceId: tenantId,
+        memoryId: "memory-user-role-parent",
+        layer: "working",
+        payload: {
+          title: "Creates user scope with role parent",
+          scope: {
+            userId,
+            roleId,
+          },
+          updatedAtMillis: 1_700_000_000_160,
+        },
+      }),
+    );
+
+    const conflictEither = Effect.runSync(
+      Effect.either(
+        storageService.upsertMemory({
+          spaceId: tenantId,
+          memoryId: "memory-user-project-parent",
+          layer: "working",
+          payload: {
+            title: "Conflicting parent anchor",
+            scope: {
+              userId,
+              projectId,
+            },
+            updatedAtMillis: 1_700_000_000_161,
+          },
+        }),
+      ),
+    );
+    const conflictFailure = unwrapFailure(conflictEither);
+
+    assert.equal(conflictFailure._tag, "ContractValidationError");
+    assert.equal(conflictFailure.contract, "StorageUpsertRequest.payload");
+    assert.match(conflictFailure.details, /anchors conflict/i);
+  } finally {
+    db.close();
+  }
+});
+
+test("ums-memory-5cb.4: accepts legacy root scopeId when payload.scope is absent", async () => {
+  const storageServiceModule = await loadStorageServiceModule();
+  const db = new DatabaseSync(":memory:");
+
+  try {
+    const storageService = storageServiceModule.makeSqliteStorageService(db);
+    const tenantId = "tenant-scope-legacy";
+    const commonScopeId = `common:${tenantId}`;
+
+    Effect.runSync(
+      storageService.upsertMemory({
+        spaceId: tenantId,
+        memoryId: "memory-bootstrap-common",
+        layer: "working",
+        payload: {
+          title: "Bootstrap common scope",
+          updatedAtMillis: 1_700_000_000_169,
+        },
+      }),
+    );
+    Effect.runSync(
+      storageService.upsertMemory({
+        spaceId: tenantId,
+        memoryId: "memory-legacy-root-scope-id",
+        layer: "working",
+        payload: {
+          title: "Legacy root scope key stays supported",
+          scopeId: commonScopeId,
+          updatedAtMillis: 1_700_000_000_170,
+        },
+      }),
+    );
+
+    const persistedRow = db
+      .prepare("SELECT scope_id FROM memory_items WHERE tenant_id = ? AND memory_id = ?;")
+      .get(tenantId, "memory-legacy-root-scope-id");
+    assert.ok(persistedRow);
+    assert.equal(persistedRow.scope_id, commonScopeId);
+  } finally {
+    db.close();
+  }
+});
+
+test("ums-memory-5cb.4: rejects invalid payload.scope shapes and mixed legacy controls", async () => {
+  const storageServiceModule = await loadStorageServiceModule();
+  const db = new DatabaseSync(":memory:");
+
+  try {
+    const storageService = storageServiceModule.makeSqliteStorageService(db);
+    const invalidRequests = [
+      {
+        memoryId: "memory-scope-mixed-legacy",
+        payload: {
+          title: "Legacy root scope key cannot mix with payload.scope controls",
+          scopeId: "common:tenant-scope-shape",
+          scope: {
+            userId: "user-shape",
+          },
+          updatedAtMillis: 1_700_000_000_170,
+        },
+      },
+      {
+        memoryId: "memory-scope-null",
+        payload: {
+          title: "Invalid null scope",
+          scope: null,
+          updatedAtMillis: 1_700_000_000_171,
+        },
+      },
+      {
+        memoryId: "memory-scope-array",
+        payload: {
+          title: "Invalid array scope",
+          scope: [],
+          updatedAtMillis: 1_700_000_000_172,
+        },
+      },
+      {
+        memoryId: "memory-scope-string",
+        payload: {
+          title: "Invalid string scope",
+          scope: "invalid",
+          updatedAtMillis: 1_700_000_000_173,
+        },
+      },
+    ];
+
+    for (const invalidRequest of invalidRequests) {
+      const upsertEither = Effect.runSync(
+        Effect.either(
+          storageService.upsertMemory({
+            spaceId: "tenant-scope-shape",
+            memoryId: invalidRequest.memoryId,
+            layer: "working",
+            payload: invalidRequest.payload,
+          }),
+        ),
+      );
+      const upsertFailure = unwrapFailure(upsertEither);
+
+      assert.equal(upsertFailure._tag, "ContractValidationError");
+      assert.equal(upsertFailure.contract, "StorageUpsertRequest.payload");
+      assert.match(upsertFailure.details, /payload\.scope|cannot be combined/i);
+    }
+  } finally {
+    db.close();
+  }
+});
+
+test("ums-memory-5cb.4: rejects unknown project/role/user scope anchors with contract validation errors", async () => {
+  const storageServiceModule = await loadStorageServiceModule();
+  const db = new DatabaseSync(":memory:");
+
+  try {
+    const storageService = storageServiceModule.makeSqliteStorageService(db);
+    const invalidAnchoredRequests = [
+      {
+        memoryId: "memory-project-anchor-missing",
+        payload: {
+          title: "Project anchor must exist",
+          scope: {
+            projectId: "project-missing",
+          },
+          updatedAtMillis: 1_700_000_000_180,
+        },
+        expectedAnchor: "project",
+      },
+      {
+        memoryId: "memory-role-anchor-missing",
+        payload: {
+          title: "Role anchor must exist",
+          scope: {
+            roleId: "role-missing",
+          },
+          updatedAtMillis: 1_700_000_000_181,
+        },
+        expectedAnchor: "role",
+      },
+      {
+        memoryId: "memory-user-anchor-missing",
+        payload: {
+          title: "User anchor must exist",
+          scope: {
+            userId: "user-missing",
+          },
+          updatedAtMillis: 1_700_000_000_182,
+        },
+        expectedAnchor: "user",
+      },
+    ];
+
+    for (const requestUnderTest of invalidAnchoredRequests) {
+      const upsertEither = Effect.runSync(
+        Effect.either(
+          storageService.upsertMemory({
+            spaceId: "tenant-missing-anchors",
+            memoryId: requestUnderTest.memoryId,
+            layer: "working",
+            payload: requestUnderTest.payload,
+          }),
+        ),
+      );
+      const upsertFailure = unwrapFailure(upsertEither);
+
+      assert.equal(upsertFailure._tag, "ContractValidationError");
+      assert.equal(upsertFailure.contract, "StorageUpsertRequest.payload");
+      assert.match(upsertFailure.details, new RegExp(`unknown tenant ${requestUnderTest.expectedAnchor} anchor`, "i"));
+    }
+  } finally {
+    db.close();
+  }
+});
+
+test("ums-memory-5cb.4: rejects mixed explicit scopeId and scope anchors", async () => {
+  const storageServiceModule = await loadStorageServiceModule();
+  const db = new DatabaseSync(":memory:");
+
+  try {
+    const storageService = storageServiceModule.makeSqliteStorageService(db);
+    const upsertEither = Effect.runSync(
+      Effect.either(
+        storageService.upsertMemory({
+          spaceId: "tenant-scope-mixed",
+          memoryId: "memory-mixed-scope-controls",
+          layer: "working",
+          payload: {
+            title: "Invalid mixed scope controls",
+            scope: {
+              scopeId: "user:tenant-scope-mixed:user-a",
+              userId: "user-a",
+            },
+            updatedAtMillis: 1_700_000_000_174,
+          },
+        }),
+      ),
+    );
+    const upsertFailure = unwrapFailure(upsertEither);
+
+    assert.equal(upsertFailure._tag, "ContractValidationError");
+    assert.equal(upsertFailure.contract, "StorageUpsertRequest.payload");
+    assert.match(upsertFailure.details, /cannot be combined/i);
+  } finally {
+    db.close();
+  }
+});
+
 test("ums-memory-5cb.3: sqlite storage service upsert maps payload deterministically and delete succeeds", async () => {
   const storageServiceModule = await loadStorageServiceModule();
   const db = new DatabaseSync(":memory:");
@@ -292,7 +864,9 @@ test("ums-memory-5cb.3: sqlite storage service maps sqlite constraint failures t
           layer: "working",
           payload: {
             title: "Scope FK conflict",
-            scopeId: "scope-missing",
+            scope: {
+              scopeId: "scope-missing",
+            },
           },
         }),
       ),
@@ -555,7 +1129,9 @@ test("ums-memory-5cb.3: sqlite storage repository options allow explicit migrati
         memoryId: "memory-fk-off",
         layer: "working",
         payload: {
-          scopeId: "scope-not-created",
+          scope: {
+            scopeId: "scope-not-created",
+          },
           title: "Foreign key disabled option path",
           updatedAtMillis: 1_200,
         },
@@ -665,7 +1241,9 @@ test("ums-memory-5cb.3: sqlite storage repository re-applies foreign key enforce
           memoryId: "memory-drift",
           layer: "working",
           payload: {
-            scopeId: "scope-not-created",
+            scope: {
+              scopeId: "scope-not-created",
+            },
             title: "Foreign key should be re-enforced",
             updatedAtMillis: 8_000,
           },
@@ -698,7 +1276,9 @@ test("ums-memory-5cb.3: sqlite storage repository detects foreign key drift on l
           memoryId: "memory-drift-live",
           layer: "working",
           payload: {
-            scopeId: "scope-not-created",
+            scope: {
+              scopeId: "scope-not-created",
+            },
             title: "Live service drift check",
             updatedAtMillis: 10_000,
           },

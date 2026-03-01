@@ -44,6 +44,9 @@ const storageRuntimeFailureContract = "StorageRuntimeFailure";
 
 interface StoragePayloadProjection {
   readonly scopeId: string | null;
+  readonly scopeProjectId: string | null;
+  readonly scopeRoleId: string | null;
+  readonly scopeUserId: string | null;
   readonly memoryKind: EnterpriseMemoryKind;
   readonly status: EnterpriseMemoryStatus;
   readonly title: string;
@@ -341,6 +344,77 @@ const normalizeDomainValue = (value: DomainValue, path: string): CanonicalJsonVa
 const toCanonicalPayloadJson = (payload: DomainRecord): string =>
   JSON.stringify(normalizeDomainValue(payload, "payload"));
 
+interface ScopeControlProjection {
+  readonly scopeId: string | null;
+  readonly scopeProjectId: string | null;
+  readonly scopeRoleId: string | null;
+  readonly scopeUserId: string | null;
+}
+
+const parseScopeControlProjection = (payload: DomainRecord): ScopeControlProjection => {
+  const legacyRootScopeId =
+    parseOptionalTrimmedString(payload, ["scopeId", "scope_id"], "payload.scopeId") ?? null;
+
+  const scopeControlValue = readRecordValue(payload, ["scope"]);
+  if (scopeControlValue === undefined) {
+    return Object.freeze({
+      scopeId: legacyRootScopeId,
+      scopeProjectId: null,
+      scopeRoleId: null,
+      scopeUserId: null,
+    });
+  }
+
+  if (!isDomainRecord(scopeControlValue)) {
+    throw new StoragePayloadValidationFailure(
+      "StorageUpsertRequest.payload.scope must be a plain object record.",
+    );
+  }
+
+  const scopeRecord = scopeControlValue;
+  const scopeId =
+    parseOptionalTrimmedString(scopeRecord, ["scopeId", "scope_id"], "payload.scope.scopeId") ??
+    null;
+  const scopeProjectId =
+    parseOptionalTrimmedString(
+      scopeRecord,
+      ["projectId", "project_id"],
+      "payload.scope.projectId",
+    ) ?? null;
+  const scopeRoleId =
+    parseOptionalTrimmedString(
+      scopeRecord,
+      ["roleId", "role_id", "jobRoleId", "job_role_id"],
+      "payload.scope.roleId",
+    ) ?? null;
+  const scopeUserId =
+    parseOptionalTrimmedString(scopeRecord, ["userId", "user_id"], "payload.scope.userId") ?? null;
+  if (
+    legacyRootScopeId !== null &&
+    (scopeId !== null || scopeProjectId !== null || scopeRoleId !== null || scopeUserId !== null)
+  ) {
+    throw new StoragePayloadValidationFailure(
+      "payload.scopeId cannot be combined with payload.scope controls.",
+    );
+  }
+  const resolvedScopeId = scopeId ?? legacyRootScopeId;
+  if (
+    resolvedScopeId !== null &&
+    (scopeProjectId !== null || scopeRoleId !== null || scopeUserId !== null)
+  ) {
+    throw new StoragePayloadValidationFailure(
+      "Explicit scopeId cannot be combined with project/role/user scope anchors.",
+    );
+  }
+
+  return Object.freeze({
+    scopeId: resolvedScopeId,
+    scopeProjectId,
+    scopeRoleId,
+    scopeUserId,
+  });
+};
+
 const parsePayloadProjection = (request: StorageUpsertRequest): StoragePayloadProjection => {
   if (!isDomainRecord(request.payload)) {
     throw new StoragePayloadValidationFailure(
@@ -429,7 +503,7 @@ const parsePayloadProjection = (request: StorageUpsertRequest): StoragePayloadPr
     );
   }
 
-  const scopeId = parseOptionalTrimmedString(payload, ["scopeId", "scope_id"], "payload.scopeId");
+  const scopeControl = parseScopeControlProjection(payload);
   const createdByUserId =
     parseOptionalNullableTrimmedString(
       payload,
@@ -444,7 +518,10 @@ const parsePayloadProjection = (request: StorageUpsertRequest): StoragePayloadPr
     ) ?? null;
 
   return Object.freeze({
-    scopeId: scopeId ?? null,
+    scopeId: scopeControl.scopeId,
+    scopeProjectId: scopeControl.scopeProjectId,
+    scopeRoleId: scopeControl.scopeRoleId,
+    scopeUserId: scopeControl.scopeUserId,
     memoryKind,
     status: normalizedStatus,
     title,
@@ -566,6 +643,33 @@ export const makeSqliteStorageRepository = (
   const insertCommonScopeStatement = database.prepare(
     "INSERT OR IGNORE INTO scopes (tenant_id, scope_id, scope_level, project_id, role_id, user_id, parent_scope_id, created_at_ms) VALUES (?, ?, 'common', NULL, NULL, NULL, NULL, ?);",
   );
+  const selectProjectScopeIdStatement = database.prepare(
+    "SELECT scope_id FROM scopes WHERE tenant_id = ? AND scope_level = 'project' AND project_id = ? ORDER BY scope_id LIMIT 1;",
+  );
+  const insertProjectScopeStatement = database.prepare(
+    "INSERT OR IGNORE INTO scopes (tenant_id, scope_id, scope_level, project_id, role_id, user_id, parent_scope_id, created_at_ms) VALUES (?, ?, 'project', ?, NULL, NULL, ?, ?);",
+  );
+  const selectProjectAnchorStatement = database.prepare(
+    "SELECT project_id FROM projects WHERE tenant_id = ? AND project_id = ? LIMIT 1;",
+  );
+  const selectJobRoleScopeIdStatement = database.prepare(
+    "SELECT scope_id FROM scopes WHERE tenant_id = ? AND scope_level = 'job_role' AND role_id = ? ORDER BY scope_id LIMIT 1;",
+  );
+  const insertJobRoleScopeStatement = database.prepare(
+    "INSERT OR IGNORE INTO scopes (tenant_id, scope_id, scope_level, project_id, role_id, user_id, parent_scope_id, created_at_ms) VALUES (?, ?, 'job_role', NULL, ?, NULL, ?, ?);",
+  );
+  const selectRoleAnchorStatement = database.prepare(
+    "SELECT role_id FROM roles WHERE tenant_id = ? AND role_id = ? LIMIT 1;",
+  );
+  const selectUserScopeIdStatement = database.prepare(
+    "SELECT scope_id, parent_scope_id FROM scopes WHERE tenant_id = ? AND scope_level = 'user' AND user_id = ? ORDER BY scope_id LIMIT 1;",
+  );
+  const insertUserScopeStatement = database.prepare(
+    "INSERT OR IGNORE INTO scopes (tenant_id, scope_id, scope_level, project_id, role_id, user_id, parent_scope_id, created_at_ms) VALUES (?, ?, 'user', NULL, NULL, ?, ?, ?);",
+  );
+  const selectUserAnchorStatement = database.prepare(
+    "SELECT user_id FROM users WHERE tenant_id = ? AND user_id = ? LIMIT 1;",
+  );
   const upsertMemoryStatement = database.prepare(
     [
       "INSERT INTO memory_items (",
@@ -617,6 +721,145 @@ export const makeSqliteStorageRepository = (
       });
     }
   };
+  const readResolvedScopeId = (scopeRow: unknown, errorPrefix: string): string => {
+    const scopeId = readRowColumn(scopeRow, "scope_id");
+    if (typeof scopeId !== "string" || scopeId.trim().length === 0) {
+      throw new Error(`${errorPrefix} scope_id is not a valid string.`);
+    }
+
+    return scopeId;
+  };
+  const assertScopeAnchorExists = (
+    scopeAnchorRow: unknown,
+    anchorPath: string,
+    anchorKind: "project" | "role" | "user",
+    anchorId: string,
+  ): void => {
+    if (scopeAnchorRow !== undefined) {
+      return;
+    }
+
+    throw new StoragePayloadValidationFailure(
+      `${anchorPath} references unknown tenant ${anchorKind} anchor "${anchorId}".`,
+    );
+  };
+  const resolveCommonScopeId = (tenantId: string): string => {
+    const existingScopeRow = selectCommonScopeIdStatement.get(tenantId);
+    if (existingScopeRow !== undefined) {
+      return readResolvedScopeId(existingScopeRow, "Resolved common");
+    }
+
+    insertCommonScopeStatement.run(tenantId, `common:${tenantId}`, tenantCreatedAtMillis);
+    const insertedScopeRow = selectCommonScopeIdStatement.get(tenantId);
+    if (insertedScopeRow === undefined) {
+      throw new Error("Unable to resolve tenant common scope after deterministic bootstrap.");
+    }
+
+    return readResolvedScopeId(insertedScopeRow, "Bootstrapped common");
+  };
+  const resolveProjectScopeId = (
+    tenantId: string,
+    projectId: string,
+    commonScopeId: string,
+  ): string => {
+    const existingScopeRow = selectProjectScopeIdStatement.get(tenantId, projectId);
+    if (existingScopeRow !== undefined) {
+      return readResolvedScopeId(existingScopeRow, "Resolved project");
+    }
+    assertScopeAnchorExists(
+      selectProjectAnchorStatement.get(tenantId, projectId),
+      "payload.scope.projectId",
+      "project",
+      projectId,
+    );
+
+    insertProjectScopeStatement.run(
+      tenantId,
+      `project:${tenantId}:${projectId}`,
+      projectId,
+      commonScopeId,
+      tenantCreatedAtMillis,
+    );
+    const insertedScopeRow = selectProjectScopeIdStatement.get(tenantId, projectId);
+    if (insertedScopeRow === undefined) {
+      throw new Error("Unable to resolve tenant project scope after deterministic bootstrap.");
+    }
+
+    return readResolvedScopeId(insertedScopeRow, "Bootstrapped project");
+  };
+  const resolveJobRoleScopeId = (
+    tenantId: string,
+    roleId: string,
+    commonScopeId: string,
+  ): string => {
+    const existingScopeRow = selectJobRoleScopeIdStatement.get(tenantId, roleId);
+    if (existingScopeRow !== undefined) {
+      return readResolvedScopeId(existingScopeRow, "Resolved job_role");
+    }
+    assertScopeAnchorExists(
+      selectRoleAnchorStatement.get(tenantId, roleId),
+      "payload.scope.roleId",
+      "role",
+      roleId,
+    );
+
+    insertJobRoleScopeStatement.run(
+      tenantId,
+      `job_role:${tenantId}:${roleId}`,
+      roleId,
+      commonScopeId,
+      tenantCreatedAtMillis,
+    );
+    const insertedScopeRow = selectJobRoleScopeIdStatement.get(tenantId, roleId);
+    if (insertedScopeRow === undefined) {
+      throw new Error("Unable to resolve tenant job_role scope after deterministic bootstrap.");
+    }
+
+    return readResolvedScopeId(insertedScopeRow, "Bootstrapped job_role");
+  };
+  const resolveUserScopeId = (
+    tenantId: string,
+    userId: string,
+    requestedParentScopeId: string | null,
+    defaultParentScopeId: string,
+  ): string => {
+    const existingScopeRow = selectUserScopeIdStatement.get(tenantId, userId);
+    if (existingScopeRow !== undefined) {
+      const existingScopeId = readResolvedScopeId(existingScopeRow, "Resolved user");
+      const existingParentScopeId = readRowColumn(existingScopeRow, "parent_scope_id");
+      if (typeof existingParentScopeId !== "string" || existingParentScopeId.trim().length === 0) {
+        throw new Error("Resolved user parent_scope_id is not a valid string.");
+      }
+      if (requestedParentScopeId !== null && existingParentScopeId !== requestedParentScopeId) {
+        throw new StoragePayloadValidationFailure(
+          `payload.scope anchors conflict with existing user scope parent. Existing parent=${existingParentScopeId}, requested parent=${requestedParentScopeId}.`,
+        );
+      }
+
+      return existingScopeId;
+    }
+
+    assertScopeAnchorExists(
+      selectUserAnchorStatement.get(tenantId, userId),
+      "payload.scope.userId",
+      "user",
+      userId,
+    );
+    const parentScopeId = requestedParentScopeId ?? defaultParentScopeId;
+    insertUserScopeStatement.run(
+      tenantId,
+      `user:${tenantId}:${userId}`,
+      userId,
+      parentScopeId,
+      tenantCreatedAtMillis,
+    );
+    const insertedScopeRow = selectUserScopeIdStatement.get(tenantId, userId);
+    if (insertedScopeRow === undefined) {
+      throw new Error("Unable to resolve tenant user scope after deterministic bootstrap.");
+    }
+
+    return readResolvedScopeId(insertedScopeRow, "Bootstrapped user");
+  };
 
   return {
     upsertMemory: (request) =>
@@ -636,34 +879,44 @@ export const makeSqliteStorageRepository = (
 
             let resolvedScopeId = payloadProjection.scopeId;
             if (resolvedScopeId === null) {
-              const defaultCommonScopeId = `common:${request.spaceId}`;
-              const existingScopeRow = selectCommonScopeIdStatement.get(request.spaceId);
-              if (existingScopeRow !== undefined) {
-                const existingScopeId = readRowColumn(existingScopeRow, "scope_id");
-                if (typeof existingScopeId !== "string" || existingScopeId.trim().length === 0) {
-                  throw new Error("Resolved common scope_id is not a valid string.");
-                }
-                resolvedScopeId = existingScopeId;
-              } else {
-                insertCommonScopeStatement.run(
+              const commonScopeId = resolveCommonScopeId(request.spaceId);
+              const scopeUserId = payloadProjection.scopeUserId;
+
+              if (scopeUserId !== null) {
+                const requestedUserParentScopeId =
+                  payloadProjection.scopeRoleId !== null
+                    ? resolveJobRoleScopeId(
+                        request.spaceId,
+                        payloadProjection.scopeRoleId,
+                        commonScopeId,
+                      )
+                    : payloadProjection.scopeProjectId !== null
+                      ? resolveProjectScopeId(
+                          request.spaceId,
+                          payloadProjection.scopeProjectId,
+                          commonScopeId,
+                        )
+                      : null;
+                resolvedScopeId = resolveUserScopeId(
                   request.spaceId,
-                  defaultCommonScopeId,
-                  tenantCreatedAtMillis,
+                  scopeUserId,
+                  requestedUserParentScopeId,
+                  commonScopeId,
                 );
-                const commonScopeRow = selectCommonScopeIdStatement.get(request.spaceId);
-                if (commonScopeRow === undefined) {
-                  throw new Error(
-                    "Unable to resolve tenant common scope after deterministic bootstrap.",
-                  );
-                }
-                const bootstrappedScopeId = readRowColumn(commonScopeRow, "scope_id");
-                if (
-                  typeof bootstrappedScopeId !== "string" ||
-                  bootstrappedScopeId.trim().length === 0
-                ) {
-                  throw new Error("Bootstrapped common scope_id is not a valid string.");
-                }
-                resolvedScopeId = bootstrappedScopeId;
+              } else if (payloadProjection.scopeRoleId !== null) {
+                resolvedScopeId = resolveJobRoleScopeId(
+                  request.spaceId,
+                  payloadProjection.scopeRoleId,
+                  commonScopeId,
+                );
+              } else if (payloadProjection.scopeProjectId !== null) {
+                resolvedScopeId = resolveProjectScopeId(
+                  request.spaceId,
+                  payloadProjection.scopeProjectId,
+                  commonScopeId,
+                );
+              } else {
+                resolvedScopeId = commonScopeId;
               }
             }
 
