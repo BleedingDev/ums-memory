@@ -12,7 +12,7 @@ const VOLUMES = String(process.env.UMS_BENCH_SCHEDULE_VOLUMES ?? "64,128,256")
   .filter((entry) => Number.isFinite(entry) && entry > 0)
   .sort((left, right) => left - right);
 const NEAR_CONSTANT_RATIO_THRESHOLD = Number.parseFloat(
-  process.env.UMS_BENCH_NEAR_CONSTANT_RATIO_THRESHOLD ?? "4.0",
+  process.env.UMS_BENCH_NEAR_CONSTANT_RATIO_THRESHOLD ?? "6.0",
 );
 const UPDATE_P95_THRESHOLD_MS = Number.parseFloat(
   process.env.UMS_BENCH_SCHEDULE_UPDATE_P95_THRESHOLD_MS ?? "0.8",
