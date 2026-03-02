@@ -32,7 +32,9 @@ const transpileEffectModule = (sourceFilename, tempDirectory) => {
         return `${position} - ${messageText}`;
       })
       .join("\n");
-    throw new Error(`TypeScript transpile diagnostics for ${sourceFilename}:\n${diagnosticMessage}`);
+    throw new Error(
+      `TypeScript transpile diagnostics for ${sourceFilename}:\n${diagnosticMessage}`,
+    );
   }
 
   const outputFilename = join(tempDirectory, sourceFilename.replace(/\.ts$/, ".js"));
@@ -50,6 +52,7 @@ const transpileManifest = Object.freeze([
   "storage/sqlite/schema-metadata.ts",
   "storage/sqlite/enterprise-schema.ts",
   "storage/sqlite/migrations.ts",
+  "storage/sqlite/backup-replication.ts",
   "storage/sqlite/snapshot-codec.ts",
   "storage/sqlite/storage-repository.ts",
   "storage/sqlite/index.ts",
@@ -99,11 +102,7 @@ process.on("exit", () => {
 const seedScopeLatticeAnchors = (
   db,
   tenantId,
-  {
-    projectIds = [],
-    roleIds = [],
-    userIds = [],
-  } = {},
+  { projectIds = [], roleIds = [], userIds = [] } = {},
 ) => {
   const now = 1_700_000_000_000;
   db.prepare(
@@ -177,7 +176,8 @@ const estimateActionablePackTokens = (actionablePack) => {
   return tokenCount;
 };
 
-const roundRetrievalScore = (value) => Math.min(1, Math.max(0, Math.round(value * 1_000_000) / 1_000_000));
+const roundRetrievalScore = (value) =>
+  Math.min(1, Math.max(0, Math.round(value * 1_000_000) / 1_000_000));
 
 test("ums-memory-8as.2: retrieval planner merges common/project/job_role/user scopes deterministically", async () => {
   const { retrievalServiceModule, storageServiceModule } = await loadModules();
@@ -327,7 +327,10 @@ test("ums-memory-8as.2: retrieval planner filters denied policy decisions", asyn
     );
 
     assert.equal(response.totalHits, 1);
-    assert.deepEqual(response.hits.map((hit) => hit.memoryId), ["memory-allowed"]);
+    assert.deepEqual(
+      response.hits.map((hit) => hit.memoryId),
+      ["memory-allowed"],
+    );
     assert.equal(policyCalls.length, 2);
     assert.ok(policyCalls.every((call) => call.actorId === "user-policy"));
     assert.ok(policyCalls.every((call) => call.action === "memory.retrieve"));
@@ -396,7 +399,10 @@ test("ums-memory-8as.2: retrieval planner cursor pagination is deterministic", a
         cursor: secondPage.nextCursor,
       }),
     );
-    assert.deepEqual(thirdPage.hits.map((hit) => hit.memoryId), ["memory-5"]);
+    assert.deepEqual(
+      thirdPage.hits.map((hit) => hit.memoryId),
+      ["memory-5"],
+    );
     assert.equal(thirdPage.nextCursor, null);
   } finally {
     db.close();
@@ -1086,7 +1092,9 @@ test("ums-memory-8as.5: actionable pack enforces token budget and category/sourc
       assert.ok(response.actionablePack[category].length <= actionablePackTestPerCategoryLimit);
     }
     assert.ok(response.actionablePack.sources.length <= actionablePackTestSourceLimit);
-    assert.ok(estimateActionablePackTokens(response.actionablePack) <= actionablePackTestTokenBudget);
+    assert.ok(
+      estimateActionablePackTokens(response.actionablePack) <= actionablePackTestTokenBudget,
+    );
     assert.ok(response.actionablePack.sources.some((source) => source.excerpt.endsWith("...")));
     assert.ok(response.actionablePack.warnings.some((warning) => /token budget/i.test(warning)));
     assert.ok(response.actionablePack.warnings.some((warning) => /category limits/i.test(warning)));
@@ -1140,9 +1148,7 @@ test("ums-memory-8as.6: actionable pack warns when included sources are stale re
     assert.ok(response.actionablePack);
     assert.equal(response.actionablePack.sources.length, 2);
     assert.ok(response.actionablePack.warnings.some((warning) => /stale guidance/i.test(warning)));
-    assert.ok(
-      !response.actionablePack.warnings.some((warning) => /low-confidence/i.test(warning)),
-    );
+    assert.ok(!response.actionablePack.warnings.some((warning) => /low-confidence/i.test(warning)));
   } finally {
     db.close();
   }
@@ -1601,7 +1607,9 @@ test("ums-memory-8as.8: coding-agent release workflow prefers superseding guidan
       assert.ok(source.metadata.layer === "working" || source.metadata.layer === "episodic");
     }
 
-    const firstExplainability = await Effect.runPromise(retrievalService.retrieveExplainability(request));
+    const firstExplainability = await Effect.runPromise(
+      retrievalService.retrieveExplainability(request),
+    );
     const secondExplainability = await Effect.runPromise(
       retrievalService.retrieveExplainability(request),
     );
@@ -1800,7 +1808,9 @@ test("ums-memory-8as.8: coding-agent flaky-test workflow surfaces stale and low-
       assert.ok(source.metadata.score >= 0 && source.metadata.score <= 1);
     }
 
-    const firstExplainability = await Effect.runPromise(retrievalService.retrieveExplainability(request));
+    const firstExplainability = await Effect.runPromise(
+      retrievalService.retrieveExplainability(request),
+    );
     const secondExplainability = await Effect.runPromise(
       retrievalService.retrieveExplainability(request),
     );
@@ -1839,7 +1849,9 @@ test("ums-memory-8as.8: coding-agent flaky-test workflow surfaces stale and low-
       const contributionBySignal = Object.fromEntries(
         hit.weightedContributions.map((entry) => [entry.signal, entry]),
       );
-      assert.ok(contributionBySignal.relevance.weight >= 0 && contributionBySignal.relevance.weight <= 1);
+      assert.ok(
+        contributionBySignal.relevance.weight >= 0 && contributionBySignal.relevance.weight <= 1,
+      );
       assert.ok(
         contributionBySignal.evidenceStrength.weight >= 0 &&
           contributionBySignal.evidenceStrength.weight <= 1,
@@ -1849,10 +1861,14 @@ test("ums-memory-8as.8: coding-agent flaky-test workflow surfaces stale and low-
         contributionBySignal.humanWeight.weight >= 0 &&
           contributionBySignal.humanWeight.weight <= 1,
       );
-      assert.ok(contributionBySignal.utility.weight >= 0 && contributionBySignal.utility.weight <= 1);
+      assert.ok(
+        contributionBySignal.utility.weight >= 0 && contributionBySignal.utility.weight <= 1,
+      );
       assert.equal(contributionBySignal.humanWeight.weight, 0);
       assert.equal(contributionBySignal.utility.weight, 0);
-      assert.ok(contributionBySignal.relevance.weight > contributionBySignal.evidenceStrength.weight);
+      assert.ok(
+        contributionBySignal.relevance.weight > contributionBySignal.evidenceStrength.weight,
+      );
       for (const contribution of hit.weightedContributions) {
         assert.equal(
           contribution.weightedContribution,

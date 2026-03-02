@@ -1,5 +1,13 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
@@ -32,7 +40,9 @@ const transpileEffectModule = (sourceFilename, tempDirectory) => {
         return `${position} - ${messageText}`;
       })
       .join("\n");
-    throw new Error(`TypeScript transpile diagnostics for ${sourceFilename}:\n${diagnosticMessage}`);
+    throw new Error(
+      `TypeScript transpile diagnostics for ${sourceFilename}:\n${diagnosticMessage}`,
+    );
   }
 
   const outputFilename = join(tempDirectory, sourceFilename.replace(/\.ts$/, ".js"));
@@ -49,6 +59,7 @@ const transpileManifest = Object.freeze([
   "storage/sqlite/schema-metadata.ts",
   "storage/sqlite/enterprise-schema.ts",
   "storage/sqlite/migrations.ts",
+  "storage/sqlite/backup-replication.ts",
   "storage/sqlite/snapshot-codec.ts",
   "storage/sqlite/storage-repository.ts",
   "storage/sqlite/index.ts",
@@ -91,11 +102,7 @@ const unwrapFailure = (eitherResult) => {
 const seedScopeLatticeAnchors = (
   db,
   tenantId,
-  {
-    projectIds = [],
-    roleIds = [],
-    userIds = [],
-  } = {},
+  { projectIds = [], roleIds = [], userIds = [] } = {},
 ) => {
   const now = 1_700_000_000_000;
   db.prepare(
@@ -119,6 +126,40 @@ const seedScopeLatticeAnchors = (
       "INSERT OR IGNORE INTO roles (tenant_id, role_id, role_code, display_name, role_type, created_at_ms) VALUES (?, ?, ?, ?, ?, ?);",
     ).run(tenantId, roleId, `ROLE_${roleId}`, roleId, "project", now);
   }
+};
+
+const createDeterministicBackupClock = (startMillis = 1_700_000_000_000) => {
+  let currentMillis = startMillis;
+  return () => {
+    const nextMillis = currentMillis;
+    currentMillis += 1;
+    return nextMillis;
+  };
+};
+
+const createDeterministicIntervalScheduler = () => {
+  let nextHandle = 0;
+  const callbacksByHandle = new Map();
+  return {
+    scheduler: {
+      setInterval: (task) => {
+        nextHandle += 1;
+        callbacksByHandle.set(nextHandle, task);
+        return nextHandle;
+      },
+      clearInterval: (handle) => {
+        if (typeof handle === "number") {
+          callbacksByHandle.delete(handle);
+        }
+      },
+    },
+    tick: () => {
+      for (const callback of [...callbacksByHandle.values()]) {
+        callback();
+      }
+    },
+    activeCount: () => callbacksByHandle.size,
+  };
 };
 
 test("ums-memory-5cb.7: promoted procedural memory without evidence pointers is rejected", async () => {
@@ -358,7 +399,9 @@ test("ums-memory-5cb.7: promoted procedural memory merges explicit pointers with
     );
     assert.ok(
       joinedRows.every(
-        (row) => Number(row.observed_at_ms) === updatedAtMillis && Number(row.created_at_ms) === updatedAtMillis,
+        (row) =>
+          Number(row.observed_at_ms) === updatedAtMillis &&
+          Number(row.created_at_ms) === updatedAtMillis,
       ),
     );
   } finally {
@@ -522,10 +565,7 @@ test("ums-memory-5cb.7: stale procedural replay does not rewrite evidence links 
           "ORDER BY e.source_ref ASC;",
         ].join("\n"),
       )
-      .all(
-        "tenant-promoted-evidence-stale-replay",
-        "memory-procedural-evidence-stale-replay",
-      );
+      .all("tenant-promoted-evidence-stale-replay", "memory-procedural-evidence-stale-replay");
     const normalizedLinkRows = linkRows.map((row) => ({
       source_ref: row.source_ref,
       relation_kind: row.relation_kind,
@@ -870,13 +910,18 @@ test("ums-memory-5cb.4: sqlite storage service applies deterministic precedence 
     );
 
     const scopeIdRows = db
-      .prepare("SELECT memory_id, scope_id FROM memory_items WHERE tenant_id = ? ORDER BY memory_id ASC;")
+      .prepare(
+        "SELECT memory_id, scope_id FROM memory_items WHERE tenant_id = ? ORDER BY memory_id ASC;",
+      )
       .all(tenantId);
     const scopeIdByMemoryId = new Map(scopeIdRows.map((row) => [row.memory_id, row.scope_id]));
     assert.equal(scopeIdByMemoryId.get("memory-user-priority"), `user:${tenantId}:${userId}`);
     assert.equal(scopeIdByMemoryId.get("memory-user-replay"), `user:${tenantId}:${userId}`);
     assert.equal(scopeIdByMemoryId.get("memory-role-priority"), `job_role:${tenantId}:${roleId}`);
-    assert.equal(scopeIdByMemoryId.get("memory-project-priority"), `project:${tenantId}:${projectId}`);
+    assert.equal(
+      scopeIdByMemoryId.get("memory-project-priority"),
+      `project:${tenantId}:${projectId}`,
+    );
 
     const userScopeRow = db
       .prepare(
@@ -1174,7 +1219,10 @@ test("ums-memory-5cb.4: rejects unknown project/role/user scope anchors with con
 
       assert.equal(upsertFailure._tag, "ContractValidationError");
       assert.equal(upsertFailure.contract, "StorageUpsertRequest.payload");
-      assert.match(upsertFailure.details, new RegExp(`unknown tenant ${requestUnderTest.expectedAnchor} anchor`, "i"));
+      assert.match(
+        upsertFailure.details,
+        new RegExp(`unknown tenant ${requestUnderTest.expectedAnchor} anchor`, "i"),
+      );
     }
   } finally {
     db.close();
@@ -1368,10 +1416,7 @@ test("ums-memory-5cb.5: upsert denies cross-tenant references and emits audit ev
     assert.ok(persistedAuditRows.every((row) => row.operation === "upsert"));
     assert.ok(persistedAuditRows.every((row) => row.outcome === "denied"));
     assert.ok(persistedAuditRows.every((row) => row.reason === "cross_tenant_reference"));
-    assert.equal(
-      persistedAuditRows.filter((row) => row.reference_kind === "project").length,
-      2,
-    );
+    assert.equal(persistedAuditRows.filter((row) => row.reference_kind === "project").length, 2);
     assert.ok(persistedAuditRows.every((row) => row.owner_tenant_id === ownerTenantId));
   } finally {
     db.close();
@@ -1601,7 +1646,9 @@ test("ums-memory-5cb.3: sqlite storage service upsert maps payload deterministic
     assert.equal(duplicateEqualTimestampReplayResponse.persistedAtMillis, 1_700_000_000_400);
 
     const rowCountAfterUpsert = db
-      .prepare("SELECT COUNT(*) AS row_count FROM memory_items WHERE tenant_id = ? AND memory_id = ?;")
+      .prepare(
+        "SELECT COUNT(*) AS row_count FROM memory_items WHERE tenant_id = ? AND memory_id = ?;",
+      )
       .get("tenant-storage", "memory-a");
     assert.equal(rowCountAfterUpsert.row_count, 1);
 
@@ -1639,7 +1686,9 @@ test("ums-memory-5cb.3: sqlite storage service upsert maps payload deterministic
     });
 
     const rowCountAfterDelete = db
-      .prepare("SELECT COUNT(*) AS row_count FROM memory_items WHERE tenant_id = ? AND memory_id = ?;")
+      .prepare(
+        "SELECT COUNT(*) AS row_count FROM memory_items WHERE tenant_id = ? AND memory_id = ?;",
+      )
       .get("tenant-storage", "memory-a");
     assert.equal(rowCountAfterDelete.row_count, 0);
 
@@ -1659,14 +1708,8 @@ test("ums-memory-5cb.3: sqlite storage service upsert maps payload deterministic
       ["deleted", "equal_replay", "inserted", "stale_replay", "updated"],
     );
     assert.ok(persistedAuditRows.every((row) => row.outcome === "accepted"));
-    assert.equal(
-      persistedAuditRows.filter((row) => row.reason === "stale_replay").length,
-      1,
-    );
-    assert.equal(
-      persistedAuditRows.filter((row) => row.reason === "equal_replay").length,
-      1,
-    );
+    assert.equal(persistedAuditRows.filter((row) => row.reason === "stale_replay").length, 1);
+    assert.equal(persistedAuditRows.filter((row) => row.reason === "equal_replay").length, 1);
   } finally {
     db.close();
   }
@@ -1768,7 +1811,10 @@ test("ums-memory-5cb.10: sqlite storage service replays upsert responses determi
         ].join("\n"),
       )
       .all("tenant-idempotency-upsert", "memory-idempotency-upsert");
-    assert.deepEqual(upsertAuditRows.map((row) => row.reason), ["inserted"]);
+    assert.deepEqual(
+      upsertAuditRows.map((row) => row.reason),
+      ["inserted"],
+    );
 
     const idempotencyRow = db
       .prepare(
@@ -1827,7 +1873,9 @@ test("ums-memory-5cb.10: sqlite storage service rejects upsert idempotency key r
     assert.match(conflictFailure.message, /reuse conflict/i);
 
     const persistedMemoryRow = db
-      .prepare("SELECT title, updated_at_ms FROM memory_items WHERE tenant_id = ? AND memory_id = ?;")
+      .prepare(
+        "SELECT title, updated_at_ms FROM memory_items WHERE tenant_id = ? AND memory_id = ?;",
+      )
       .get("tenant-idempotency-upsert-conflict", "memory-idempotency-upsert-conflict");
     assert.equal(persistedMemoryRow.title, "Idempotent upsert conflict baseline");
     assert.equal(Number(persistedMemoryRow.updated_at_ms), 1_700_000_100_200);
@@ -1880,7 +1928,10 @@ test("ums-memory-5cb.10: sqlite storage service replays delete responses determi
         ].join("\n"),
       )
       .all("tenant-idempotency-delete", "memory-idempotency-delete");
-    assert.deepEqual(deleteAuditRows.map((row) => row.reason), ["deleted"]);
+    assert.deepEqual(
+      deleteAuditRows.map((row) => row.reason),
+      ["deleted"],
+    );
 
     const idempotencyRow = db
       .prepare(
@@ -2456,7 +2507,9 @@ test("ums-memory-5cb.3: sqlite storage layer maps initialization failures to Con
           title: "This call should never execute",
         },
       });
-    }).pipe(Effect.provide(storageServiceModule.makeSqliteStorageLayer(db, { applyMigrations: false })));
+    }).pipe(
+      Effect.provide(storageServiceModule.makeSqliteStorageLayer(db, { applyMigrations: false })),
+    );
 
     const result = Effect.runSync(Effect.either(program));
     const failure = unwrapFailure(result);
@@ -2628,5 +2681,349 @@ test("ums-memory-5cb.3: sqlite storage repository preserves drift contract error
     assert.match(deleteFailure.message, /drift detected/i);
   } finally {
     db.close();
+  }
+});
+
+test("ums-memory-yji.4: sqlite storage repository enables WAL journal mode when configured", async () => {
+  const storageServiceModule = await loadStorageServiceModule();
+  const tempRootDirectory = join(process.cwd(), "dist", "tmp");
+  mkdirSync(tempRootDirectory, { recursive: true });
+  const fixtureDirectory = mkdtempSync(join(tempRootDirectory, "ums-memory-wal-mode-"));
+  const sqlitePath = join(fixtureDirectory, "storage.sqlite");
+  const db = new DatabaseSync(sqlitePath);
+
+  try {
+    storageServiceModule.makeSqliteStorageService(db, {
+      wal: {
+        enabled: true,
+      },
+    });
+
+    const journalModeRow = db.prepare("PRAGMA journal_mode;").get();
+    assert.ok(journalModeRow);
+    assert.equal(String(journalModeRow.journal_mode).toLowerCase(), "wal");
+  } finally {
+    db.close();
+    rmSync(fixtureDirectory, { recursive: true, force: true });
+  }
+});
+
+test("ums-memory-yji.4: sqlite backup replication creates deterministic snapshots and enforces retention", async () => {
+  const storageServiceModule = await loadStorageServiceModule();
+  const tempRootDirectory = join(process.cwd(), "dist", "tmp");
+  mkdirSync(tempRootDirectory, { recursive: true });
+  const fixtureDirectory = mkdtempSync(join(tempRootDirectory, "ums-memory-backup-retention-"));
+  const sqlitePath = join(fixtureDirectory, "storage.sqlite");
+  const backupDirectory = join(fixtureDirectory, "backups");
+  const db = new DatabaseSync(sqlitePath);
+  const observedMetadata = [];
+  let replicationController;
+
+  try {
+    const storageService = storageServiceModule.makeSqliteStorageService(db, {
+      backupReplication: {
+        directoryPath: backupDirectory,
+        filePrefix: "snapshot",
+        retentionMaxSnapshots: 2,
+        autoStart: false,
+        clock: createDeterministicBackupClock(1_700_001_000_000),
+        onReplicated: (metadata) => observedMetadata.push(metadata),
+        onControllerReady: (controller) => {
+          replicationController = controller;
+        },
+      },
+    });
+    assert.ok(replicationController);
+
+    Effect.runSync(
+      storageService.upsertMemory({
+        spaceId: "tenant-backup-retention",
+        memoryId: "memory-backup-retention",
+        layer: "working",
+        payload: {
+          title: "Backup retention fixture",
+          updatedAtMillis: 1_700_001_000_010,
+        },
+      }),
+    );
+
+    const firstSnapshot = replicationController.replicateNow();
+    const secondSnapshot = replicationController.replicateNow();
+    const thirdSnapshot = replicationController.replicateNow();
+
+    const snapshotFiles = readdirSync(backupDirectory)
+      .filter((filename) => filename.endsWith(".sqlite"))
+      .sort((left, right) => left.localeCompare(right));
+    assert.deepEqual(snapshotFiles, [
+      secondSnapshot.snapshotFilename,
+      thirdSnapshot.snapshotFilename,
+    ]);
+    assert.equal(firstSnapshot.sequence, 1);
+    assert.equal(secondSnapshot.sequence, 2);
+    assert.equal(thirdSnapshot.sequence, 3);
+    assert.deepEqual(thirdSnapshot.deletedSnapshotFilenames, [firstSnapshot.snapshotFilename]);
+    assert.deepEqual(
+      observedMetadata.map((metadata) => metadata.sequence),
+      [1, 2, 3],
+    );
+  } finally {
+    replicationController?.stop();
+    db.close();
+    rmSync(fixtureDirectory, { recursive: true, force: true });
+  }
+});
+
+test("ums-memory-yji.4: sqlite backup replication interval invokes callback metadata and is stoppable", async () => {
+  const storageServiceModule = await loadStorageServiceModule();
+  const tempRootDirectory = join(process.cwd(), "dist", "tmp");
+  mkdirSync(tempRootDirectory, { recursive: true });
+  const fixtureDirectory = mkdtempSync(join(tempRootDirectory, "ums-memory-backup-interval-"));
+  const sqlitePath = join(fixtureDirectory, "storage.sqlite");
+  const backupDirectory = join(fixtureDirectory, "backups");
+  const db = new DatabaseSync(sqlitePath);
+  const schedulerHarness = createDeterministicIntervalScheduler();
+  const observedMetadata = [];
+  let replicationController;
+
+  try {
+    storageServiceModule.makeSqliteStorageService(db, {
+      backupReplication: {
+        directoryPath: backupDirectory,
+        filePrefix: "interval",
+        intervalMillis: 5,
+        retentionMaxSnapshots: 5,
+        clock: createDeterministicBackupClock(1_700_002_000_000),
+        scheduler: schedulerHarness.scheduler,
+        onReplicated: (metadata) => observedMetadata.push(metadata),
+        onControllerReady: (controller) => {
+          replicationController = controller;
+        },
+      },
+    });
+    assert.ok(replicationController);
+    assert.equal(replicationController.isRunning(), true);
+    assert.equal(schedulerHarness.activeCount(), 1);
+
+    schedulerHarness.tick();
+    schedulerHarness.tick();
+
+    assert.equal(observedMetadata.length, 2);
+    assert.ok(observedMetadata.every((metadata) => metadata.trigger === "interval"));
+    assert.equal(observedMetadata[0].sequence, 1);
+    assert.equal(observedMetadata[0].retainedSnapshotCount, 1);
+    assert.deepEqual(observedMetadata[0].deletedSnapshotFilenames, []);
+    assert.match(observedMetadata[0].snapshotFilename, /^interval-\d{13}-\d{6}\.sqlite$/);
+
+    replicationController.stop();
+    assert.equal(replicationController.isRunning(), false);
+    assert.equal(schedulerHarness.activeCount(), 0);
+
+    schedulerHarness.tick();
+    assert.equal(observedMetadata.length, 2);
+  } finally {
+    replicationController?.stop();
+    db.close();
+    rmSync(fixtureDirectory, { recursive: true, force: true });
+  }
+});
+
+test("ums-memory-yji.4: interval backup reports errors and stops scheduler on closed database misuse", async () => {
+  const storageServiceModule = await loadStorageServiceModule();
+  const tempRootDirectory = join(process.cwd(), "dist", "tmp");
+  mkdirSync(tempRootDirectory, { recursive: true });
+  const fixtureDirectory = mkdtempSync(
+    join(tempRootDirectory, "ums-memory-backup-interval-error-"),
+  );
+  const sqlitePath = join(fixtureDirectory, "storage.sqlite");
+  const backupDirectory = join(fixtureDirectory, "backups");
+  const db = new DatabaseSync(sqlitePath);
+  const schedulerHarness = createDeterministicIntervalScheduler();
+  const observedErrors = [];
+  let replicationController;
+
+  try {
+    storageServiceModule.makeSqliteStorageService(db, {
+      backupReplication: {
+        directoryPath: backupDirectory,
+        filePrefix: "interval-error",
+        intervalMillis: 5,
+        scheduler: schedulerHarness.scheduler,
+        onReplicationError: (error, context) => {
+          observedErrors.push({
+            tag: error._tag,
+            contract: error.contract,
+            details: error.details,
+            trigger: context.trigger,
+          });
+        },
+        onControllerReady: (controller) => {
+          replicationController = controller;
+        },
+      },
+    });
+    assert.ok(replicationController);
+    assert.equal(replicationController.isRunning(), true);
+    assert.equal(schedulerHarness.activeCount(), 1);
+
+    db.close();
+    schedulerHarness.tick();
+
+    assert.equal(observedErrors.length, 1);
+    assert.equal(observedErrors[0].tag, "ContractValidationError");
+    assert.equal(
+      observedErrors[0].contract,
+      "SqliteStorageRepositoryOptions.backupReplication.snapshot",
+    );
+    assert.equal(observedErrors[0].trigger, "interval");
+    assert.match(observedErrors[0].details, /SQLITE_MISUSE|closed|not open/i);
+    assert.equal(replicationController.isRunning(), false);
+    assert.equal(schedulerHarness.activeCount(), 0);
+  } finally {
+    replicationController?.stop();
+    try {
+      db.close();
+    } catch {}
+    rmSync(fixtureDirectory, { recursive: true, force: true });
+  }
+});
+
+test("ums-memory-yji.4: sqlite backup replication remains a no-op when strategy is unconfigured", async () => {
+  const storageServiceModule = await loadStorageServiceModule();
+  const tempRootDirectory = join(process.cwd(), "dist", "tmp");
+  mkdirSync(tempRootDirectory, { recursive: true });
+  const fixtureDirectory = mkdtempSync(join(tempRootDirectory, "ums-memory-backup-noop-"));
+  const sqlitePath = join(fixtureDirectory, "storage.sqlite");
+  const unusedBackupDirectory = join(fixtureDirectory, "backups-unused");
+  const db = new DatabaseSync(sqlitePath);
+
+  try {
+    const storageService = storageServiceModule.makeSqliteStorageService(db);
+    const response = Effect.runSync(
+      storageService.upsertMemory({
+        spaceId: "tenant-backup-noop",
+        memoryId: "memory-backup-noop",
+        layer: "working",
+        payload: {
+          title: "No-op backup fixture",
+          updatedAtMillis: 1_700_003_000_001,
+        },
+      }),
+    );
+    assert.equal(response.accepted, true);
+    assert.equal(existsSync(unusedBackupDirectory), false);
+  } finally {
+    db.close();
+    rmSync(fixtureDirectory, { recursive: true, force: true });
+  }
+});
+
+test("ums-memory-yji.4: sqlite backup replication restores sequence state and retention across restart", async () => {
+  const storageServiceModule = await loadStorageServiceModule();
+  const tempRootDirectory = join(process.cwd(), "dist", "tmp");
+  mkdirSync(tempRootDirectory, { recursive: true });
+  const fixtureDirectory = mkdtempSync(join(tempRootDirectory, "ums-memory-backup-restart-"));
+  const sqlitePath = join(fixtureDirectory, "storage.sqlite");
+  const backupDirectory = join(fixtureDirectory, "backups");
+  const firstDb = new DatabaseSync(sqlitePath);
+  let secondDb;
+  let firstController;
+  let secondController;
+
+  try {
+    storageServiceModule.makeSqliteStorageService(firstDb, {
+      backupReplication: {
+        directoryPath: backupDirectory,
+        filePrefix: "restart",
+        retentionMaxSnapshots: 2,
+        autoStart: false,
+        clock: createDeterministicBackupClock(1_700_004_000_000),
+        onControllerReady: (controller) => {
+          firstController = controller;
+        },
+      },
+    });
+    assert.ok(firstController);
+
+    const firstSnapshot = firstController.replicateNow();
+    const secondSnapshot = firstController.replicateNow();
+    assert.equal(firstSnapshot.sequence, 1);
+    assert.equal(secondSnapshot.sequence, 2);
+    firstController.stop();
+    firstDb.close();
+
+    secondDb = new DatabaseSync(sqlitePath);
+    storageServiceModule.makeSqliteStorageService(secondDb, {
+      backupReplication: {
+        directoryPath: backupDirectory,
+        filePrefix: "restart",
+        retentionMaxSnapshots: 2,
+        autoStart: false,
+        clock: createDeterministicBackupClock(1_700_004_000_100),
+        onControllerReady: (controller) => {
+          secondController = controller;
+        },
+      },
+    });
+    assert.ok(secondController);
+
+    const thirdSnapshot = secondController.replicateNow();
+    assert.equal(thirdSnapshot.sequence, 3);
+    assert.deepEqual(thirdSnapshot.deletedSnapshotFilenames, [firstSnapshot.snapshotFilename]);
+
+    const snapshotFiles = readdirSync(backupDirectory)
+      .filter((filename) => filename.endsWith(".sqlite"))
+      .sort((left, right) => left.localeCompare(right));
+    assert.deepEqual(snapshotFiles, [
+      secondSnapshot.snapshotFilename,
+      thirdSnapshot.snapshotFilename,
+    ]);
+
+    secondController.stop();
+    secondDb.close();
+  } finally {
+    firstController?.stop();
+    secondController?.stop();
+    try {
+      firstDb.close();
+    } catch {}
+    try {
+      secondDb?.close();
+    } catch {}
+    rmSync(fixtureDirectory, { recursive: true, force: true });
+  }
+});
+
+test("ums-memory-yji.4: sqlite backup replication rejects unsafe filePrefix path traversal input", async () => {
+  const storageServiceModule = await loadStorageServiceModule();
+  const tempRootDirectory = join(process.cwd(), "dist", "tmp");
+  mkdirSync(tempRootDirectory, { recursive: true });
+  const fixtureDirectory = mkdtempSync(join(tempRootDirectory, "ums-memory-backup-prefix-"));
+  const sqlitePath = join(fixtureDirectory, "storage.sqlite");
+  const backupDirectory = join(fixtureDirectory, "backups");
+  const db = new DatabaseSync(sqlitePath);
+
+  try {
+    assert.throws(
+      () =>
+        storageServiceModule.makeSqliteStorageService(db, {
+          backupReplication: {
+            directoryPath: backupDirectory,
+            filePrefix: "../escape",
+            autoStart: false,
+          },
+        }),
+      (error) => {
+        assert.equal(error?._tag, "ContractValidationError");
+        assert.equal(
+          error?.contract,
+          "SqliteStorageRepositoryOptions.backupReplication.filePrefix",
+        );
+        assert.match(error?.details ?? "", /must not contain path separators/i);
+        return true;
+      },
+    );
+  } finally {
+    db.close();
+    rmSync(fixtureDirectory, { recursive: true, force: true });
   }
 });

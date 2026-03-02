@@ -32,6 +32,10 @@ import {
   verifySqliteStorageSnapshotSignature,
 } from "./snapshot-codec.js";
 import {
+  createSqliteBackupReplicator,
+  type SqliteBackupReplicationOptions,
+} from "./backup-replication.js";
+import {
   type EnterpriseAuditEventOperation,
   type EnterpriseAuditEventOutcome,
   type EnterpriseAuditEventReason,
@@ -161,7 +165,13 @@ interface StorageIdempotencyLedgerProjection {
 export interface SqliteStorageRepositoryOptions {
   readonly applyMigrations?: boolean;
   readonly enforceForeignKeys?: boolean;
+  readonly wal?: SqliteStorageRepositoryWalOptions;
+  readonly backupReplication?: SqliteBackupReplicationOptions;
   readonly onTenantIsolationViolation?: (event: TenantIsolationViolationAuditEvent) => void;
+}
+
+export interface SqliteStorageRepositoryWalOptions {
+  readonly enabled?: boolean;
 }
 
 export interface SqliteStorageRepository {
@@ -749,6 +759,28 @@ const readSqliteForeignKeysMode = (database: DatabaseSync): boolean => {
   return normalizedForeignKeysValue === 1;
 };
 
+const readSqliteJournalMode = (database: DatabaseSync): string => {
+  const journalModeRow = database.prepare("PRAGMA journal_mode;").get();
+  if (typeof journalModeRow !== "object" || journalModeRow === null) {
+    throw new ContractValidationError({
+      contract: "SqliteStorageRepositoryOptions.wal.enabled",
+      message: "SQLite did not return PRAGMA journal_mode state.",
+      details: "PRAGMA journal_mode query returned a non-object row.",
+    });
+  }
+
+  const journalModeValue = (journalModeRow as Record<string, unknown>)["journal_mode"];
+  if (typeof journalModeValue !== "string") {
+    throw new ContractValidationError({
+      contract: "SqliteStorageRepositoryOptions.wal.enabled",
+      message: "SQLite returned an invalid PRAGMA journal_mode value.",
+      details: `Expected string journal_mode value but received ${String(journalModeValue)}.`,
+    });
+  }
+
+  return journalModeValue.trim().toLowerCase();
+};
+
 const configureSqliteForeignKeys = (database: DatabaseSync, enforceForeignKeys: boolean): void => {
   const existingMode = sqliteForeignKeysModeByConnection.get(database);
   if (existingMode !== undefined) {
@@ -781,6 +813,26 @@ const configureSqliteForeignKeys = (database: DatabaseSync, enforceForeignKeys: 
 
   if (existingMode === undefined) {
     sqliteForeignKeysModeByConnection.set(database, effectiveForeignKeysMode);
+  }
+};
+
+const configureSqliteWalMode = (database: DatabaseSync, walEnabled: boolean): void => {
+  if (!walEnabled) {
+    return;
+  }
+
+  let effectiveJournalMode = readSqliteJournalMode(database);
+  if (effectiveJournalMode !== "wal") {
+    database.exec("PRAGMA journal_mode = WAL;");
+    effectiveJournalMode = readSqliteJournalMode(database);
+  }
+
+  if (effectiveJournalMode !== "wal") {
+    throw new ContractValidationError({
+      contract: "SqliteStorageRepositoryOptions.wal.enabled",
+      message: "SQLite WAL mode could not be applied.",
+      details: `Requested journal_mode=WAL but SQLite reports journal_mode=${effectiveJournalMode}.`,
+    });
   }
 };
 
@@ -1570,11 +1622,16 @@ export const makeSqliteStorageRepository = (
   options: SqliteStorageRepositoryOptions = {},
 ): SqliteStorageRepository => {
   const enforceForeignKeys = options.enforceForeignKeys ?? true;
+  const walEnabled = options.wal?.enabled ?? false;
   const runMigrations = options.applyMigrations ?? true;
 
   configureSqliteForeignKeys(database, enforceForeignKeys);
+  configureSqliteWalMode(database, walEnabled);
   if (runMigrations) {
     applyEnterpriseSqliteMigrations(database);
+  }
+  if (options.backupReplication !== undefined) {
+    createSqliteBackupReplicator(database, options.backupReplication);
   }
 
   const ensureTenantStatement = database.prepare(
