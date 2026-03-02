@@ -138,8 +138,11 @@ const OUTCOME_UTILITY_SIGNAL_DELTA = Object.freeze({
 const DEFAULT_NEGATIVE_NET_VALUE_DEMOTION_STREAK = 2;
 const DEMOTION_REASON_SUSTAINED_NEGATIVE_NET_VALUE = "sustained_negative_net_value";
 const DEMOTION_REASON_EXPLICIT_HARMFUL_FEEDBACK = "explicit_harmful_feedback";
+const DEMOTION_REASON_CANDIDATE_EXPIRED = "candidate_expired";
 const DEFAULT_REPLAY_SAFETY_DELTA_THRESHOLD = 0;
 const DEFAULT_CANARY_SAFETY_DELTA_THRESHOLD = 0;
+const SHADOW_CANDIDATE_CONFIDENCE_DECAY_PER_DAY = 0.01;
+const SHADOW_CANDIDATE_CONFIDENCE_FLOOR = 0.05;
 const DEFAULT_STORE_ID = "coding-agent";
 const INTERNAL_PROFILE_ID = "__store_default__";
 
@@ -1778,6 +1781,9 @@ function normalizeShadowCandidate(rawCandidate, request, storeId, profile, times
     promotedAt: null,
     demotedAt: null,
     latestDemotionReasonCodes: [],
+    lastTemporalDecayAt: createdAt,
+    temporalDecayTickCount: 0,
+    temporalDecayDaysAccumulated: 0,
   };
 }
 
@@ -3430,6 +3436,12 @@ function runShadowWrite(request) {
       expiresAt: incoming.expiresAt ?? resolved.candidate.expiresAt,
       updatedAt: timestamp,
       status: resolved.candidate.status === "promoted" ? "promoted" : "shadow",
+      lastTemporalDecayAt: normalizeIsoTimestampOrFallback(
+        resolved.candidate.lastTemporalDecayAt ?? resolved.candidate.updatedAt ?? resolved.candidate.createdAt,
+        incoming.createdAt,
+      ),
+      temporalDecayTickCount: toNonNegativeInteger(resolved.candidate.temporalDecayTickCount, 0),
+      temporalDecayDaysAccumulated: toNonNegativeInteger(resolved.candidate.temporalDecayDaysAccumulated, 0),
     };
 
     if (stableStringify(resolved.candidate) === stableStringify(merged)) {
@@ -5174,6 +5186,139 @@ function rebalanceReviewSet(state, storeId, profile, { activeLimit, timestamp })
   };
 }
 
+function buildTemporalCandidateTickSummary() {
+  return {
+    processedCount: 0,
+    eligibleForDecayCount: 0,
+    expiredCount: 0,
+    demotedCount: 0,
+    decayAppliedCount: 0,
+    decayCursorAdvancedCount: 0,
+    unchangedCount: 0,
+    floorReachedCount: 0,
+    totalConfidenceDelta: 0,
+    decayedCandidateIds: [],
+    demotedCandidateIds: [],
+    expiredCandidateIds: [],
+    reasonCodes: [],
+    decayRatePerDay: SHADOW_CANDIDATE_CONFIDENCE_DECAY_PER_DAY,
+    confidenceFloor: SHADOW_CANDIDATE_CONFIDENCE_FLOOR,
+    deterministic: true,
+    replaySafe: true,
+  };
+}
+
+function runTemporalCandidateMaintenanceTick(state, timestamp) {
+  const summary = buildTemporalCandidateTickSummary();
+  const candidates = Array.isArray(state.shadowCandidates) ? state.shadowCandidates : [];
+  const orderedCandidateIds = sortByTimestampAndId(candidates, "updatedAt", "candidateId")
+    .map((candidate) => normalizeBoundedStringLenient(candidate?.candidateId, 64))
+    .filter(Boolean);
+  const visited = new Set();
+
+  for (const candidateId of orderedCandidateIds) {
+    if (visited.has(candidateId)) {
+      continue;
+    }
+    visited.add(candidateId);
+    summary.processedCount += 1;
+
+    const resolved = resolveMemoryCandidate(state, candidateId);
+    const currentCandidate = resolved.candidate;
+    if (!currentCandidate) {
+      summary.unchangedCount += 1;
+      continue;
+    }
+
+    let mutated = false;
+    const expiresAt = normalizeIsoTimestampOrFallback(currentCandidate.expiresAt, DEFAULT_VERSION_TIMESTAMP);
+    const expired = expiresAt.localeCompare(timestamp) < 0;
+    if (expired) {
+      summary.expiredCandidateIds.push(candidateId);
+    }
+    if (expired && currentCandidate.status !== "demoted") {
+      const demotion = applyCandidateDemotion(state, resolved, {
+        demotedAt: timestamp,
+        reasonCodes: [DEMOTION_REASON_CANDIDATE_EXPIRED],
+      });
+      if (demotion.action === "demoted") {
+        summary.demotedCandidateIds.push(candidateId);
+        mutated = true;
+      }
+    }
+
+    const candidateAfterDemotion = resolveMemoryCandidate(state, candidateId).candidate;
+    if (!candidateAfterDemotion) {
+      if (!mutated) {
+        summary.unchangedCount += 1;
+      }
+      continue;
+    }
+    if (candidateAfterDemotion.status !== "demoted") {
+      summary.eligibleForDecayCount += 1;
+      const lastTemporalDecayAt = normalizeIsoTimestampOrFallback(
+        candidateAfterDemotion.lastTemporalDecayAt ??
+          candidateAfterDemotion.updatedAt ??
+          candidateAfterDemotion.createdAt,
+        DEFAULT_VERSION_TIMESTAMP,
+      );
+      const elapsedDays = isoAgeDays(timestamp, lastTemporalDecayAt);
+      if (elapsedDays > 0) {
+        const previousConfidence = clamp01(candidateAfterDemotion.confidence, 0.5);
+        const decayMultiplier = (1 - SHADOW_CANDIDATE_CONFIDENCE_DECAY_PER_DAY) ** elapsedDays;
+        const nextConfidence = roundNumber(
+          Math.max(SHADOW_CANDIDATE_CONFIDENCE_FLOOR, previousConfidence * decayMultiplier),
+          6,
+        );
+        const nextCandidate = {
+          ...candidateAfterDemotion,
+          confidence: nextConfidence,
+          lastTemporalDecayAt: timestamp,
+          temporalDecayTickCount: toNonNegativeInteger(candidateAfterDemotion.temporalDecayTickCount, 0) + 1,
+          temporalDecayDaysAccumulated:
+            toNonNegativeInteger(candidateAfterDemotion.temporalDecayDaysAccumulated, 0) + elapsedDays,
+        };
+        if (stableStringify(candidateAfterDemotion) !== stableStringify(nextCandidate)) {
+          const resolvedForUpdate = resolveMemoryCandidate(state, candidateId);
+          if (resolvedForUpdate.candidate) {
+            state.shadowCandidates[resolvedForUpdate.candidateIndex] = nextCandidate;
+            state.shadowCandidates = sortByTimestampAndId(state.shadowCandidates, "updatedAt", "candidateId");
+            summary.decayCursorAdvancedCount += 1;
+            mutated = true;
+            if (nextConfidence !== previousConfidence) {
+              summary.decayedCandidateIds.push(candidateId);
+              summary.totalConfidenceDelta = roundNumber(
+                summary.totalConfidenceDelta + roundNumber(nextConfidence - previousConfidence, 6),
+                6,
+              );
+              if (nextConfidence <= SHADOW_CANDIDATE_CONFIDENCE_FLOOR) {
+                summary.floorReachedCount += 1;
+              }
+            }
+          }
+        }
+      }
+    }
+
+    if (!mutated) {
+      summary.unchangedCount += 1;
+    }
+  }
+
+  summary.decayedCandidateIds = asSortedUniqueStrings(summary.decayedCandidateIds);
+  summary.demotedCandidateIds = asSortedUniqueStrings(summary.demotedCandidateIds);
+  summary.expiredCandidateIds = asSortedUniqueStrings(summary.expiredCandidateIds);
+  summary.decayAppliedCount = summary.decayedCandidateIds.length;
+  summary.demotedCount = summary.demotedCandidateIds.length;
+  summary.expiredCount = summary.expiredCandidateIds.length;
+  summary.reasonCodes = summary.demotedCount > 0 ? [DEMOTION_REASON_CANDIDATE_EXPIRED] : [];
+
+  return {
+    changed: summary.demotedCount > 0 || summary.decayCursorAdvancedCount > 0,
+    summary: stableSortObject(summary),
+  };
+}
+
 function runReviewScheduleClock(request) {
   const { storeId, profile, input } = normalizeRequest("review_schedule_clock", request);
   const state = getProfileState(storeId, profile);
@@ -5258,22 +5403,35 @@ function runReviewScheduleClock(request) {
     return next;
   });
 
+  const temporalCandidateMaintenance = runTemporalCandidateMaintenanceTick(state, normalized.timestamp);
+
   const tiers = getOrCreateReviewArchivalTiers(state);
   const rebalanced = rebalanceReviewSet(state, storeId, profile, {
     activeLimit: tiers.activeLimit,
     timestamp: normalized.timestamp,
   });
   const clocksChanged = previousClocksDigest !== hash(stableStringify(clocks));
-  const action = clocksChanged || transitions.length > 0 || rebalanced.changed ? "updated" : "noop";
+  const action =
+    clocksChanged || transitions.length > 0 || rebalanced.changed || temporalCandidateMaintenance.changed
+      ? "updated"
+      : "noop";
+  const clockReasonCodes = consolidationTriggered
+    ? [consolidationCause === "none" ? "sleep_clock_triggered" : consolidationCause]
+    : ["interaction_clock_tick"];
+  const candidateReasonCodes = [];
+  if (temporalCandidateMaintenance.summary.decayAppliedCount > 0) {
+    candidateReasonCodes.push("candidate_temporal_decay");
+  }
+  for (const reasonCode of temporalCandidateMaintenance.summary.reasonCodes) {
+    candidateReasonCodes.push(reasonCode);
+  }
   const auditEvent = appendPolicyAuditTrail(state, {
     operation: "review_schedule_clock",
     storeId,
     profile,
     entityId: makeId("clk", hash(stableStringify({ requestDigest: meta.requestDigest }))),
     outcome: action === "noop" ? "noop" : "recorded",
-    reasonCodes: consolidationTriggered
-      ? [consolidationCause === "none" ? "sleep_clock_triggered" : consolidationCause]
-      : ["interaction_clock_tick"],
+    reasonCodes: asSortedUniqueStrings([...clockReasonCodes, ...candidateReasonCodes]),
     details: {
       mode: normalized.mode,
       transitions: transitions.length,
@@ -5285,6 +5443,15 @@ function runReviewScheduleClock(request) {
       consolidationCause,
       activeReviewCount: rebalanced.activeReviewIds.length,
       archivedCount: rebalanced.archivedCount,
+      candidateMaintenance: {
+        processedCount: temporalCandidateMaintenance.summary.processedCount,
+        eligibleForDecayCount: temporalCandidateMaintenance.summary.eligibleForDecayCount,
+        expiredCount: temporalCandidateMaintenance.summary.expiredCount,
+        demotedCount: temporalCandidateMaintenance.summary.demotedCount,
+        decayAppliedCount: temporalCandidateMaintenance.summary.decayAppliedCount,
+        decayCursorAdvancedCount: temporalCandidateMaintenance.summary.decayCursorAdvancedCount,
+        reasonCodes: temporalCandidateMaintenance.summary.reasonCodes,
+      },
     },
     timestamp: normalized.timestamp,
   });
@@ -5296,6 +5463,7 @@ function runReviewScheduleClock(request) {
     transitions,
     consolidationTriggered,
     consolidationCause,
+    candidateMaintenance: temporalCandidateMaintenance.summary,
     rebalance: rebalanced,
     policyAuditEventId: auditEvent.auditEventId,
     observability: {
@@ -5310,6 +5478,7 @@ function runReviewScheduleClock(request) {
       transitionCount: transitions.length,
       activeReviewCount: rebalanced.activeReviewIds.length,
       archivedCount: rebalanced.archivedCount,
+      candidateMaintenance: temporalCandidateMaintenance.summary,
       slo: buildSloObservability(meta.requestDigest, "review_schedule_clock", 45),
     },
   };
@@ -6791,16 +6960,33 @@ function normalizeState(rawState) {
       "failureSignalId",
     ),
     shadowCandidates: sortByTimestampAndId(
-      shadowCandidates.map((candidate) => ({
-        ...candidate,
-        candidateId:
+      shadowCandidates.map((candidate) => {
+        const candidateId =
           normalizeBoundedString(candidate?.candidateId, "shadowCandidates.candidateId", 64) ??
-          makeId("cand", hash(stableStringify(candidate))),
-        updatedAt: normalizeIsoTimestampOrFallback(candidate?.updatedAt, DEFAULT_VERSION_TIMESTAMP),
-        latestDemotionReasonCodes: normalizeBoundedStringArrayLenient(candidate?.latestDemotionReasonCodes),
-        negativeNetValueStreak: toNonNegativeInteger(candidate?.negativeNetValueStreak, 0),
-        metadata: isPlainObject(candidate?.metadata) ? { ...candidate.metadata } : {},
-      })),
+          makeId("cand", hash(stableStringify(candidate)));
+        const createdAt = normalizeIsoTimestampOrFallback(
+          candidate?.createdAt,
+          normalizeIsoTimestampOrFallback(candidate?.updatedAt, DEFAULT_VERSION_TIMESTAMP),
+        );
+        const updatedAt = normalizeIsoTimestampOrFallback(candidate?.updatedAt, createdAt);
+        return {
+          ...candidate,
+          candidateId,
+          confidence: clamp01(candidate?.confidence, 0.5),
+          createdAt,
+          updatedAt,
+          expiresAt: normalizeIsoTimestampOrFallback(candidate?.expiresAt, addDaysToIso(createdAt, 30)),
+          lastTemporalDecayAt: normalizeIsoTimestampOrFallback(
+            candidate?.lastTemporalDecayAt,
+            normalizeIsoTimestampOrFallback(candidate?.updatedAt, createdAt),
+          ),
+          temporalDecayTickCount: toNonNegativeInteger(candidate?.temporalDecayTickCount, 0),
+          temporalDecayDaysAccumulated: toNonNegativeInteger(candidate?.temporalDecayDaysAccumulated, 0),
+          latestDemotionReasonCodes: normalizeBoundedStringArrayLenient(candidate?.latestDemotionReasonCodes),
+          negativeNetValueStreak: toNonNegativeInteger(candidate?.negativeNetValueStreak, 0),
+          metadata: isPlainObject(candidate?.metadata) ? { ...candidate.metadata } : {},
+        };
+      }),
       "updatedAt",
       "candidateId",
     ),

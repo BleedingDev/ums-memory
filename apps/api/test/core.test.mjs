@@ -2776,6 +2776,105 @@ test("ums-memory-d6q.4.13 scheduler consolidates deterministically when novelty-
   assert.equal(tick.observability.noveltyWriteThreshold, 3);
 });
 
+test("ums-memory-hpl.8 review_schedule_clock applies deterministic candidate confidence decay and is replay-safe for identical ticks", () => {
+  const storeId = "tenant-hpl8-decay";
+  const profile = "hpl8-decay";
+  const shadow = executeOperation("shadow_write", {
+    storeId,
+    profile,
+    statement: "Temporal decay should be deterministic across scheduler ticks.",
+    confidence: 0.8,
+    sourceEventIds: ["evt-hpl8-decay-1"],
+    evidenceEventIds: ["evt-hpl8-decay-1"],
+    createdAt: "2026-03-01T00:00:00.000Z",
+    expiresAt: "2026-04-01T00:00:00.000Z",
+  });
+  const candidateId = shadow.applied[0].candidateId;
+  const request = {
+    storeId,
+    profile,
+    mode: "interaction",
+    interactionIncrement: 0,
+    fatigueThreshold: 100,
+    noveltyWriteThreshold: 100,
+    timestamp: "2026-03-11T00:00:00.000Z",
+  };
+
+  const first = executeOperation("review_schedule_clock", request);
+  const firstSnapshot = snapshotProfile(profile, storeId);
+  const firstCandidate = firstSnapshot.shadowCandidates.find((entry) => entry.candidateId === candidateId);
+  const second = executeOperation("review_schedule_clock", request);
+  const secondSnapshot = snapshotProfile(profile, storeId);
+  const secondCandidate = secondSnapshot.shadowCandidates.find((entry) => entry.candidateId === candidateId);
+  const expectedConfidence = Math.round(Math.max(0.05, 0.8 * 0.99 ** 10) * 1_000_000) / 1_000_000;
+
+  assert.ok(firstCandidate);
+  assert.equal(first.candidateMaintenance.decayAppliedCount, 1);
+  assert.equal(first.candidateMaintenance.decayCursorAdvancedCount, 1);
+  assert.deepEqual(first.candidateMaintenance.decayedCandidateIds, [candidateId]);
+  assert.equal(first.candidateMaintenance.demotedCount, 0);
+  assert.equal(first.observability.candidateMaintenance.decayAppliedCount, 1);
+  assert.equal(firstCandidate.confidence, expectedConfidence);
+  assert.equal(firstCandidate.lastTemporalDecayAt, "2026-03-11T00:00:00.000Z");
+  assert.equal(firstCandidate.temporalDecayTickCount, 1);
+  assert.equal(firstCandidate.temporalDecayDaysAccumulated, 10);
+
+  assert.equal(second.action, "noop");
+  assert.ok(secondCandidate);
+  assert.equal(second.candidateMaintenance.decayAppliedCount, 0);
+  assert.equal(second.candidateMaintenance.decayCursorAdvancedCount, 0);
+  assert.deepEqual(second.candidateMaintenance.decayedCandidateIds, []);
+  assert.equal(secondCandidate.confidence, expectedConfidence);
+  assert.equal(secondCandidate.temporalDecayTickCount, 1);
+  assert.equal(secondCandidate.temporalDecayDaysAccumulated, 10);
+});
+
+test("ums-memory-hpl.8 review_schedule_clock demotes expired candidates with explicit reason code without deleting candidate data", () => {
+  const storeId = "tenant-hpl8-expiry";
+  const profile = "hpl8-expiry";
+  const shadow = executeOperation("shadow_write", {
+    storeId,
+    profile,
+    statement: "Expired candidates should be demoted and retained for auditability.",
+    confidence: 0.7,
+    sourceEventIds: ["evt-hpl8-expiry-1"],
+    evidenceEventIds: ["evt-hpl8-expiry-1"],
+    createdAt: "2026-01-01T00:00:00.000Z",
+    expiresAt: "2026-01-10T00:00:00.000Z",
+  });
+  const candidateId = shadow.applied[0].candidateId;
+  const request = {
+    storeId,
+    profile,
+    mode: "interaction",
+    interactionIncrement: 0,
+    fatigueThreshold: 100,
+    noveltyWriteThreshold: 100,
+    timestamp: "2026-02-01T00:00:00.000Z",
+  };
+
+  const first = executeOperation("review_schedule_clock", request);
+  const second = executeOperation("review_schedule_clock", request);
+  const snapshot = snapshotProfile(profile, storeId);
+  const candidate = snapshot.shadowCandidates.find((entry) => entry.candidateId === candidateId);
+
+  assert.equal(first.candidateMaintenance.expiredCount, 1);
+  assert.equal(first.candidateMaintenance.demotedCount, 1);
+  assert.deepEqual(first.candidateMaintenance.reasonCodes, ["candidate_expired"]);
+  assert.deepEqual(first.candidateMaintenance.demotedCandidateIds, [candidateId]);
+  assert.equal(first.observability.candidateMaintenance.demotedCount, 1);
+
+  assert.ok(candidate);
+  assert.equal(snapshot.shadowCandidates.length, 1);
+  assert.equal(candidate.status, "demoted");
+  assert.equal(candidate.demotedAt, "2026-02-01T00:00:00.000Z");
+  assert.deepEqual(candidate.latestDemotionReasonCodes, ["candidate_expired"]);
+
+  assert.equal(second.action, "noop");
+  assert.equal(second.candidateMaintenance.demotedCount, 0);
+  assert.deepEqual(second.candidateMaintenance.demotedCandidateIds, []);
+});
+
 test("ums-memory-d6q.4.13 scheduler triggers consolidation when configurable fatigue threshold is exceeded", () => {
   const first = executeOperation("review_schedule_clock", {
     storeId: "tenant-d6q4-13-fatigue",
