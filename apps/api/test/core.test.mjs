@@ -294,15 +294,24 @@ test("ums-memory-hpl.4 replay_eval auto-demotes on sustained negative net value 
   });
   const promotedRuleId = promoted.rule.ruleId;
 
-  const firstNegative = executeOperation("replay_eval", {
+  const firstNegativeRequest = {
     storeId,
     profile,
     candidateId,
     successRateDelta: -0.1,
     evaluatedAt: "2026-03-02T11:00:00.000Z",
-  });
+  };
+  const firstNegative = executeOperation("replay_eval", firstNegativeRequest);
   assert.equal(firstNegative.autoDemotion, null);
   assert.equal(firstNegative.observability.negativeNetValueStreak, 1);
+  const firstNegativeUpdated = executeOperation("replay_eval", {
+    ...firstNegativeRequest,
+    replayEvalId: firstNegative.replayEvalId,
+    successRateDelta: -0.15,
+  });
+  assert.equal(firstNegativeUpdated.action, "updated");
+  assert.equal(firstNegativeUpdated.autoDemotion, null);
+  assert.equal(firstNegativeUpdated.observability.negativeNetValueStreak, 1);
 
   const secondNegativeRequest = {
     storeId,
@@ -396,6 +405,54 @@ test("ums-memory-hpl.4 harmful feedback auto-demotes deterministically and noop 
   assert.equal(storedCandidate.status, "demoted");
   assert.deepEqual(storedCandidate.latestDemotionReasonCodes, ["explicit_harmful_feedback"]);
   assert.equal(snapshot.rules.some((entry) => entry.ruleId === targetRuleId), false);
+});
+
+test("ums-memory-hpl.4 replay_eval trailing negative streak resets after a positive evaluation", () => {
+  const storeId = "tenant-hpl4-replay-streak-reset";
+  const profile = "hpl4-replay-streak-reset";
+  const shadow = executeOperation("shadow_write", {
+    storeId,
+    profile,
+    statement: "Positive replay evaluations should reset trailing negative streak.",
+    sourceEventIds: ["evt-hpl4-streak-reset-1"],
+    evidenceEventIds: ["evt-hpl4-streak-reset-1"],
+  });
+  const candidateId = shadow.applied[0].candidateId;
+
+  const firstNegative = executeOperation("replay_eval", {
+    storeId,
+    profile,
+    candidateId,
+    successRateDelta: -0.2,
+    evaluatedAt: "2026-03-02T13:00:00.000Z",
+  });
+  assert.equal(firstNegative.observability.negativeNetValueStreak, 1);
+
+  const positive = executeOperation("replay_eval", {
+    storeId,
+    profile,
+    candidateId,
+    successRateDelta: 0.4,
+    evaluatedAt: "2026-03-02T13:10:00.000Z",
+  });
+  assert.equal(positive.observability.negativeNetValueStreak, 0);
+  assert.equal(positive.autoDemotion, null);
+
+  const secondNegative = executeOperation("replay_eval", {
+    storeId,
+    profile,
+    candidateId,
+    successRateDelta: -0.15,
+    evaluatedAt: "2026-03-02T13:20:00.000Z",
+  });
+  assert.equal(secondNegative.observability.negativeNetValueStreak, 1);
+  assert.equal(secondNegative.autoDemotion, null);
+
+  const snapshot = snapshotProfile(profile, storeId);
+  const storedCandidate = snapshot.shadowCandidates.find((entry) => entry.candidateId === candidateId);
+  assert.ok(storedCandidate);
+  assert.equal(storedCandidate.status, "shadow");
+  assert.equal(storedCandidate.negativeNetValueStreak, 1);
 });
 
 test("shadow_write returns canonical candidate metadata and preserves it on deterministic noop replay", () => {

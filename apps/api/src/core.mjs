@@ -1866,6 +1866,25 @@ function applyCandidateDemotion(state, resolved, { demotedAt, reasonCodes = [] }
   };
 }
 
+function computeTrailingNegativeNetValueStreak(replayEvaluations, candidateId) {
+  if (!Array.isArray(replayEvaluations) || !candidateId) {
+    return 0;
+  }
+  let streak = 0;
+  for (let index = replayEvaluations.length - 1; index >= 0; index -= 1) {
+    const evaluation = replayEvaluations[index];
+    if (evaluation?.candidateId !== candidateId) {
+      continue;
+    }
+    if (stableScore(evaluation?.netValueScore, 0) < 0) {
+      streak += 1;
+      continue;
+    }
+    break;
+  }
+  return streak;
+}
+
 function normalizeAddWeightRequest(request, storeId, profile) {
   const candidateId = requireNonEmptyString(request.candidateId, "candidateId");
   const parsedDelta = Number(
@@ -3393,8 +3412,12 @@ function runReplayEval(request) {
   }
   state.replayEvaluations = sortByTimestampAndId(state.replayEvaluations, "evaluatedAt", "replayEvalId");
   const previousNegativeNetValueStreak = toNonNegativeInteger(resolved.candidate.negativeNetValueStreak, 0);
-  const negativeNetValueStreak =
-    action === "noop" ? previousNegativeNetValueStreak : netValueScore < 0 ? previousNegativeNetValueStreak + 1 : 0;
+  let negativeNetValueStreak = previousNegativeNetValueStreak;
+  if (action === "created") {
+    negativeNetValueStreak = netValueScore < 0 ? previousNegativeNetValueStreak + 1 : 0;
+  } else if (action === "updated") {
+    negativeNetValueStreak = computeTrailingNegativeNetValueStreak(state.replayEvaluations, candidateId);
+  }
 
   const nextCandidate = {
     ...resolved.candidate,
