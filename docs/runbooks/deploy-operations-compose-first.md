@@ -6,6 +6,7 @@
 - Kubernetes manifests are intentionally out of scope for this architecture.
 - Runtime topology is one `api` service + one `worker` service sharing one state file.
 - This runbook assumes one environment per host because `deploy/compose.yml` binds host port `8787`.
+- For automated game day restore drills, see [UMS Disaster-Recovery Game Day Automation Runbook](./disaster-recovery-game-day-automation.md).
 
 ## Runtime Contract
 
