@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { Effect } from "effect";
 import {
   executeOperation,
   exportStoreSnapshot,
@@ -2042,6 +2043,39 @@ test("ums-memory-a9v.5 custom policy pack plugin hook can enforce deny outcomes"
   assert.equal(result.decision.metadata.policyPackPlugin.metadata.pluginRule, "deny-on-plugin-review");
 });
 
+test("ums-memory-a9v.5 policy pack plugin accepts evaluateDecisionUpdate Effect hooks", () => {
+  setPolicyPackPlugin({
+    name: "effect-hook-plugin",
+    evaluateDecisionUpdate(request) {
+      return Effect.succeed({
+        contractVersion: "v1",
+        outcome: "deny",
+        reasonCodes: ["plugin-effect-deny"],
+        metadata: {
+          decisionSeed: request.decisionId,
+        },
+      });
+    },
+  });
+
+  const result = executeOperation("policy_decision_update", {
+    storeId: "tenant-policy-plugin-effect-hook",
+    profile: "learner-policy-plugin-effect-hook",
+    decisionId: "pol-plugin-effect-hook-1",
+    policyKey: "plugin-effect-hook",
+    outcome: "review",
+    reasonCodes: ["insufficient-evidence"],
+    provenanceEventIds: ["evt-plugin-effect-hook-1"],
+    timestamp: "2026-03-02T20:06:00.000Z",
+  });
+
+  assert.equal(result.decision.outcome, "deny");
+  assert.equal(result.decision.reasonCodes.includes("plugin-effect-deny"), true);
+  assert.equal(result.decision.metadata.policyPackPlugin.pluginName, "effect-hook-plugin");
+  assert.equal(result.decision.metadata.policyPackPlugin.status, "executed");
+  assert.equal(result.decision.metadata.policyPackPlugin.metadata.decisionSeed, "pol-plugin-effect-hook-1");
+});
+
 test("ums-memory-a9v.5 policy_decision_update fails closed when policy pack plugin throws", () => {
   setPolicyPackPlugin({
     name: "throwing-plugin",
@@ -2081,6 +2115,41 @@ test("ums-memory-a9v.5 policy_decision_update fails closed when policy pack plug
   assert.equal(
     auditEntry.details.pluginInvocation.failureCode,
     "policy_pack_plugin_failure",
+  );
+});
+
+test("ums-memory-a9v.5 policy_decision_update fails closed when plugin returns Promise", () => {
+  setPolicyPackPlugin({
+    name: "promise-plugin",
+    evaluateDecisionUpdate() {
+      return Promise.resolve({
+        contractVersion: "v1",
+        outcome: "pass",
+        reasonCodes: [],
+        metadata: {},
+      });
+    },
+  });
+
+  const result = executeOperation("policy_decision_update", {
+    storeId: "tenant-policy-plugin-promise",
+    profile: "learner-policy-plugin-promise",
+    decisionId: "pol-plugin-promise-1",
+    policyKey: "plugin-promise",
+    outcome: "review",
+    reasonCodes: ["insufficient-evidence"],
+    provenanceEventIds: ["evt-plugin-promise-1"],
+    timestamp: "2026-03-02T20:12:00.000Z",
+  });
+
+  assert.equal(result.decision.outcome, "deny");
+  assert.equal(
+    result.decision.metadata.policyPackPlugin.failureCode,
+    "policy_pack_plugin_failure",
+  );
+  assert.match(
+    String(result.decision.metadata.policyPackPlugin.failureMessage),
+    /promises are not supported/i,
   );
 });
 

@@ -4,13 +4,13 @@ import type {
   PolicyPackPluginContractVersion,
   PolicyPackPluginRequest,
   PolicyPackPluginResponse,
-} from "../contracts/index.js";
+} from "../contracts/services.js";
 
 export type {
   PolicyPackPluginContractVersion,
   PolicyPackPluginRequest,
   PolicyPackPluginResponse,
-} from "../contracts/index.js";
+} from "../contracts/services.js";
 
 export const policyPackPluginContractVersion: PolicyPackPluginContractVersion =
   "v1";

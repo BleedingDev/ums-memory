@@ -1,4 +1,5 @@
 import { createHash, createHmac } from "node:crypto";
+import { Effect } from "effect";
 
 const OPS = [
   "ingest",
@@ -1694,6 +1695,18 @@ function toFailClosedPolicyPackInvocation(pluginName, reasonCode, failureMessage
   };
 }
 
+function resolvePolicyPackPluginRawResponse(rawResponse) {
+  if (Effect.isEffect(rawResponse)) {
+    return Effect.runSync(rawResponse);
+  }
+  if (rawResponse && typeof rawResponse.then === "function") {
+    throw new Error(
+      "policy pack plugin promises are not supported; return a synchronous response or Effect.sync."
+    );
+  }
+  return rawResponse;
+}
+
 function invokePolicyPackPluginForDecisionUpdate(storeId, incoming) {
   const activePlugin = policyPackPlugin;
   const pluginName = normalizePolicyPackPluginName(activePlugin?.name);
@@ -1718,6 +1731,7 @@ function invokePolicyPackPluginForDecisionUpdate(storeId, incoming) {
   let rawResponse;
   try {
     rawResponse = activePlugin.evaluatePolicyDecisionUpdate(request);
+    rawResponse = resolvePolicyPackPluginRawResponse(rawResponse);
   } catch (error) {
     return toFailClosedPolicyPackInvocation(
       pluginName,
@@ -9697,14 +9711,25 @@ function normalizeConfiguredPolicyPackPlugin(plugin) {
       evaluatePolicyDecisionUpdate: plugin,
     };
   }
-  if (isPlainObject(plugin) && typeof plugin.evaluatePolicyDecisionUpdate === "function") {
+  if (isPlainObject(plugin)) {
+    const evaluatePolicyDecisionUpdate =
+      typeof plugin.evaluatePolicyDecisionUpdate === "function"
+        ? plugin.evaluatePolicyDecisionUpdate
+        : typeof plugin.evaluateDecisionUpdate === "function"
+          ? plugin.evaluateDecisionUpdate
+          : null;
+    if (evaluatePolicyDecisionUpdate === null) {
+      throw new Error(
+        "policy pack plugin object must expose evaluatePolicyDecisionUpdate(request) or evaluateDecisionUpdate(request)."
+      );
+    }
     return {
       name: normalizePolicyPackPluginName(plugin.name),
-      evaluatePolicyDecisionUpdate: plugin.evaluatePolicyDecisionUpdate,
+      evaluatePolicyDecisionUpdate,
     };
   }
   throw new Error(
-    "policy pack plugin must be a function or object with evaluatePolicyDecisionUpdate(request).",
+    "policy pack plugin must be a function or object with evaluatePolicyDecisionUpdate(request) or evaluateDecisionUpdate(request).",
   );
 }
 

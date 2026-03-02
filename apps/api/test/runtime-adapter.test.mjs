@@ -20,8 +20,16 @@ const RUNTIME_ADAPTER_FIXTURE = resolve(
   process.cwd(),
   "apps/api/test/fixtures/runtime-adapter-override.mjs",
 );
+const POLICY_PACK_PLUGIN_FIXTURE = resolve(
+  process.cwd(),
+  "apps/api/test/fixtures/policy-pack-plugin-override.mjs",
+);
 const ORIGINAL_RUNTIME_ADAPTER_MODULE = process.env.UMS_RUNTIME_ADAPTER_MODULE;
 const ORIGINAL_RUNTIME_ADAPTER_EXPORT = process.env.UMS_RUNTIME_ADAPTER_EXPORT;
+const ORIGINAL_POLICY_PACK_PLUGIN_MODULE =
+  process.env.UMS_POLICY_PACK_PLUGIN_MODULE;
+const ORIGINAL_POLICY_PACK_PLUGIN_EXPORT =
+  process.env.UMS_POLICY_PACK_PLUGIN_EXPORT;
 
 function runCli(args, stdin = "", { env = process.env } = {}) {
   return new Promise((resolvePromise) => {
@@ -50,6 +58,8 @@ function runCli(args, stdin = "", { env = process.env } = {}) {
 function useLegacyRuntimeAdapter() {
   delete process.env.UMS_RUNTIME_ADAPTER_MODULE;
   delete process.env.UMS_RUNTIME_ADAPTER_EXPORT;
+  delete process.env.UMS_POLICY_PACK_PLUGIN_MODULE;
+  delete process.env.UMS_POLICY_PACK_PLUGIN_EXPORT;
   clearRuntimeAdapterCache();
 }
 
@@ -74,6 +84,16 @@ test.after(() => {
     process.env.UMS_RUNTIME_ADAPTER_EXPORT = ORIGINAL_RUNTIME_ADAPTER_EXPORT;
   } else {
     delete process.env.UMS_RUNTIME_ADAPTER_EXPORT;
+  }
+  if (ORIGINAL_POLICY_PACK_PLUGIN_MODULE) {
+    process.env.UMS_POLICY_PACK_PLUGIN_MODULE = ORIGINAL_POLICY_PACK_PLUGIN_MODULE;
+  } else {
+    delete process.env.UMS_POLICY_PACK_PLUGIN_MODULE;
+  }
+  if (ORIGINAL_POLICY_PACK_PLUGIN_EXPORT) {
+    process.env.UMS_POLICY_PACK_PLUGIN_EXPORT = ORIGINAL_POLICY_PACK_PLUGIN_EXPORT;
+  } else {
+    delete process.env.UMS_POLICY_PACK_PLUGIN_EXPORT;
   }
   clearRuntimeAdapterCache();
   resetStore();
@@ -130,6 +150,47 @@ test("runtime adapter module override resolves deterministic contract behavior",
 
   assert.equal(first.adapterId, "deterministic-runtime-adapter");
   assert.deepEqual(first, second);
+});
+
+test("legacy runtime adapter can load policy pack plugins from env module", async () => {
+  useLegacyRuntimeAdapter();
+  const env = {
+    ...process.env,
+    UMS_POLICY_PACK_PLUGIN_MODULE: POLICY_PACK_PLUGIN_FIXTURE,
+    UMS_POLICY_PACK_PLUGIN_EXPORT: "createPolicyPackPlugin",
+  };
+  const requestBody = {
+    storeId: "tenant-runtime-policy-pack",
+    profile: "learner-runtime-policy-pack",
+    decisionId: "pol-runtime-policy-pack-1",
+    policyKey: "plugin-fixture-deny",
+    outcome: "review",
+    reasonCodes: ["insufficient-evidence"],
+    provenanceEventIds: ["evt-runtime-policy-pack-1"],
+    timestamp: "2026-03-02T21:00:00.000Z",
+  };
+
+  const first = await executeRuntimeOperation({
+    operation: "policy_decision_update",
+    requestBody: structuredClone(requestBody),
+    stateFile: null,
+    env,
+    reload: true,
+  });
+  const replay = await executeRuntimeOperation({
+    operation: "policy_decision_update",
+    requestBody: structuredClone(requestBody),
+    stateFile: null,
+    env,
+  });
+
+  assert.equal(first.action, "created");
+  assert.equal(first.decision.outcome, "deny");
+  assert.equal(first.decision.reasonCodes.includes("fixture-plugin-deny"), true);
+  assert.equal(first.decision.metadata.policyPackPlugin.pluginName, "fixture-policy-pack-plugin");
+  assert.equal(first.decision.metadata.policyPackPlugin.status, "executed");
+  assert.equal(replay.action, "noop");
+  assert.equal(replay.decisionDigest, first.decisionDigest);
 });
 
 test("api server routes through runtime adapter override for list + operation execution", async () => {

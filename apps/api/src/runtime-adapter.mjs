@@ -1,20 +1,33 @@
 import { isAbsolute, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { executeOperation, listOperations } from "./core.mjs";
+import {
+  executeOperation,
+  listOperations,
+  resetPolicyPackPlugin,
+  setPolicyPackPlugin,
+} from "./core.mjs";
 import { DEFAULT_SHARED_STATE_FILE, executeOperationWithSharedState } from "./persistence.mjs";
 
 export const DEFAULT_RUNTIME_ADAPTER_EXPORT = "createRuntimeAdapter";
 export const DEFAULT_RUNTIME_STATE_FILE = DEFAULT_SHARED_STATE_FILE;
+export const DEFAULT_POLICY_PACK_PLUGIN_EXPORT = "createPolicyPackPlugin";
 
 const RUNTIME_ADAPTER_LOAD_ERROR_CODE = "RUNTIME_ADAPTER_LOAD_ERROR";
 const RUNTIME_ADAPTER_CONTRACT_ERROR_CODE = "RUNTIME_ADAPTER_CONTRACT_ERROR";
 const LEGACY_RUNTIME_ADAPTER_SOURCE = "legacy-core-persistence";
 const LEGACY_RUNTIME_ADAPTER = Object.freeze({
   source: LEGACY_RUNTIME_ADAPTER_SOURCE,
-  listOperations() {
+  async listOperations({ env = process.env } = {}) {
+    await configureLegacyPolicyPackPlugin(env);
     return listOperations();
   },
-  async executeOperation({ operation, requestBody, stateFile = DEFAULT_RUNTIME_STATE_FILE }) {
+  async executeOperation({
+    operation,
+    requestBody,
+    stateFile = DEFAULT_RUNTIME_STATE_FILE,
+    env = process.env,
+  }) {
+    await configureLegacyPolicyPackPlugin(env);
     return executeOperationWithSharedState({
       operation,
       stateFile,
@@ -25,6 +38,8 @@ const LEGACY_RUNTIME_ADAPTER = Object.freeze({
 
 let cachedRuntimeAdapterKey;
 let cachedRuntimeAdapterPromise;
+let cachedPolicyPackPluginKey;
+let cachedPolicyPackPluginPromise;
 
 function asNonEmptyString(value) {
   if (typeof value !== "string") {
@@ -38,6 +53,13 @@ function getRuntimeAdapterConfig(env = process.env) {
   return {
     modulePath: asNonEmptyString(env.UMS_RUNTIME_ADAPTER_MODULE),
     exportName: asNonEmptyString(env.UMS_RUNTIME_ADAPTER_EXPORT) ?? DEFAULT_RUNTIME_ADAPTER_EXPORT,
+  };
+}
+
+function getPolicyPackPluginConfig(env = process.env) {
+  return {
+    modulePath: asNonEmptyString(env.UMS_POLICY_PACK_PLUGIN_MODULE),
+    exportName: asNonEmptyString(env.UMS_POLICY_PACK_PLUGIN_EXPORT) ?? DEFAULT_POLICY_PACK_PLUGIN_EXPORT,
   };
 }
 
@@ -100,6 +122,10 @@ function makeCacheKey({ modulePath, exportName }) {
   return `${modulePath ?? LEGACY_RUNTIME_ADAPTER_SOURCE}#${exportName}`;
 }
 
+function makePolicyPackPluginCacheKey({ modulePath, exportName }) {
+  return `${modulePath ?? "noop-policy-pack-plugin"}#${exportName}`;
+}
+
 function toAdapterLoadError(config, error) {
   if (error && typeof error === "object" && error.code === RUNTIME_ADAPTER_CONTRACT_ERROR_CODE) {
     return error;
@@ -114,6 +140,65 @@ function toAdapterLoadError(config, error) {
   return wrapped;
 }
 
+function toPolicyPackPluginLoadError(config, error) {
+  if (error && typeof error === "object" && error.code === RUNTIME_ADAPTER_CONTRACT_ERROR_CODE) {
+    return error;
+  }
+  const wrapped = new Error(
+    `Failed to load policy pack plugin '${config.modulePath}#${config.exportName}': ${
+      error instanceof Error ? error.message : String(error)
+    }`,
+  );
+  wrapped.code = RUNTIME_ADAPTER_LOAD_ERROR_CODE;
+  wrapped.cause = error;
+  return wrapped;
+}
+
+async function resolvePolicyPackPluginFromModule({ modulePath, exportName }) {
+  const moduleSpecifier = toModuleSpecifier(modulePath);
+  const pluginModule = await import(moduleSpecifier);
+  const exportedValue =
+    pluginModule[exportName] ??
+    (exportName === DEFAULT_POLICY_PACK_PLUGIN_EXPORT ? pluginModule.default : undefined);
+  if (exportedValue == null) {
+    throw toContractError(
+      `Policy pack plugin module '${modulePath}' does not export '${exportName}'.`,
+    );
+  }
+  return typeof exportedValue === "function" ? await exportedValue() : exportedValue;
+}
+
+async function configureLegacyPolicyPackPlugin(env = process.env) {
+  const config = getPolicyPackPluginConfig(env);
+  const cacheKey = makePolicyPackPluginCacheKey(config);
+  if (cachedPolicyPackPluginPromise && cachedPolicyPackPluginKey === cacheKey) {
+    return cachedPolicyPackPluginPromise;
+  }
+
+  const configurePromise = (async () => {
+    if (!config.modulePath) {
+      resetPolicyPackPlugin();
+      return;
+    }
+
+    try {
+      const plugin = await resolvePolicyPackPluginFromModule(config);
+      setPolicyPackPlugin(plugin);
+    } catch (error) {
+      resetPolicyPackPlugin();
+      throw toPolicyPackPluginLoadError(config, error);
+    }
+  })();
+
+  cachedPolicyPackPluginKey = cacheKey;
+  cachedPolicyPackPluginPromise = configurePromise.catch((error) => {
+    cachedPolicyPackPluginKey = undefined;
+    cachedPolicyPackPluginPromise = undefined;
+    throw error;
+  });
+  return cachedPolicyPackPluginPromise;
+}
+
 export function createLegacyRuntimeAdapter() {
   return LEGACY_RUNTIME_ADAPTER;
 }
@@ -121,6 +206,10 @@ export function createLegacyRuntimeAdapter() {
 export async function resolveRuntimeAdapter({ env = process.env, reload = false } = {}) {
   const config = getRuntimeAdapterConfig(env);
   const cacheKey = makeCacheKey(config);
+  if (reload) {
+    cachedPolicyPackPluginKey = undefined;
+    cachedPolicyPackPluginPromise = undefined;
+  }
 
   if (!reload && cachedRuntimeAdapterPromise && cachedRuntimeAdapterKey === cacheKey) {
     return cachedRuntimeAdapterPromise;
@@ -151,7 +240,7 @@ export async function listRuntimeOperations(options = {}) {
     reload = false,
   } = options;
   const adapter = await resolveRuntimeAdapter({ env, reload });
-  const operations = await adapter.listOperations();
+  const operations = await adapter.listOperations({ env });
   if (!Array.isArray(operations)) {
     throw toContractError("Runtime adapter listOperations() must return an array.");
   }
@@ -180,10 +269,13 @@ export async function executeRuntimeOperation(options = {}) {
     operation: normalizeOperationName(operation),
     requestBody,
     stateFile,
+    env,
   });
 }
 
 export function clearRuntimeAdapterCache() {
   cachedRuntimeAdapterKey = undefined;
   cachedRuntimeAdapterPromise = undefined;
+  cachedPolicyPackPluginKey = undefined;
+  cachedPolicyPackPluginPromise = undefined;
 }
