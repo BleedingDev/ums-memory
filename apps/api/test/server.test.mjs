@@ -184,6 +184,8 @@ test("http server exposes deterministic JSON operation routes", async () => {
     const rootBody = await rootRes.json();
     assert.equal(rootBody.ok, true);
     assert.equal(rootBody.deterministic, true);
+    assert.equal(rootBody.consoleUi.enabled, false);
+    assert.deepEqual(rootBody.consoleUi.routes, []);
     assert.equal(rootBody.operations.includes("/v1/learner_profile_update"), true);
     assert.equal(rootBody.operations.includes("/v1/identity_graph_update"), true);
     assert.equal(rootBody.operations.includes("/v1/misconception_update"), true);
@@ -325,6 +327,12 @@ test("ums-memory-yji.7 serves deterministic memory console UI and static assets 
     assert.match(consoleHtml, /data-operation="memory_console_anomaly_alerts"/);
     assert.match(consoleHtml, /data-operation="manual_quarantine_override"/);
 
+    const rootRes = await fetch(`${base}/`);
+    assert.equal(rootRes.status, 200);
+    const rootBody = await rootRes.json();
+    assert.equal(rootBody.consoleUi.enabled, true);
+    assert.deepEqual(rootBody.consoleUi.routes, ["/console", "/console.js", "/console.css"]);
+
     const scriptRes = await fetch(`${base}/console.js`);
     assert.equal(scriptRes.status, 200);
     assert.match(scriptRes.headers.get("content-type") ?? "", /javascript/i);
@@ -336,7 +344,7 @@ test("ums-memory-yji.7 serves deterministic memory console UI and static assets 
     assert.match(scriptBody, /memory_console_policy_audit/);
     assert.match(scriptBody, /memory_console_anomaly_alerts/);
     assert.match(scriptBody, /manual_quarantine_override/);
-    assert.doesNotMatch(scriptBody, /Number\\.parseInt/);
+    assert.doesNotMatch(scriptBody, /Number\.parseInt/);
 
     const styleRes = await fetch(`${base}/console.css`);
     assert.equal(styleRes.status, 200);
@@ -358,6 +366,36 @@ test("ums-memory-yji.7 serves deterministic memory console UI and static assets 
       server.close((error) => (error ? rejectPromise(error) : resolvePromise()));
     });
   }
+});
+
+test("ums-memory-yji.7 console UI toggle parses string config values safely", async () => {
+  const runCase = async (toggle, expectedStatus) => {
+    resetStore();
+    const { server, host, port } = await startApiServer({
+      host: "127.0.0.1",
+      port: 0,
+      stateFile: null,
+      enableConsoleUi: toggle,
+    });
+    const base = `http://${host}:${port}`;
+    try {
+      const consoleRes = await fetch(`${base}/console`);
+      assert.equal(consoleRes.status, expectedStatus);
+      const rootRes = await fetch(`${base}/`);
+      assert.equal(rootRes.status, 200);
+      const rootBody = await rootRes.json();
+      assert.equal(rootBody.consoleUi.enabled, expectedStatus === 200);
+    } finally {
+      await new Promise((resolvePromise, rejectPromise) => {
+        server.close((error) => (error ? rejectPromise(error) : resolvePromise()));
+      });
+    }
+  };
+
+  await runCase("false", 404);
+  await runCase("0", 404);
+  await runCase("true", 200);
+  await runCase("1", 200);
 });
 
 test("ums-memory-yji.6 memory_console HTTP routes expose deterministic operator contracts", async () => {

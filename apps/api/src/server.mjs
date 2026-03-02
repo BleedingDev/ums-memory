@@ -43,6 +43,16 @@ function parseBooleanFlag(value) {
   return normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "on";
 }
 
+function normalizeConsoleUiToggle(value) {
+  if (typeof value === "boolean") {
+    return value;
+  }
+  if (typeof value === "string") {
+    return parseBooleanFlag(value);
+  }
+  return false;
+}
+
 function json(res, statusCode, body) {
   const payload = JSON.stringify(body);
   res.writeHead(statusCode, {
@@ -227,6 +237,7 @@ export function createApiServer({
   enableConsoleUi = ENABLE_CONSOLE_UI,
 } = {}) {
   const activeTelemetry = resolveTelemetry(telemetry);
+  const consoleUiEnabled = normalizeConsoleUiToggle(enableConsoleUi);
   return createServer(async (req, res) => {
     const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
     if (url.pathname === "/" && req.method === "GET") {
@@ -242,6 +253,10 @@ export function createApiServer({
             bodyField: "storeId",
             header: "x-ums-store",
             defaultStore: "coding-agent",
+          },
+          consoleUi: {
+            enabled: consoleUiEnabled,
+            routes: consoleUiEnabled ? Object.keys(CONSOLE_ROUTES) : [],
           },
         });
       } catch (error) {
@@ -259,7 +274,7 @@ export function createApiServer({
 
     const consoleRoute = CONSOLE_ROUTES[url.pathname];
     if (consoleRoute) {
-      if (!enableConsoleUi) {
+      if (!consoleUiEnabled) {
         return notFound(res);
       }
       if (req.method !== "GET") {
