@@ -67,6 +67,81 @@ const evidenceRelationKindSet: ReadonlySet<string> = new Set(
 const sqliteForeignKeysModeByConnection = new WeakMap<DatabaseSync, boolean>();
 const storageScopeAuthorizationGuardrailContract =
   "StorageScopeAuthorizationGuardrail";
+const redactedSecretTokenCategory = "SECRET";
+const redactedEmailTokenCategory = "EMAIL";
+const redactedPhoneTokenCategory = "PHONE";
+const redactedTokenDigestHexLength = 32;
+const secretAssignmentPattern =
+  /(\b(?<!REDACTED_)(?:api[_-]?key|token|password|passphrase|secret|client[_-]?secret|access[_-]?token|refresh[_-]?token|id[_-]?token|bearer)\b\s*[:=]\s*)(?:"([^"]*)"|'([^']*)'|([^\s,;'"`]+))/gi;
+const normalizedSecretFieldNameSet: ReadonlySet<string> = new Set([
+  "apikey",
+  "token",
+  "password",
+  "passphrase",
+  "secret",
+  "clientsecret",
+  "accesstoken",
+  "refreshtoken",
+  "idtoken",
+  "bearer",
+]);
+const openAiApiKeyPattern = /\bsk-[A-Za-z0-9-]{8,}\b/g;
+const jwtPattern =
+  /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g;
+const longHexTokenPattern = /\b[A-Fa-f0-9]{32,}\b/g;
+const emailAddressPattern = /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi;
+const phoneLikePattern = /\+?\d[\d().\-\s]{8,}\d/g;
+const alreadyRedactedTokenPattern =
+  /^\[REDACTED_(?:SECRET|EMAIL|PHONE)(?::[0-9a-f]{12,64})?\]$/;
+const rootPreservedPayloadFieldSet: ReadonlySet<string> = new Set([
+  "scopeId",
+  "scope_id",
+  "evidenceEventIds",
+  "evidence_event_ids",
+  "evidenceEpisodeIds",
+  "evidence_episode_ids",
+  "createdByUserId",
+  "created_by_user_id",
+  "supersedesMemoryId",
+  "supersedes_memory_id",
+]);
+const scopeControlFieldSet: ReadonlySet<string> = new Set([
+  "level",
+  "scopeId",
+  "scope_id",
+  "projectId",
+  "project_id",
+  "roleId",
+  "role_id",
+  "jobRoleId",
+  "job_role_id",
+  "userId",
+  "user_id",
+]);
+const evidencePointerTraceabilityFieldSet: ReadonlySet<string> = new Set([
+  "sourceKind",
+  "source_kind",
+  "sourceRef",
+  "source_ref",
+  "reference",
+  "ref",
+  "eventId",
+  "event_id",
+  "episodeId",
+  "episode_id",
+  "digestSha256",
+  "digest_sha256",
+  "digest",
+  "sha256",
+  "evidenceId",
+  "evidence_id",
+  "relationKind",
+  "relation_kind",
+  "observedAtMillis",
+  "observed_at_ms",
+  "createdAtMillis",
+  "created_at_ms",
+]);
 
 type CanonicalJsonValue =
   | string
@@ -165,6 +240,8 @@ interface StoragePayloadProjection {
   readonly expiresAtMillis: number | null;
   readonly tombstonedAtMillis: number | null;
   readonly provenanceJson: string | null;
+  readonly rawPayloadSha256: string;
+  readonly legacyUnsanitizedRequestHashSha256: string;
   readonly evidencePointers: readonly EvidencePointerProjection[];
 }
 
@@ -174,6 +251,7 @@ interface EvidencePointerProjection {
   readonly sourceRef: string;
   readonly digestSha256: string;
   readonly payloadJson: string;
+  readonly rawPayloadJson: string;
   readonly observedAtMillis: number;
   readonly createdAtMillis: number;
   readonly relationKind: EnterpriseEvidenceRelationKind;
@@ -536,6 +614,7 @@ const createEvidencePointerFromReferenceId = (
   const sourceKind: EnterpriseEvidenceSourceKind = "event";
   const sourceRef = `event://${sourceId}`;
   const payloadJson = "{}";
+  const rawPayloadJson = payloadJson;
   const digestSha256 = toSha256Hex(
     `${sourceKind}\n${sourceRef}\n${payloadJson}`
   );
@@ -547,6 +626,7 @@ const createEvidencePointerFromReferenceId = (
     sourceRef,
     digestSha256,
     payloadJson,
+    rawPayloadJson,
     observedAtMillis,
     createdAtMillis,
     relationKind,
@@ -554,20 +634,21 @@ const createEvidencePointerFromReferenceId = (
 };
 
 const parseEvidencePointerRecord = (
-  pointerRecord: DomainRecord,
+  rawPointerRecord: DomainRecord,
+  sanitizedPointerRecord: DomainRecord,
   label: string,
   fallbackObservedAtMillis: number,
   fallbackCreatedAtMillis: number
 ): EvidencePointerProjection => {
   const eventOrEpisodeId =
     parseOptionalTrimmedString(
-      pointerRecord,
+      rawPointerRecord,
       ["eventId", "event_id", "episodeId", "episode_id"],
       `${label}.eventId`
     ) ?? null;
   const sourceRefCandidate =
     parseOptionalTrimmedString(
-      pointerRecord,
+      rawPointerRecord,
       ["sourceRef", "source_ref", "reference", "ref"],
       `${label}.sourceRef`
     ) ?? null;
@@ -582,38 +663,49 @@ const parseEvidencePointerRecord = (
 
   const sourceKind =
     parseOptionalEnum<EnterpriseEvidenceSourceKind>(
-      pointerRecord,
+      rawPointerRecord,
       ["sourceKind", "source_kind"],
       evidenceSourceKindSet,
       `${label}.sourceKind`
     ) ?? "event";
   const relationKind =
     parseOptionalEnum<EnterpriseEvidenceRelationKind>(
-      pointerRecord,
+      rawPointerRecord,
       ["relationKind", "relation_kind"],
       evidenceRelationKindSet,
       `${label}.relationKind`
     ) ?? "supports";
 
-  const evidencePayloadValue = readRecordValue(pointerRecord, [
+  const rawEvidencePayloadValue = readRecordValue(rawPointerRecord, [
     "payload",
     "payload_json",
     "metadata",
   ]);
+  const sanitizedEvidencePayloadValue = readRecordValue(
+    sanitizedPointerRecord,
+    ["payload", "payload_json", "metadata"]
+  );
   const payloadJson =
-    evidencePayloadValue === undefined
+    sanitizedEvidencePayloadValue === undefined
       ? "{}"
-      : toCanonicalJsonString(evidencePayloadValue, `${label}.payload`);
+      : toCanonicalJsonString(
+          sanitizedEvidencePayloadValue,
+          `${label}.payload`
+        );
+  const rawPayloadJson =
+    rawEvidencePayloadValue === undefined
+      ? "{}"
+      : toCanonicalJsonString(rawEvidencePayloadValue, `${label}.payload`);
 
   const rawDigest =
     parseOptionalTrimmedString(
-      pointerRecord,
+      rawPointerRecord,
       ["digestSha256", "digest_sha256", "digest", "sha256"],
       `${label}.digestSha256`
     ) ?? null;
   const digestSha256 =
     rawDigest === null
-      ? toSha256Hex(`${sourceKind}\n${sourceRef}\n${payloadJson}`)
+      ? toSha256Hex(`${sourceKind}\n${sourceRef}\n${rawPayloadJson}`)
       : rawDigest.toLowerCase();
   if (!/^[0-9a-f]{64}$/.test(digestSha256)) {
     throw new StoragePayloadValidationFailure(
@@ -623,7 +715,7 @@ const parseEvidencePointerRecord = (
 
   const observedAtMillis =
     parseOptionalNonNegativeSafeInteger(
-      pointerRecord,
+      rawPointerRecord,
       [
         "observedAtMillis",
         "observed_at_ms",
@@ -633,7 +725,7 @@ const parseEvidencePointerRecord = (
       `${label}.observedAtMillis`
     ) ?? fallbackObservedAtMillis;
   const createdAtMillisInput = parseOptionalNonNegativeSafeInteger(
-    pointerRecord,
+    rawPointerRecord,
     ["createdAtMillis", "created_at_ms"],
     `${label}.createdAtMillis`
   );
@@ -644,7 +736,7 @@ const parseEvidencePointerRecord = (
 
   const proposedEvidenceId =
     parseOptionalTrimmedString(
-      pointerRecord,
+      rawPointerRecord,
       ["evidenceId", "evidence_id"],
       `${label}.evidenceId`
     ) ??
@@ -656,6 +748,7 @@ const parseEvidencePointerRecord = (
     sourceRef,
     digestSha256,
     payloadJson,
+    rawPayloadJson,
     observedAtMillis,
     createdAtMillis,
     relationKind,
@@ -707,12 +800,38 @@ const compareEvidencePointers = (
   return compareStringsAscending(left.payloadJson, right.payloadJson);
 };
 
+const withNormalizedEvidenceDigestField = (
+  pointerRecord: DomainRecord,
+  digestSha256: string
+): DomainRecord => {
+  const existingDigestValue = readRecordValue(pointerRecord, [
+    "digestSha256",
+    "digest_sha256",
+    "digest",
+    "sha256",
+  ]);
+  if (
+    typeof existingDigestValue === "string" &&
+    existingDigestValue.length > 0
+  ) {
+    return pointerRecord;
+  }
+
+  return Object.freeze({
+    ...pointerRecord,
+    digestSha256,
+  }) as DomainRecord;
+};
+
 const parseEvidencePointerProjections = (
-  payload: DomainRecord,
+  rawPayload: DomainRecord,
+  sanitizedPayload: DomainRecord,
   fallbackObservedAtMillis: number,
   fallbackCreatedAtMillis: number
 ): readonly EvidencePointerProjection[] => {
-  const explicitPointersValue = readPayloadEvidencePointersValue(payload);
+  const explicitPointersValue = readPayloadEvidencePointersValue(rawPayload);
+  const sanitizedExplicitPointersValue =
+    readPayloadEvidencePointersValue(sanitizedPayload);
   const pointers: EvidencePointerProjection[] = [];
 
   if (explicitPointersValue !== undefined) {
@@ -721,32 +840,54 @@ const parseEvidencePointerProjections = (
         "payload.evidencePointers must be an array of evidence pointer objects."
       );
     }
+    if (!Array.isArray(sanitizedExplicitPointersValue)) {
+      throw new StoragePayloadValidationFailure(
+        "payload.evidencePointers sanitization must preserve array structure."
+      );
+    }
+    if (
+      sanitizedExplicitPointersValue.length !== explicitPointersValue.length
+    ) {
+      throw new StoragePayloadValidationFailure(
+        "payload.evidencePointers sanitization must preserve pointer count."
+      );
+    }
     for (const [index, pointerValue] of explicitPointersValue.entries()) {
       if (!isDomainRecord(pointerValue)) {
         throw new StoragePayloadValidationFailure(
           `payload.evidencePointers[${index}] must be a plain object record.`
         );
       }
-      pointers.push(
-        parseEvidencePointerRecord(
-          pointerValue,
-          `payload.evidencePointers[${index}]`,
-          fallbackObservedAtMillis,
-          fallbackCreatedAtMillis
-        )
+      const sanitizedPointerValue = sanitizedExplicitPointersValue[index];
+      if (!isDomainRecord(sanitizedPointerValue)) {
+        throw new StoragePayloadValidationFailure(
+          `payload.evidencePointers[${index}] sanitization must preserve pointer object shape.`
+        );
+      }
+      const parsedPointer = parseEvidencePointerRecord(
+        pointerValue,
+        sanitizedPointerValue,
+        `payload.evidencePointers[${index}]`,
+        fallbackObservedAtMillis,
+        fallbackCreatedAtMillis
       );
+      sanitizedExplicitPointersValue[index] = withNormalizedEvidenceDigestField(
+        sanitizedPointerValue,
+        parsedPointer.digestSha256
+      );
+      pointers.push(parsedPointer);
     }
   }
 
   const evidenceEventIds =
     parseOptionalTrimmedStringArray(
-      payload,
+      rawPayload,
       ["evidenceEventIds", "evidence_event_ids"],
       "payload.evidenceEventIds"
     ) ?? [];
   const evidenceEpisodeIds =
     parseOptionalTrimmedStringArray(
-      payload,
+      rawPayload,
       ["evidenceEpisodeIds", "evidence_episode_ids"],
       "payload.evidenceEpisodeIds"
     ) ?? [];
@@ -806,7 +947,8 @@ const readPersistedProvenanceJsonFromPayloadJson = (
     return null;
   }
 
-  const provenanceValue = readPayloadProvenanceValue(parsedPayload);
+  const sanitizedPayload = sanitizePayloadForPersistence(parsedPayload);
+  const provenanceValue = readPayloadProvenanceValue(sanitizedPayload);
   if (provenanceValue === undefined || provenanceValue === null) {
     return null;
   }
@@ -942,6 +1084,234 @@ const isPlainRecordObject = (value: object): boolean => {
   const prototype: unknown = Object.getPrototypeOf(value);
   return prototype === Object.prototype || prototype === null;
 };
+
+const isLikelyPhoneNumber = (candidate: string): boolean => {
+  const digitCount = candidate.replace(/\D/g, "").length;
+  if (digitCount < 10 || digitCount > 15) {
+    return false;
+  }
+
+  return /[()\-\s]/.test(candidate) || candidate.trim().startsWith("+");
+};
+
+const toRedactedToken = (
+  category:
+    | typeof redactedSecretTokenCategory
+    | typeof redactedEmailTokenCategory
+    | typeof redactedPhoneTokenCategory,
+  rawValue: string
+): string => {
+  const tokenDigest = toSha256Hex(rawValue).slice(
+    0,
+    redactedTokenDigestHexLength
+  );
+  return `[REDACTED_${category}:${tokenDigest}]`;
+};
+
+const isAlreadyRedactedToken = (candidate: string): boolean =>
+  alreadyRedactedTokenPattern.test(candidate);
+
+const isInsideRedactedToken = (
+  source: string,
+  matchOffset: number,
+  matchLength: number
+): boolean => {
+  const redactedTokenStart = source.lastIndexOf("[REDACTED_", matchOffset);
+  if (redactedTokenStart === -1) {
+    return false;
+  }
+  const redactedTokenEnd = source.indexOf("]", redactedTokenStart);
+  if (redactedTokenEnd === -1) {
+    return false;
+  }
+
+  return (
+    matchOffset >= redactedTokenStart &&
+    matchOffset + matchLength <= redactedTokenEnd + 1
+  );
+};
+
+const redactSensitiveString = (value: string): string => {
+  let redacted = value;
+  redacted = redacted.replace(
+    secretAssignmentPattern,
+    (
+      _match,
+      prefix: string,
+      doubleQuotedValue: string | undefined,
+      singleQuotedValue: string | undefined,
+      unquotedValue: string | undefined
+    ) => {
+      const secretValue =
+        doubleQuotedValue ?? singleQuotedValue ?? unquotedValue ?? "";
+      const normalizedSecretValue = isAlreadyRedactedToken(secretValue)
+        ? secretValue
+        : toRedactedToken(redactedSecretTokenCategory, secretValue);
+      if (doubleQuotedValue !== undefined) {
+        return `${prefix}"${normalizedSecretValue}"`;
+      }
+      if (singleQuotedValue !== undefined) {
+        return `${prefix}'${normalizedSecretValue}'`;
+      }
+      return `${prefix}${normalizedSecretValue}`;
+    }
+  );
+  redacted = redacted.replace(
+    openAiApiKeyPattern,
+    (candidate, offset, source) =>
+      isInsideRedactedToken(source, offset, candidate.length)
+        ? candidate
+        : toRedactedToken(redactedSecretTokenCategory, candidate)
+  );
+  redacted = redacted.replace(jwtPattern, (candidate, offset, source) =>
+    isInsideRedactedToken(source, offset, candidate.length)
+      ? candidate
+      : toRedactedToken(redactedSecretTokenCategory, candidate)
+  );
+  redacted = redacted.replace(
+    longHexTokenPattern,
+    (candidate, offset, source) =>
+      isInsideRedactedToken(source, offset, candidate.length)
+        ? candidate
+        : toRedactedToken(redactedSecretTokenCategory, candidate)
+  );
+  redacted = redacted.replace(
+    emailAddressPattern,
+    (candidate, offset, source) =>
+      isInsideRedactedToken(source, offset, candidate.length)
+        ? candidate
+        : toRedactedToken(redactedEmailTokenCategory, candidate)
+  );
+  redacted = redacted.replace(phoneLikePattern, (candidate, offset, source) =>
+    isLikelyPhoneNumber(candidate) &&
+    !isInsideRedactedToken(source, offset, candidate.length)
+      ? toRedactedToken(redactedPhoneTokenCategory, candidate)
+      : candidate
+  );
+
+  return redacted;
+};
+
+const toFieldNameSegments = (fieldName: string): readonly string[] =>
+  fieldName
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .split(/[^A-Za-z0-9]+/)
+    .filter((segment) => segment.length > 0)
+    .map((segment) => segment.toLowerCase());
+
+const isSecretLikeFieldName = (fieldName: string): boolean => {
+  const segments = toFieldNameSegments(fieldName);
+  if (segments.length === 0) {
+    return false;
+  }
+  if (segments.length === 1) {
+    const [onlySegment] = segments;
+    return (
+      onlySegment !== undefined && normalizedSecretFieldNameSet.has(onlySegment)
+    );
+  }
+
+  return normalizedSecretFieldNameSet.has(segments.join(""));
+};
+
+const isEvidencePointerCollectionPathSegment = (
+  value: string | number | undefined
+): boolean => value === "evidencePointers" || value === "evidence_pointers";
+
+const shouldPreserveRootPayloadField = (
+  path: readonly (string | number)[],
+  key: string
+): boolean => path.length === 0 && rootPreservedPayloadFieldSet.has(key);
+
+const shouldPreserveScopeControlField = (
+  path: readonly (string | number)[],
+  key: string
+): boolean =>
+  path.length === 1 && path[0] === "scope" && scopeControlFieldSet.has(key);
+
+const shouldPreserveDirectEvidencePointerTraceabilityField = (
+  path: readonly (string | number)[],
+  key: string
+): boolean => {
+  if (!evidencePointerTraceabilityFieldSet.has(key)) {
+    return false;
+  }
+  if (path.length === 2) {
+    const collectionKey = path[0];
+    const index = path[1];
+    return (
+      isEvidencePointerCollectionPathSegment(collectionKey) &&
+      typeof index === "number"
+    );
+  }
+  if (path.length === 3) {
+    const rootKey = path[0];
+    const collectionKey = path[1];
+    const index = path[2];
+    return (
+      rootKey === "metadata" &&
+      isEvidencePointerCollectionPathSegment(collectionKey) &&
+      typeof index === "number"
+    );
+  }
+
+  return false;
+};
+
+const shouldPreservePayloadField = (
+  path: readonly (string | number)[],
+  key: string
+): boolean =>
+  shouldPreserveRootPayloadField(path, key) ||
+  shouldPreserveScopeControlField(path, key) ||
+  shouldPreserveDirectEvidencePointerTraceabilityField(path, key);
+
+const sanitizePayloadDomainValue = (
+  value: DomainValue,
+  path: readonly (string | number)[]
+): DomainValue => {
+  if (
+    value === null ||
+    typeof value === "number" ||
+    typeof value === "boolean"
+  ) {
+    return value;
+  }
+  if (typeof value === "string") {
+    return redactSensitiveString(value);
+  }
+  if (Array.isArray(value)) {
+    return value.map((entry, index) =>
+      sanitizePayloadDomainValue(entry, [...path, index])
+    );
+  }
+  if (!isDomainRecord(value)) {
+    return value;
+  }
+
+  const sanitizedRecord: Record<string, DomainValue> = {};
+  for (const [key, childValue] of Object.entries(value)) {
+    if (shouldPreservePayloadField(path, key)) {
+      sanitizedRecord[key] = childValue;
+      continue;
+    }
+    if (typeof childValue === "string" && isSecretLikeFieldName(key)) {
+      sanitizedRecord[key] = isAlreadyRedactedToken(childValue)
+        ? childValue
+        : toRedactedToken(redactedSecretTokenCategory, childValue);
+      continue;
+    }
+    sanitizedRecord[key] = sanitizePayloadDomainValue(childValue, [
+      ...path,
+      key,
+    ]);
+  }
+
+  return sanitizedRecord;
+};
+
+const sanitizePayloadForPersistence = (payload: DomainRecord): DomainRecord =>
+  sanitizePayloadDomainValue(payload, []) as DomainRecord;
 
 const normalizeDomainValue = (
   value: DomainValue,
@@ -1251,6 +1621,8 @@ const parsePayloadProjection = (
   }
 
   const payload = request.payload;
+  const sanitizedPayload = sanitizePayloadForPersistence(payload);
+  const rawPayloadJson = toCanonicalPayloadJson(payload);
   const memoryKind =
     parseOptionalEnum<EnterpriseMemoryKind>(
       payload,
@@ -1258,8 +1630,11 @@ const parsePayloadProjection = (
       memoryKindSet,
       "payload.memoryKind"
     ) ?? "note";
-  const title =
+  const rawTitle =
     parseOptionalTrimmedString(payload, ["title"], "payload.title") ??
+    request.memoryId;
+  const title =
+    parseOptionalTrimmedString(sanitizedPayload, ["title"], "payload.title") ??
     request.memoryId;
 
   const createdAtMillis = parseOptionalNonNegativeSafeInteger(
@@ -1358,9 +1733,11 @@ const parsePayloadProjection = (
       ["supersedesMemoryId", "supersedes_memory_id"],
       "payload.supersedesMemoryId"
     ) ?? null;
-  const provenanceJson = parseIncomingProvenanceJson(payload);
+  const rawProvenanceJson = parseIncomingProvenanceJson(payload);
+  const provenanceJson = parseIncomingProvenanceJson(sanitizedPayload);
   const evidencePointers = parseEvidencePointerProjections(
     payload,
+    sanitizedPayload,
     normalizedUpdatedAtMillis,
     normalizedCreatedAtMillis
   );
@@ -1369,6 +1746,41 @@ const parsePayloadProjection = (
       "Promoted procedural memory requires at least one evidence pointer."
     );
   }
+  const legacyUnsanitizedRequestHashSha256 = toSha256Hex(
+    JSON.stringify({
+      operation: "upsert",
+      spaceId: request.spaceId,
+      memoryId: request.memoryId,
+      layer: request.layer,
+      payloadProjection: {
+        scopeId: scopeControl.scopeId,
+        scopeProjectId: scopeControl.scopeProjectId,
+        scopeRoleId: scopeControl.scopeRoleId,
+        scopeUserId: scopeControl.scopeUserId,
+        memoryKind,
+        status: normalizedStatus,
+        title: rawTitle,
+        payloadJson: rawPayloadJson,
+        createdByUserId,
+        supersedesMemoryId,
+        createdAtMillis: normalizedCreatedAtMillis,
+        updatedAtMillis: normalizedUpdatedAtMillis,
+        expiresAtMillis: normalizedExpiresAtMillis,
+        tombstonedAtMillis: normalizedTombstonedAtMillis,
+        provenanceJson: rawProvenanceJson,
+        evidencePointers: evidencePointers.map((pointer) => ({
+          proposedEvidenceId: pointer.proposedEvidenceId,
+          sourceKind: pointer.sourceKind,
+          sourceRef: pointer.sourceRef,
+          digestSha256: pointer.digestSha256,
+          payloadJson: pointer.rawPayloadJson,
+          observedAtMillis: pointer.observedAtMillis,
+          createdAtMillis: pointer.createdAtMillis,
+          relationKind: pointer.relationKind,
+        })),
+      },
+    })
+  );
 
   return Object.freeze({
     scopeId: scopeControl.scopeId,
@@ -1378,7 +1790,7 @@ const parsePayloadProjection = (
     memoryKind,
     status: normalizedStatus,
     title,
-    payloadJson: toCanonicalPayloadJson(payload),
+    payloadJson: toCanonicalPayloadJson(sanitizedPayload),
     createdByUserId,
     supersedesMemoryId,
     createdAtMillis: normalizedCreatedAtMillis,
@@ -1386,6 +1798,8 @@ const parsePayloadProjection = (
     expiresAtMillis: normalizedExpiresAtMillis,
     tombstonedAtMillis: normalizedTombstonedAtMillis,
     provenanceJson,
+    rawPayloadSha256: toSha256Hex(rawPayloadJson),
+    legacyUnsanitizedRequestHashSha256,
     evidencePointers,
   });
 };
@@ -1462,43 +1876,62 @@ const resolveOptionalIdempotencyKey = (
 
 const toDeterministicUpsertRequestHash = (
   request: StorageUpsertRequest,
+  payloadProjection: StoragePayloadProjection,
+  options?: {
+    readonly includeRawPayloadSha256?: boolean;
+  }
+): string =>
+  (() => {
+    const includeRawPayloadSha256 = options?.includeRawPayloadSha256 ?? true;
+    return toSha256Hex(
+      JSON.stringify({
+        operation: "upsert",
+        spaceId: request.spaceId,
+        memoryId: request.memoryId,
+        layer: request.layer,
+        payloadProjection: {
+          scopeId: payloadProjection.scopeId,
+          scopeProjectId: payloadProjection.scopeProjectId,
+          scopeRoleId: payloadProjection.scopeRoleId,
+          scopeUserId: payloadProjection.scopeUserId,
+          memoryKind: payloadProjection.memoryKind,
+          status: payloadProjection.status,
+          title: payloadProjection.title,
+          payloadJson: payloadProjection.payloadJson,
+          createdByUserId: payloadProjection.createdByUserId,
+          supersedesMemoryId: payloadProjection.supersedesMemoryId,
+          createdAtMillis: payloadProjection.createdAtMillis,
+          updatedAtMillis: payloadProjection.updatedAtMillis,
+          expiresAtMillis: payloadProjection.expiresAtMillis,
+          tombstonedAtMillis: payloadProjection.tombstonedAtMillis,
+          provenanceJson: payloadProjection.provenanceJson,
+          ...(includeRawPayloadSha256
+            ? { rawPayloadSha256: payloadProjection.rawPayloadSha256 }
+            : {}),
+          evidencePointers: payloadProjection.evidencePointers.map(
+            (pointer) => ({
+              proposedEvidenceId: pointer.proposedEvidenceId,
+              sourceKind: pointer.sourceKind,
+              sourceRef: pointer.sourceRef,
+              digestSha256: pointer.digestSha256,
+              payloadJson: pointer.payloadJson,
+              observedAtMillis: pointer.observedAtMillis,
+              createdAtMillis: pointer.createdAtMillis,
+              relationKind: pointer.relationKind,
+            })
+          ),
+        },
+      })
+    );
+  })();
+
+const toLegacyDeterministicUpsertRequestHash = (
+  request: StorageUpsertRequest,
   payloadProjection: StoragePayloadProjection
 ): string =>
-  toSha256Hex(
-    JSON.stringify({
-      operation: "upsert",
-      spaceId: request.spaceId,
-      memoryId: request.memoryId,
-      layer: request.layer,
-      payloadProjection: {
-        scopeId: payloadProjection.scopeId,
-        scopeProjectId: payloadProjection.scopeProjectId,
-        scopeRoleId: payloadProjection.scopeRoleId,
-        scopeUserId: payloadProjection.scopeUserId,
-        memoryKind: payloadProjection.memoryKind,
-        status: payloadProjection.status,
-        title: payloadProjection.title,
-        payloadJson: payloadProjection.payloadJson,
-        createdByUserId: payloadProjection.createdByUserId,
-        supersedesMemoryId: payloadProjection.supersedesMemoryId,
-        createdAtMillis: payloadProjection.createdAtMillis,
-        updatedAtMillis: payloadProjection.updatedAtMillis,
-        expiresAtMillis: payloadProjection.expiresAtMillis,
-        tombstonedAtMillis: payloadProjection.tombstonedAtMillis,
-        provenanceJson: payloadProjection.provenanceJson,
-        evidencePointers: payloadProjection.evidencePointers.map((pointer) => ({
-          proposedEvidenceId: pointer.proposedEvidenceId,
-          sourceKind: pointer.sourceKind,
-          sourceRef: pointer.sourceRef,
-          digestSha256: pointer.digestSha256,
-          payloadJson: pointer.payloadJson,
-          observedAtMillis: pointer.observedAtMillis,
-          createdAtMillis: pointer.createdAtMillis,
-          relationKind: pointer.relationKind,
-        })),
-      },
-    })
-  );
+  toDeterministicUpsertRequestHash(request, payloadProjection, {
+    includeRawPayloadSha256: false,
+  });
 
 const toDeterministicDeleteRequestHash = (
   request: StorageDeleteRequest
@@ -2792,6 +3225,29 @@ export const makeSqliteStorageRepository = (
                   storedIdempotencyLedgerProjection.requestHashSha256 !==
                   upsertRequestHashSha256
                 ) {
+                  const legacyUpsertRequestHashSha256 =
+                    toLegacyDeterministicUpsertRequestHash(
+                      request,
+                      payloadProjection
+                    );
+                  if (
+                    storedIdempotencyLedgerProjection.requestHashSha256 ===
+                    legacyUpsertRequestHashSha256
+                  ) {
+                    return decodeStoredUpsertIdempotencyResponse(
+                      storedIdempotencyLedgerProjection.responseJson,
+                      request
+                    );
+                  }
+                  if (
+                    storedIdempotencyLedgerProjection.requestHashSha256 ===
+                    payloadProjection.legacyUnsanitizedRequestHashSha256
+                  ) {
+                    return decodeStoredUpsertIdempotencyResponse(
+                      storedIdempotencyLedgerProjection.responseJson,
+                      request
+                    );
+                  }
                   throw toIdempotencyKeyConflictError(
                     "upsert",
                     idempotencyKey,
@@ -2830,13 +3286,14 @@ export const makeSqliteStorageRepository = (
                   readPersistedProvenanceJsonFromPayloadJson(
                     existingPayloadJson
                   );
-                if (
-                  existingProvenanceJson !== null &&
-                  existingProvenanceJson !== payloadProjection.provenanceJson
-                ) {
-                  throw new StoragePayloadValidationFailure(
-                    "Promoted memory provenance metadata is immutable once memory is procedural."
-                  );
+                if (existingProvenanceJson !== null) {
+                  if (
+                    existingProvenanceJson !== payloadProjection.provenanceJson
+                  ) {
+                    throw new StoragePayloadValidationFailure(
+                      "Promoted memory provenance metadata is immutable once memory is procedural."
+                    );
+                  }
                 }
               }
             }

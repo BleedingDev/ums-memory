@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import {
   existsSync,
   mkdirSync,
@@ -98,6 +99,34 @@ const unwrapFailure = (eitherResult) => {
   assert.equal(eitherResult?._tag, "Left");
   return eitherResult.left;
 };
+
+const redactedTokenPatternByCategory = Object.freeze({
+  SECRET: /^\[REDACTED_SECRET:[0-9a-f]{12,64}\]$/,
+  EMAIL: /^\[REDACTED_EMAIL:[0-9a-f]{12,64}\]$/,
+  PHONE: /^\[REDACTED_PHONE:[0-9a-f]{12,64}\]$/,
+});
+
+const containsRedactedTokenCategory = (text, category) =>
+  text.includes(`[REDACTED_${category}:`);
+
+const toSha256Hex = (value) => createHash("sha256").update(value).digest("hex");
+
+const toCanonicalJsonValue = (value) => {
+  if (Array.isArray(value)) {
+    return value.map((entry) => toCanonicalJsonValue(entry));
+  }
+  if (value !== null && typeof value === "object") {
+    return Object.fromEntries(
+      Object.keys(value)
+        .sort((left, right) => left.localeCompare(right))
+        .map((key) => [key, toCanonicalJsonValue(value[key])]),
+    );
+  }
+  return value;
+};
+
+const toCanonicalPayloadJson = (payload) =>
+  JSON.stringify(toCanonicalJsonValue(payload));
 
 const seedScopeLatticeAnchors = (
   db,
@@ -648,6 +677,315 @@ test("ums-memory-5cb.7: promoted procedural provenance metadata is immutable on 
     assert.ok(persistedPayloadRow);
     const persistedPayload = JSON.parse(persistedPayloadRow.payload_json);
     assert.equal(persistedPayload.provenance.decisionId, "decision-1");
+  } finally {
+    db.close();
+  }
+});
+
+test("ums-memory-5cb.7: procedural provenance immutability rejects updates that differ only in redacted values", async () => {
+  const storageServiceModule = await loadStorageServiceModule();
+  const db = new DatabaseSync(":memory:");
+
+  try {
+    const storageService = storageServiceModule.makeSqliteStorageService(db);
+    Effect.runSync(
+      storageService.upsertMemory({
+        spaceId: "tenant-promoted-provenance-redaction-immutable",
+        memoryId: "memory-procedural-provenance-redaction-immutable",
+        layer: "procedural",
+        payload: {
+          title: "Procedural provenance redaction baseline",
+          provenance: {
+            source: "shadow-replay",
+            ownerEmail: "alpha@example.com",
+          },
+          evidencePointers: [
+            {
+              sourceKind: "event",
+              sourceRef: "event://evt-provenance-redaction",
+              digestSha256: "9".repeat(64),
+              relationKind: "supports",
+            },
+          ],
+          updatedAtMillis: 1_700_000_030_150,
+        },
+      }),
+    );
+
+    const upsertEither = Effect.runSync(
+      Effect.either(
+        storageService.upsertMemory({
+          spaceId: "tenant-promoted-provenance-redaction-immutable",
+          memoryId: "memory-procedural-provenance-redaction-immutable",
+          layer: "procedural",
+          payload: {
+            title: "Procedural provenance redaction changed value",
+            provenance: {
+              source: "shadow-replay",
+              ownerEmail: "beta@example.com",
+            },
+            evidencePointers: [
+              {
+                sourceKind: "event",
+                sourceRef: "event://evt-provenance-redaction",
+                digestSha256: "9".repeat(64),
+                relationKind: "supports",
+              },
+            ],
+            updatedAtMillis: 1_700_000_030_151,
+          },
+        }),
+      ),
+    );
+    const upsertFailure = unwrapFailure(upsertEither);
+
+    assert.equal(upsertFailure._tag, "ContractValidationError");
+    assert.equal(upsertFailure.contract, "StorageUpsertRequest.payload");
+    assert.match(upsertFailure.details, /provenance metadata is immutable/i);
+  } finally {
+    db.close();
+  }
+});
+
+test("ums-memory-5cb.7: procedural provenance immutability allows unchanged provenance with redactable values", async () => {
+  const storageServiceModule = await loadStorageServiceModule();
+  const db = new DatabaseSync(":memory:");
+
+  try {
+    const storageService = storageServiceModule.makeSqliteStorageService(db);
+    const request = {
+      spaceId: "tenant-promoted-provenance-redaction-unchanged",
+      memoryId: "memory-procedural-provenance-redaction-unchanged",
+      layer: "procedural",
+      payload: {
+        title: "Procedural provenance unchanged baseline",
+        provenance: {
+          source: "shadow-replay",
+          ownerEmail: "alpha@example.com",
+        },
+        evidencePointers: [
+          {
+            sourceKind: "event",
+            sourceRef: "event://evt-provenance-unchanged",
+            digestSha256: "8".repeat(64),
+            relationKind: "supports",
+          },
+        ],
+        updatedAtMillis: 1_700_000_030_180,
+      },
+    };
+
+    const firstResponse = Effect.runSync(storageService.upsertMemory(request));
+    const replayResponse = Effect.runSync(
+      storageService.upsertMemory({
+        ...request,
+        payload: {
+          ...request.payload,
+          title: "Procedural provenance unchanged replay title update",
+          updatedAtMillis: 1_700_000_030_181,
+        },
+      }),
+    );
+
+    assert.equal(firstResponse.accepted, true);
+    assert.equal(replayResponse.accepted, true);
+  } finally {
+    db.close();
+  }
+});
+
+test("ums-memory-5cb.7: procedural provenance immutability allows unchanged metadata.provenance with redactable values", async () => {
+  const storageServiceModule = await loadStorageServiceModule();
+  const db = new DatabaseSync(":memory:");
+
+  try {
+    const storageService = storageServiceModule.makeSqliteStorageService(db);
+    const request = {
+      spaceId: "tenant-promoted-provenance-metadata-unchanged",
+      memoryId: "memory-procedural-provenance-metadata-unchanged",
+      layer: "procedural",
+      payload: {
+        title: "Procedural metadata provenance baseline",
+        metadata: {
+          provenance: {
+            source: "shadow-replay",
+            ownerEmail: "alpha@example.com",
+          },
+        },
+        evidencePointers: [
+          {
+            sourceKind: "event",
+            sourceRef: "event://evt-provenance-metadata-unchanged",
+            digestSha256: "7".repeat(64),
+            relationKind: "supports",
+          },
+        ],
+        updatedAtMillis: 1_700_000_030_190,
+      },
+    };
+
+    const firstResponse = Effect.runSync(storageService.upsertMemory(request));
+    const replayResponse = Effect.runSync(
+      storageService.upsertMemory({
+        ...request,
+        payload: {
+          ...request.payload,
+          title: "Procedural metadata provenance replay title update",
+          updatedAtMillis: 1_700_000_030_191,
+        },
+      }),
+    );
+
+    assert.equal(firstResponse.accepted, true);
+    assert.equal(replayResponse.accepted, true);
+  } finally {
+    db.close();
+  }
+});
+
+test("ums-memory-5cb.7: procedural provenance redaction is stable when replaying persisted redacted secret tokens", async () => {
+  const storageServiceModule = await loadStorageServiceModule();
+  const db = new DatabaseSync(":memory:");
+
+  try {
+    const storageService = storageServiceModule.makeSqliteStorageService(db);
+    Effect.runSync(
+      storageService.upsertMemory({
+        spaceId: "tenant-provenance-redacted-token-replay",
+        memoryId: "memory-provenance-redacted-token-replay",
+        layer: "procedural",
+        payload: {
+          title: "Procedural provenance token baseline",
+          provenance: {
+            source: "shadow-replay",
+            accessToken: "alpha-secret",
+          },
+          evidencePointers: [
+            {
+              sourceKind: "event",
+              sourceRef: "event://evt-provenance-redacted-token-replay",
+              digestSha256: "1".repeat(64),
+              relationKind: "supports",
+            },
+          ],
+          updatedAtMillis: 1_700_000_030_195,
+        },
+      }),
+    );
+
+    const firstPersistedPayloadRow = db
+      .prepare("SELECT payload_json FROM memory_items WHERE tenant_id = ? AND memory_id = ?;")
+      .get("tenant-provenance-redacted-token-replay", "memory-provenance-redacted-token-replay");
+    assert.ok(firstPersistedPayloadRow);
+    const firstPersistedPayload = JSON.parse(firstPersistedPayloadRow.payload_json);
+    assert.match(
+      firstPersistedPayload.provenance.accessToken,
+      redactedTokenPatternByCategory.SECRET,
+    );
+    const firstRedactedToken = firstPersistedPayload.provenance.accessToken;
+
+    const replayResponse = Effect.runSync(
+      storageService.upsertMemory({
+        spaceId: "tenant-provenance-redacted-token-replay",
+        memoryId: "memory-provenance-redacted-token-replay",
+        layer: "procedural",
+        payload: {
+          ...firstPersistedPayload,
+          title: "Procedural provenance token replay update",
+          updatedAtMillis: 1_700_000_030_196,
+        },
+      }),
+    );
+    assert.equal(replayResponse.accepted, true);
+
+    const replayPersistedPayloadRow = db
+      .prepare("SELECT payload_json FROM memory_items WHERE tenant_id = ? AND memory_id = ?;")
+      .get("tenant-provenance-redacted-token-replay", "memory-provenance-redacted-token-replay");
+    assert.ok(replayPersistedPayloadRow);
+    const replayPersistedPayload = JSON.parse(replayPersistedPayloadRow.payload_json);
+    assert.equal(replayPersistedPayload.provenance.accessToken, firstRedactedToken);
+  } finally {
+    db.close();
+  }
+});
+
+test("ums-memory-5cb.7: procedural provenance immutability tolerates legacy unsanitized persisted payload values", async () => {
+  const storageServiceModule = await loadStorageServiceModule();
+  const db = new DatabaseSync(":memory:");
+
+  try {
+    const storageService = storageServiceModule.makeSqliteStorageService(db);
+    Effect.runSync(
+      storageService.upsertMemory({
+        spaceId: "tenant-provenance-legacy-unsanitized",
+        memoryId: "memory-provenance-legacy-unsanitized",
+        layer: "procedural",
+        payload: {
+          title: "Legacy-style procedural provenance baseline",
+          provenance: {
+            source: "shadow-replay",
+            ownerEmail: "alpha@example.com",
+          },
+          evidencePointers: [
+            {
+              sourceKind: "event",
+              sourceRef: "event://evt-provenance-legacy-unsanitized",
+              digestSha256: "2".repeat(64),
+              relationKind: "supports",
+            },
+          ],
+          updatedAtMillis: 1_700_000_030_197,
+        },
+      }),
+    );
+
+    const persistedPayloadRow = db
+      .prepare("SELECT payload_json FROM memory_items WHERE tenant_id = ? AND memory_id = ?;")
+      .get("tenant-provenance-legacy-unsanitized", "memory-provenance-legacy-unsanitized");
+    assert.ok(persistedPayloadRow);
+    const legacyPayload = JSON.parse(persistedPayloadRow.payload_json);
+    legacyPayload.provenance.ownerEmail = "alpha@example.com";
+    db.prepare("UPDATE memory_items SET payload_json = ? WHERE tenant_id = ? AND memory_id = ?;").run(
+      JSON.stringify(legacyPayload),
+      "tenant-provenance-legacy-unsanitized",
+      "memory-provenance-legacy-unsanitized",
+    );
+
+    const replayResponse = Effect.runSync(
+      storageService.upsertMemory({
+        spaceId: "tenant-provenance-legacy-unsanitized",
+        memoryId: "memory-provenance-legacy-unsanitized",
+        layer: "procedural",
+        payload: {
+          title: "Legacy-style provenance replay",
+          provenance: {
+            source: "shadow-replay",
+            ownerEmail: "alpha@example.com",
+          },
+          evidencePointers: [
+            {
+              sourceKind: "event",
+              sourceRef: "event://evt-provenance-legacy-unsanitized",
+              digestSha256: "2".repeat(64),
+              relationKind: "supports",
+            },
+          ],
+          updatedAtMillis: 1_700_000_030_198,
+        },
+      }),
+    );
+    assert.equal(replayResponse.accepted, true);
+
+    const replayPersistedPayloadRow = db
+      .prepare("SELECT payload_json FROM memory_items WHERE tenant_id = ? AND memory_id = ?;")
+      .get("tenant-provenance-legacy-unsanitized", "memory-provenance-legacy-unsanitized");
+    assert.ok(replayPersistedPayloadRow);
+    const replayPersistedPayload = JSON.parse(replayPersistedPayloadRow.payload_json);
+    assert.match(
+      replayPersistedPayload.provenance.ownerEmail,
+      redactedTokenPatternByCategory.EMAIL,
+    );
+    assert.ok(!replayPersistedPayloadRow.payload_json.includes("alpha@example.com"));
   } finally {
     db.close();
   }
@@ -1961,6 +2299,611 @@ test("ums-memory-5cb.3: sqlite storage service maps missing deletes to StorageNo
   }
 });
 
+test("ums-memory-a9v.3: sqlite storage redacts secret and pii-like payload content before persistence", async () => {
+  const storageServiceModule = await loadStorageServiceModule();
+  const db = new DatabaseSync(":memory:");
+
+  try {
+    const storageService = storageServiceModule.makeSqliteStorageService(db);
+    Effect.runSync(
+      storageService.upsertMemory({
+        spaceId: "tenant-redaction-basics",
+        memoryId: "memory-redaction-basics",
+        layer: "working",
+        payload: {
+          title: "Credential dump password=hunter2",
+          notes:
+            "Reach owner@example.com or +1 (415) 555-2671. api_key=alpha-secret token=beta-secret sk-abcdef1234567890 sk-proj-ABCDEF1234567890xyz",
+          scope: {
+            note: "scope contact owner@example.com token=scope-secret",
+          },
+          credentials: {
+            password: "hunter2",
+            token: "abc123",
+          },
+          updatedAtMillis: 1_700_000_110_100,
+        },
+      }),
+    );
+
+    const persistedMemoryRow = db
+      .prepare(
+        "SELECT title, payload_json FROM memory_items WHERE tenant_id = ? AND memory_id = ?;",
+      )
+      .get("tenant-redaction-basics", "memory-redaction-basics");
+    assert.ok(persistedMemoryRow);
+    assert.match(
+      persistedMemoryRow.title,
+      /^Credential dump password=\[REDACTED_SECRET:[0-9a-f]{12,64}\]$/,
+    );
+
+    const persistedPayload = JSON.parse(persistedMemoryRow.payload_json);
+    const persistedPayloadJson = JSON.stringify(persistedPayload);
+    assert.ok(containsRedactedTokenCategory(persistedPayloadJson, "SECRET"));
+    assert.ok(containsRedactedTokenCategory(persistedPayloadJson, "EMAIL"));
+    assert.ok(containsRedactedTokenCategory(persistedPayloadJson, "PHONE"));
+    assert.ok(!persistedPayloadJson.includes("hunter2"));
+    assert.ok(!persistedPayloadJson.includes("owner@example.com"));
+    assert.ok(!persistedPayloadJson.includes("+1 (415) 555-2671"));
+    assert.ok(!persistedPayloadJson.includes("alpha-secret"));
+    assert.ok(!persistedPayloadJson.includes("beta-secret"));
+    assert.ok(!persistedPayloadJson.includes("sk-abcdef1234567890"));
+    assert.ok(!persistedPayloadJson.includes("sk-proj-ABCDEF1234567890xyz"));
+    assert.ok(!persistedPayloadJson.includes("scope-secret"));
+    assert.ok(!persistedPayloadJson.includes("scope contact owner@example.com"));
+    assert.ok(!persistedPayloadJson.includes("\"password\":\"hunter2\""));
+    assert.ok(!persistedPayloadJson.includes("\"token\":\"abc123\""));
+    assert.match(
+      persistedPayload.scope.note,
+      /^scope contact \[REDACTED_EMAIL:[0-9a-f]{12,64}\] token=\[REDACTED_SECRET:[0-9a-f]{12,64}\]$/,
+    );
+    assert.match(
+      persistedPayload.credentials.password,
+      redactedTokenPatternByCategory.SECRET,
+    );
+    assert.match(
+      persistedPayload.credentials.token,
+      redactedTokenPatternByCategory.SECRET,
+    );
+  } finally {
+    db.close();
+  }
+});
+
+test("ums-memory-a9v.3: sqlite storage redacts quoted multi-word secret assignments", async () => {
+  const storageServiceModule = await loadStorageServiceModule();
+  const db = new DatabaseSync(":memory:");
+
+  try {
+    const storageService = storageServiceModule.makeSqliteStorageService(db);
+    Effect.runSync(
+      storageService.upsertMemory({
+        spaceId: "tenant-redaction-quoted-secret",
+        memoryId: "memory-redaction-quoted-secret",
+        layer: "working",
+        payload: {
+          title: 'Quoted passphrase="alpha beta gamma"',
+          notes: "token='multi word secret value'",
+          updatedAtMillis: 1_700_000_110_150,
+        },
+      }),
+    );
+
+    const persistedMemoryRow = db
+      .prepare("SELECT title, payload_json FROM memory_items WHERE tenant_id = ? AND memory_id = ?;")
+      .get("tenant-redaction-quoted-secret", "memory-redaction-quoted-secret");
+    assert.ok(persistedMemoryRow);
+    assert.ok(!persistedMemoryRow.title.includes("alpha beta gamma"));
+    assert.match(
+      persistedMemoryRow.title,
+      /^Quoted passphrase="\[REDACTED_SECRET:[0-9a-f]{12,64}\]"$/,
+    );
+    assert.ok(!persistedMemoryRow.payload_json.includes("multi word secret value"));
+    assert.ok(containsRedactedTokenCategory(persistedMemoryRow.payload_json, "SECRET"));
+  } finally {
+    db.close();
+  }
+});
+
+test("ums-memory-a9v.3: sqlite storage does not over-redact benign token-like field names", async () => {
+  const storageServiceModule = await loadStorageServiceModule();
+  const db = new DatabaseSync(":memory:");
+
+  try {
+    const storageService = storageServiceModule.makeSqliteStorageService(db);
+    Effect.runSync(
+      storageService.upsertMemory({
+        spaceId: "tenant-redaction-benign-field-names",
+        memoryId: "memory-redaction-benign-field-names",
+        layer: "working",
+        payload: {
+          title: "Benign field-name redaction boundaries",
+          stats: {
+            tokenCount: "42",
+            detokenized: "hello-world",
+            accessToken: "abc123",
+          },
+          updatedAtMillis: 1_700_000_110_160,
+        },
+      }),
+    );
+
+    const persistedMemoryRow = db
+      .prepare("SELECT payload_json FROM memory_items WHERE tenant_id = ? AND memory_id = ?;")
+      .get("tenant-redaction-benign-field-names", "memory-redaction-benign-field-names");
+    assert.ok(persistedMemoryRow);
+    const persistedPayload = JSON.parse(persistedMemoryRow.payload_json);
+    assert.equal(persistedPayload.stats.tokenCount, "42");
+    assert.equal(persistedPayload.stats.detokenized, "hello-world");
+    assert.match(
+      persistedPayload.stats.accessToken,
+      redactedTokenPatternByCategory.SECRET,
+    );
+  } finally {
+    db.close();
+  }
+});
+
+test("ums-memory-a9v.3: sqlite storage keeps evidence traceability fields while redacting evidence payload content", async () => {
+  const storageServiceModule = await loadStorageServiceModule();
+  const db = new DatabaseSync(":memory:");
+
+  try {
+    const storageService = storageServiceModule.makeSqliteStorageService(db);
+    Effect.runSync(
+      storageService.upsertMemory({
+        spaceId: "tenant-redaction-traceability",
+        memoryId: "memory-redaction-traceability",
+        layer: "procedural",
+        payload: {
+          title: "Procedural evidence redaction token=raw-secret",
+          provenance: {
+            source: "shadow-replay",
+            decisionId: "decision-traceability",
+          },
+          evidencePointers: [
+            {
+              sourceKind: "event",
+              sourceRef: "event://evt-trace-001",
+              digestSha256: "a".repeat(64),
+              relationKind: "supports",
+              payload: {
+                note: "Contact analyst@example.com at +1 650-555-0100 token=trace-secret",
+                sourceRef: "mailto:analyst@example.com",
+              },
+            },
+          ],
+          updatedAtMillis: 1_700_000_110_200,
+        },
+      }),
+    );
+
+    const evidenceRow = db
+      .prepare(
+        [
+          "SELECT source_ref, digest_sha256, payload_json",
+          "FROM evidence",
+          "WHERE tenant_id = ?;",
+        ].join("\n"),
+      )
+      .get("tenant-redaction-traceability");
+    assert.ok(evidenceRow);
+    assert.equal(evidenceRow.source_ref, "event://evt-trace-001");
+    assert.equal(evidenceRow.digest_sha256, "a".repeat(64));
+    assert.ok(!evidenceRow.payload_json.includes("analyst@example.com"));
+    assert.ok(!evidenceRow.payload_json.includes("+1 650-555-0100"));
+    assert.ok(!evidenceRow.payload_json.includes("trace-secret"));
+    assert.ok(containsRedactedTokenCategory(evidenceRow.payload_json, "EMAIL"));
+    assert.ok(containsRedactedTokenCategory(evidenceRow.payload_json, "PHONE"));
+    assert.ok(containsRedactedTokenCategory(evidenceRow.payload_json, "SECRET"));
+
+    const persistedMemoryRow = db
+      .prepare("SELECT payload_json FROM memory_items WHERE tenant_id = ? AND memory_id = ?;")
+      .get("tenant-redaction-traceability", "memory-redaction-traceability");
+    assert.ok(persistedMemoryRow);
+    const persistedPayload = JSON.parse(persistedMemoryRow.payload_json);
+    assert.equal(
+      persistedPayload.evidencePointers[0].sourceRef,
+      "event://evt-trace-001",
+    );
+    assert.equal(
+      persistedPayload.evidencePointers[0].digestSha256,
+      "a".repeat(64),
+    );
+    assert.ok(
+      containsRedactedTokenCategory(
+        persistedPayload.evidencePointers[0].payload.note,
+        "EMAIL",
+      ),
+    );
+    assert.ok(
+      containsRedactedTokenCategory(
+        persistedPayload.evidencePointers[0].payload.note,
+        "PHONE",
+      ),
+    );
+    assert.ok(
+      containsRedactedTokenCategory(
+        persistedPayload.evidencePointers[0].payload.note,
+        "SECRET",
+      ),
+    );
+    assert.match(
+      persistedPayload.evidencePointers[0].payload.sourceRef,
+      /^mailto:\[REDACTED_EMAIL:[0-9a-f]{12,64}\]$/,
+    );
+
+    const evidenceLinkRow = db
+      .prepare(
+        [
+          "SELECT relation_kind",
+          "FROM memory_evidence_links",
+          "WHERE tenant_id = ? AND memory_id = ?;",
+        ].join("\n"),
+      )
+      .get("tenant-redaction-traceability", "memory-redaction-traceability");
+    assert.ok(evidenceLinkRow);
+    assert.equal(evidenceLinkRow.relation_kind, "supports");
+  } finally {
+    db.close();
+  }
+});
+
+test("ums-memory-a9v.3: sqlite storage preserves ref/reference alias traceability fields on replay", async () => {
+  const storageServiceModule = await loadStorageServiceModule();
+  const db = new DatabaseSync(":memory:");
+
+  try {
+    const storageService = storageServiceModule.makeSqliteStorageService(db);
+    Effect.runSync(
+      storageService.upsertMemory({
+        spaceId: "tenant-redaction-traceability-alias",
+        memoryId: "memory-redaction-traceability-alias",
+        layer: "procedural",
+        payload: {
+          title: "Procedural evidence alias replay baseline",
+          provenance: {
+            source: "shadow-replay",
+            decisionId: "decision-traceability-alias",
+          },
+          evidencePointers: [
+            {
+              sourceKind: "event",
+              ref: "mailto:analyst@example.com",
+              relationKind: "supports",
+              payload: {
+                note: "token=alias-secret owner=analyst@example.com",
+              },
+            },
+          ],
+          updatedAtMillis: 1_700_000_110_220,
+        },
+      }),
+    );
+
+    const persistedMemoryRow = db
+      .prepare("SELECT payload_json FROM memory_items WHERE tenant_id = ? AND memory_id = ?;")
+      .get("tenant-redaction-traceability-alias", "memory-redaction-traceability-alias");
+    assert.ok(persistedMemoryRow);
+    const persistedPayload = JSON.parse(persistedMemoryRow.payload_json);
+    assert.equal(
+      persistedPayload.evidencePointers[0].ref,
+      "mailto:analyst@example.com",
+    );
+
+    const replayResponse = Effect.runSync(
+      storageService.upsertMemory({
+        spaceId: "tenant-redaction-traceability-alias",
+        memoryId: "memory-redaction-traceability-alias",
+        layer: "procedural",
+        payload: {
+          ...persistedPayload,
+          updatedAtMillis: 1_700_000_110_221,
+        },
+      }),
+    );
+    assert.equal(replayResponse.accepted, true);
+
+    const sourceRefRows = db
+      .prepare(
+        [
+          "SELECT source_ref",
+          "FROM evidence",
+          "WHERE tenant_id = ?",
+          "ORDER BY source_ref ASC;",
+        ].join("\n"),
+      )
+      .all("tenant-redaction-traceability-alias");
+    assert.equal(sourceRefRows.length, 1);
+    assert.equal(sourceRefRows[0].source_ref, "mailto:analyst@example.com");
+    assert.ok(!sourceRefRows[0].source_ref.includes("[REDACTED_"));
+  } finally {
+    db.close();
+  }
+});
+
+test("ums-memory-a9v.3: sqlite storage preserves metadata.evidencePointers traceability fields while redacting nested payload content", async () => {
+  const storageServiceModule = await loadStorageServiceModule();
+  const db = new DatabaseSync(":memory:");
+
+  try {
+    const storageService = storageServiceModule.makeSqliteStorageService(db);
+    const request = {
+      spaceId: "tenant-redaction-metadata-pointers",
+      memoryId: "memory-redaction-metadata-pointers",
+      layer: "procedural",
+      payload: {
+        title: "Metadata evidence pointer redaction token=meta-secret",
+        provenance: {
+          source: "shadow-replay",
+          decisionId: "decision-meta",
+        },
+        metadata: {
+          evidencePointers: [
+            {
+              sourceKind: "event",
+              sourceRef: "event://evt-meta-001",
+              digestSha256: "d".repeat(64),
+              relationKind: "supports",
+              payload: {
+                note: "Escalate to meta@example.com token=meta-secret",
+              },
+            },
+          ],
+        },
+        updatedAtMillis: 1_700_000_110_250,
+      },
+    };
+
+    const firstResponse = Effect.runSync(storageService.upsertMemory(request));
+    const replayResponse = Effect.runSync(storageService.upsertMemory(request));
+    assert.deepEqual(replayResponse, firstResponse);
+
+    const persistedMemoryRow = db
+      .prepare("SELECT payload_json FROM memory_items WHERE tenant_id = ? AND memory_id = ?;")
+      .get("tenant-redaction-metadata-pointers", "memory-redaction-metadata-pointers");
+    assert.ok(persistedMemoryRow);
+    const persistedPayload = JSON.parse(persistedMemoryRow.payload_json);
+    assert.equal(
+      persistedPayload.metadata.evidencePointers[0].sourceRef,
+      "event://evt-meta-001",
+    );
+    assert.equal(
+      persistedPayload.metadata.evidencePointers[0].digestSha256,
+      "d".repeat(64),
+    );
+    assert.ok(
+      containsRedactedTokenCategory(
+        persistedPayload.metadata.evidencePointers[0].payload.note,
+        "EMAIL",
+      ),
+    );
+    assert.ok(
+      containsRedactedTokenCategory(
+        persistedPayload.metadata.evidencePointers[0].payload.note,
+        "SECRET",
+      ),
+    );
+    assert.ok(
+      !persistedPayload.metadata.evidencePointers[0].payload.note.includes(
+        "meta@example.com",
+      ),
+    );
+
+    const evidenceRow = db
+      .prepare(
+        [
+          "SELECT source_ref, digest_sha256, payload_json",
+          "FROM evidence",
+          "WHERE tenant_id = ?;",
+        ].join("\n"),
+      )
+      .get("tenant-redaction-metadata-pointers");
+    assert.ok(evidenceRow);
+    assert.equal(evidenceRow.source_ref, "event://evt-meta-001");
+    assert.equal(evidenceRow.digest_sha256, "d".repeat(64));
+    assert.ok(containsRedactedTokenCategory(evidenceRow.payload_json, "EMAIL"));
+    assert.ok(containsRedactedTokenCategory(evidenceRow.payload_json, "SECRET"));
+  } finally {
+    db.close();
+  }
+});
+
+test("ums-memory-a9v.3: sqlite storage replay from persisted payload keeps evidence digest identity when digest is initially omitted", async () => {
+  const storageServiceModule = await loadStorageServiceModule();
+  const db = new DatabaseSync(":memory:");
+
+  try {
+    const storageService = storageServiceModule.makeSqliteStorageService(db);
+    Effect.runSync(
+      storageService.upsertMemory({
+        spaceId: "tenant-redaction-evidence-digest-replay",
+        memoryId: "memory-redaction-evidence-digest-replay",
+        layer: "procedural",
+        payload: {
+          title: "Procedural digest replay baseline",
+          provenance: {
+            source: "shadow-replay",
+            decisionId: "digest-replay",
+          },
+          evidencePointers: [
+            {
+              sourceKind: "event",
+              sourceRef: "event://evt-digest-replay-001",
+              relationKind: "supports",
+              payload: {
+                note: "token=delta-secret owner=digest@example.com",
+              },
+            },
+          ],
+          updatedAtMillis: 1_700_000_110_280,
+        },
+      }),
+    );
+
+    const persistedPayloadRow = db
+      .prepare("SELECT payload_json FROM memory_items WHERE tenant_id = ? AND memory_id = ?;")
+      .get("tenant-redaction-evidence-digest-replay", "memory-redaction-evidence-digest-replay");
+    assert.ok(persistedPayloadRow);
+    const persistedPayload = JSON.parse(persistedPayloadRow.payload_json);
+    const persistedDigest = persistedPayload.evidencePointers[0].digestSha256;
+    assert.match(String(persistedDigest), /^[0-9a-f]{64}$/);
+
+    const replayResponse = Effect.runSync(
+      storageService.upsertMemory({
+        spaceId: "tenant-redaction-evidence-digest-replay",
+        memoryId: "memory-redaction-evidence-digest-replay",
+        layer: "procedural",
+        payload: {
+          ...persistedPayload,
+          title: "Procedural digest replay update",
+          updatedAtMillis: 1_700_000_110_281,
+        },
+      }),
+    );
+    assert.equal(replayResponse.accepted, true);
+
+    const evidenceDigestRows = db
+      .prepare(
+        [
+          "SELECT digest_sha256",
+          "FROM evidence",
+          "WHERE tenant_id = ? AND source_ref = ?",
+          "ORDER BY digest_sha256 ASC;",
+        ].join("\n"),
+      )
+      .all("tenant-redaction-evidence-digest-replay", "event://evt-digest-replay-001");
+    assert.equal(evidenceDigestRows.length, 1);
+    assert.equal(evidenceDigestRows[0].digest_sha256, persistedDigest);
+  } finally {
+    db.close();
+  }
+});
+
+test("ums-memory-a9v.3: sqlite storage redaction remains deterministic for idempotent replay of identical payload", async () => {
+  const storageServiceModule = await loadStorageServiceModule();
+  const db = new DatabaseSync(":memory:");
+
+  try {
+    const storageService = storageServiceModule.makeSqliteStorageService(db);
+    const replayPayload = {
+      title: "Replay password=hunter2",
+      notes:
+        "Escalate to replay@example.com or +1 415-555-0133. token=abc123",
+      updatedAtMillis: 1_700_000_110_300,
+    };
+
+    const firstResponse = Effect.runSync(
+      storageService.upsertMemory({
+        spaceId: "tenant-redaction-idempotent",
+        memoryId: "memory-redaction-idempotent",
+        layer: "working",
+        idempotency_key: "redaction-idempotency-key-001",
+        payload: replayPayload,
+      }),
+    );
+    const replayResponse = Effect.runSync(
+      storageService.upsertMemory({
+        spaceId: "tenant-redaction-idempotent",
+        memoryId: "memory-redaction-idempotent",
+        layer: "working",
+        idempotencyKey: "redaction-idempotency-key-001",
+        payload: replayPayload,
+      }),
+    );
+
+    assert.deepEqual(replayResponse, firstResponse);
+
+    const idempotencyRow = db
+      .prepare(
+        [
+          "SELECT request_hash_sha256, response_json",
+          "FROM storage_idempotency_ledger",
+          "WHERE tenant_id = ? AND operation = 'upsert' AND idempotency_key = ?;",
+        ].join("\n"),
+      )
+      .get("tenant-redaction-idempotent", "redaction-idempotency-key-001");
+    assert.ok(idempotencyRow);
+    assert.match(String(idempotencyRow.request_hash_sha256), /^[0-9a-f]{64}$/i);
+    assert.deepEqual(JSON.parse(idempotencyRow.response_json), firstResponse);
+
+    const upsertAuditRows = db
+      .prepare(
+        [
+          "SELECT reason",
+          "FROM audit_events",
+          "WHERE tenant_id = ? AND memory_id = ? AND operation = 'upsert';",
+        ].join("\n"),
+      )
+      .all("tenant-redaction-idempotent", "memory-redaction-idempotent");
+    assert.equal(upsertAuditRows.length, 1);
+    assert.equal(upsertAuditRows[0].reason, "inserted");
+
+    const persistedPayloadRow = db
+      .prepare("SELECT payload_json FROM memory_items WHERE tenant_id = ? AND memory_id = ?;")
+      .get("tenant-redaction-idempotent", "memory-redaction-idempotent");
+    assert.ok(persistedPayloadRow);
+    assert.ok(!persistedPayloadRow.payload_json.includes("hunter2"));
+    assert.ok(!persistedPayloadRow.payload_json.includes("replay@example.com"));
+    assert.ok(!persistedPayloadRow.payload_json.includes("+1 415-555-0133"));
+    assert.ok(!persistedPayloadRow.payload_json.includes("abc123"));
+    assert.ok(
+      containsRedactedTokenCategory(persistedPayloadRow.payload_json, "SECRET"),
+    );
+    assert.ok(
+      containsRedactedTokenCategory(persistedPayloadRow.payload_json, "EMAIL"),
+    );
+    assert.ok(
+      containsRedactedTokenCategory(persistedPayloadRow.payload_json, "PHONE"),
+    );
+  } finally {
+    db.close();
+  }
+});
+
+test("ums-memory-a9v.3: sqlite storage idempotency hash remains conflict-safe when secrets redact to the same token", async () => {
+  const storageServiceModule = await loadStorageServiceModule();
+  const db = new DatabaseSync(":memory:");
+
+  try {
+    const storageService = storageServiceModule.makeSqliteStorageService(db);
+    Effect.runSync(
+      storageService.upsertMemory({
+        spaceId: "tenant-redaction-idempotency-collision",
+        memoryId: "memory-redaction-idempotency-collision",
+        layer: "working",
+        idempotencyKey: "redaction-collision-key-001",
+        payload: {
+          title: "Collision baseline token=alpha-secret",
+          updatedAtMillis: 1_700_000_110_400,
+        },
+      }),
+    );
+
+    const conflictEither = Effect.runSync(
+      Effect.either(
+        storageService.upsertMemory({
+          spaceId: "tenant-redaction-idempotency-collision",
+          memoryId: "memory-redaction-idempotency-collision",
+          layer: "working",
+          idempotencyKey: "redaction-collision-key-001",
+          payload: {
+            title: "Collision baseline token=beta-secret",
+            updatedAtMillis: 1_700_000_110_400,
+          },
+        }),
+      ),
+    );
+    const conflictFailure = unwrapFailure(conflictEither);
+
+    assert.equal(conflictFailure._tag, "ContractValidationError");
+    assert.equal(conflictFailure.contract, "StorageUpsertRequest.idempotencyKey");
+    assert.match(conflictFailure.message, /reuse conflict/i);
+  } finally {
+    db.close();
+  }
+});
+
 test("ums-memory-5cb.10: sqlite storage service replays upsert responses deterministically for matching idempotency keys", async () => {
   const storageServiceModule = await loadStorageServiceModule();
   const db = new DatabaseSync(":memory:");
@@ -2020,6 +2963,71 @@ test("ums-memory-5cb.10: sqlite storage service replays upsert responses determi
     assert.ok(idempotencyRow);
     assert.match(String(idempotencyRow.request_hash_sha256), /^[0-9a-f]{64}$/i);
     assert.deepEqual(JSON.parse(idempotencyRow.response_json), firstResponse);
+  } finally {
+    db.close();
+  }
+});
+
+test("ums-memory-5cb.10: sqlite storage service replays upsert for legacy idempotency request-hash rows", async () => {
+  const storageServiceModule = await loadStorageServiceModule();
+  const db = new DatabaseSync(":memory:");
+
+  try {
+    const storageService = storageServiceModule.makeSqliteStorageService(db);
+    const request = {
+      spaceId: "tenant-idempotency-upsert-legacy-hash",
+      memoryId: "memory-idempotency-upsert-legacy-hash",
+      layer: "working",
+      idempotencyKey: "upsert-key-legacy-hash-001",
+      payload: {
+        title: "Idempotency legacy hash token=alpha-secret",
+        notes: "Escalate to legacy-owner@example.com",
+        updatedAtMillis: 1_700_000_100_150,
+      },
+    };
+
+    const firstResponse = Effect.runSync(storageService.upsertMemory(request));
+
+    const legacyRequestHashSha256 = toSha256Hex(
+      JSON.stringify({
+        operation: "upsert",
+        spaceId: request.spaceId,
+        memoryId: request.memoryId,
+        layer: request.layer,
+        payloadProjection: {
+          scopeId: null,
+          scopeProjectId: null,
+          scopeRoleId: null,
+          scopeUserId: null,
+          memoryKind: "note",
+          status: "active",
+          title: request.payload.title,
+          payloadJson: toCanonicalPayloadJson(request.payload),
+          createdByUserId: null,
+          supersedesMemoryId: null,
+          createdAtMillis: request.payload.updatedAtMillis,
+          updatedAtMillis: request.payload.updatedAtMillis,
+          expiresAtMillis: null,
+          tombstonedAtMillis: null,
+          provenanceJson: null,
+          evidencePointers: [],
+        },
+      }),
+    );
+    db.prepare(
+      [
+        "UPDATE storage_idempotency_ledger",
+        "SET request_hash_sha256 = ?",
+        "WHERE tenant_id = ? AND operation = 'upsert' AND idempotency_key = ?;",
+      ].join("\n"),
+    ).run(
+      legacyRequestHashSha256,
+      "tenant-idempotency-upsert-legacy-hash",
+      "upsert-key-legacy-hash-001",
+    );
+
+    const replayResponse = Effect.runSync(storageService.upsertMemory(request));
+    assert.deepEqual(replayResponse, firstResponse);
   } finally {
     db.close();
   }
