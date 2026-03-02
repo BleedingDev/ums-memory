@@ -52,6 +52,7 @@ test("core exposes the full required operation surface", () => {
     "memory_console_timeline",
     "memory_console_provenance",
     "memory_console_policy_audit",
+    "memory_console_anomaly_alerts",
     "feedback",
     "outcome",
     "audit",

@@ -188,6 +188,7 @@ test("http server exposes deterministic JSON operation routes", async () => {
     assert.equal(rootBody.operations.includes("/v1/memory_console_timeline"), true);
     assert.equal(rootBody.operations.includes("/v1/memory_console_provenance"), true);
     assert.equal(rootBody.operations.includes("/v1/memory_console_policy_audit"), true);
+    assert.equal(rootBody.operations.includes("/v1/memory_console_anomaly_alerts"), true);
 
     const ingestRes = await fetch(`${base}/v1/ingest`, {
       method: "POST",
@@ -422,6 +423,31 @@ test("ums-memory-yji.6 memory_console HTTP routes expose deterministic operator 
     assert.equal(policyAuditBody.data.totalPolicyDecisions, 1);
     assert.equal(policyAuditBody.data.policyDecisions[0].decisionId, decisionId);
     assert.deepEqual(policyAuditBody.data.policyDecisions, policyAuditReplayBody.data.policyDecisions);
+
+    const anomalyRequest = {
+      profile: "operator-yji6-http",
+      since: "2026-03-01T00:00:00.000Z",
+      until: "2026-03-01T23:59:59.999Z",
+      windowHours: 24,
+    };
+    const anomalyRes = await fetch(`${base}/v1/memory_console_anomaly_alerts`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-ums-store": "tenant-yji6-http" },
+      body: JSON.stringify(anomalyRequest),
+    });
+    const anomalyReplayRes = await fetch(`${base}/v1/memory_console_anomaly_alerts`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-ums-store": "tenant-yji6-http" },
+      body: JSON.stringify(anomalyRequest),
+    });
+    assert.equal(anomalyRes.status, 200);
+    assert.equal(anomalyReplayRes.status, 200);
+    const anomalyBody = await anomalyRes.json();
+    const anomalyReplayBody = await anomalyReplayRes.json();
+    assert.equal(anomalyBody.ok, true);
+    assert.equal(anomalyBody.data.operation, "memory_console_anomaly_alerts");
+    assert.deepEqual(anomalyBody.data, anomalyReplayBody.data);
+    assert.equal(Array.isArray(anomalyBody.data.alerts), true);
   } finally {
     await new Promise((resolvePromise, rejectPromise) => {
       server.close((error) => (error ? rejectPromise(error) : resolvePromise()));

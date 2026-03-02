@@ -43,6 +43,132 @@ test.beforeEach(() => {
   resetStore();
 });
 
+test("ums-memory-a9v.7: memory_console_anomaly_alerts detects abuse spikes and drift deterministically without side effects", () => {
+  const storeId = "tenant-a9v7-anomaly";
+  const profile = "security-anomaly";
+
+  executeOperation("pain_signal_ingest", {
+    storeId,
+    profile,
+    painSignalId: "pain-a9v7-baseline",
+    misconceptionKey: "unsafe-output",
+    signalType: "harmful",
+    evidenceEventIds: ["evt-a9v7-baseline-1"],
+    timestamp: "2026-03-01T10:00:00.000Z",
+  });
+  executeOperation("pain_signal_ingest", {
+    storeId,
+    profile,
+    painSignalId: "pain-a9v7-observation-1",
+    misconceptionKey: "unsafe-output",
+    signalType: "harmful",
+    evidenceEventIds: ["evt-a9v7-observation-1"],
+    timestamp: "2026-03-02T08:00:00.000Z",
+  });
+  executeOperation("failure_signal_ingest", {
+    storeId,
+    profile,
+    failureSignalId: "fail-a9v7-observation-1",
+    misconceptionKey: "unsafe-output",
+    failureType: "runtime_error",
+    evidenceEventIds: ["evt-a9v7-observation-2"],
+    timestamp: "2026-03-02T09:00:00.000Z",
+  });
+  executeOperation("feedback", {
+    storeId,
+    profile,
+    feedbackId: "fdbk-a9v7-observation-1",
+    targetRuleId: "rule-a9v7",
+    signal: "harmful",
+    note: "unsafe answer leaked implementation detail",
+    actor: "operator-a9v7",
+    timestamp: "2026-03-02T10:00:00.000Z",
+  });
+
+  const authzOne = executeOperation("recall_authorization", {
+    storeId,
+    profile,
+    mode: "check",
+    requesterStoreId: "tenant-a9v7-remote-1",
+    failClosed: false,
+    timestamp: "2026-03-02T11:00:00.000Z",
+  });
+  const authzTwo = executeOperation("recall_authorization", {
+    storeId,
+    profile,
+    mode: "check",
+    requesterStoreId: "tenant-a9v7-remote-2",
+    failClosed: false,
+    timestamp: "2026-03-02T11:05:00.000Z",
+  });
+  assert.equal(authzOne.authorized, false);
+  assert.equal(authzTwo.authorized, false);
+
+  executeOperation("policy_decision_update", {
+    storeId,
+    profile,
+    policyKey: "response-safety",
+    outcome: "allow",
+    provenanceEventIds: ["evt-a9v7-policy-1"],
+    timestamp: "2026-03-02T12:00:00.000Z",
+  });
+  executeOperation("policy_decision_update", {
+    storeId,
+    profile,
+    policyKey: "response-safety",
+    outcome: "review",
+    provenanceEventIds: ["evt-a9v7-policy-2"],
+    timestamp: "2026-03-02T12:10:00.000Z",
+  });
+  executeOperation("policy_decision_update", {
+    storeId,
+    profile,
+    policyKey: "response-safety",
+    outcome: "deny",
+    reasonCodes: ["safety-risk"],
+    provenanceEventIds: ["evt-a9v7-policy-3"],
+    timestamp: "2026-03-02T12:20:00.000Z",
+  });
+
+  const request = {
+    storeId,
+    profile,
+    since: "2026-03-02T00:00:00.000Z",
+    until: "2026-03-02T23:59:59.999Z",
+    windowHours: 24,
+  };
+  const before = snapshotProfile(profile, storeId);
+  const first = executeOperation("memory_console_anomaly_alerts", request);
+  const replay = executeOperation("memory_console_anomaly_alerts", request);
+  const after = snapshotProfile(profile, storeId);
+
+  assert.deepEqual(first, replay);
+  assert.deepEqual(after, before);
+  assert.equal(first.operation, "memory_console_anomaly_alerts");
+  assert.equal(first.action, "analyzed");
+  assert.equal(first.signals.harmfulSignalSpike.triggered, true);
+  assert.equal(first.signals.harmfulSignalSpike.observationCount, 3);
+  assert.equal(first.signals.harmfulSignalSpike.baselineCount, 1);
+  assert.equal(first.signals.unauthorizedAccessSpike.triggered, true);
+  assert.equal(first.signals.unauthorizedAccessSpike.observationCount, 2);
+  assert.equal(first.signals.policyDriftIndicator.triggered, true);
+  assert.equal(first.signals.policyDriftIndicator.observationCount, 2);
+
+  const alertTypes = first.alerts.map((alert) => alert.type).sort((left, right) => left.localeCompare(right));
+  assert.deepEqual(alertTypes, [
+    "harmful_signal_spike",
+    "policy_drift_indicator",
+    "unauthorized_access_spike",
+  ]);
+  const alertsByType = new Map(first.alerts.map((alert) => [alert.type, alert]));
+  assert.equal(alertsByType.get("harmful_signal_spike")?.severity, "warn");
+  assert.equal(alertsByType.get("unauthorized_access_spike")?.severity, "warn");
+  assert.equal(alertsByType.get("policy_drift_indicator")?.severity, "critical");
+  assert.equal(first.summary.totalAlerts, 3);
+  assert.equal(first.summary.criticalAlerts, 1);
+  assert.equal(first.summary.warningAlerts, 2);
+});
+
 test("ums-memory-a9v.8: recall_authorization fail-closed blocks unauthorized cross-tenant checks and emits deterministic deny audit", () => {
   const storeId = "tenant-a9v8-authz-a";
   const profile = "security-authz";

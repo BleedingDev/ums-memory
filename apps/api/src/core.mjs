@@ -33,6 +33,7 @@ const OPS = [
   "memory_console_timeline",
   "memory_console_provenance",
   "memory_console_policy_audit",
+  "memory_console_anomaly_alerts",
   "feedback",
   "outcome",
   "audit",
@@ -61,6 +62,26 @@ const DEFAULT_FRESHNESS_WARNING_DAYS = 14;
 const DEFAULT_DECAY_WARNING_DAYS = 30;
 const DEFAULT_MAX_CONFLICT_NOTES = 8;
 const DEFAULT_MEMORY_CONSOLE_LIMIT = 25;
+const DEFAULT_ANOMALY_WINDOW_HOURS = 24;
+const MAX_ANOMALY_WINDOW_HOURS = 720;
+const MAX_ANOMALY_EVIDENCE_IDS = 16;
+const ANOMALY_ALERT_RULES = Object.freeze({
+  harmful_signal_spike: Object.freeze({
+    minObservationCount: 3,
+    minDelta: 2,
+    multiplier: 2,
+  }),
+  unauthorized_access_spike: Object.freeze({
+    minObservationCount: 2,
+    minDelta: 1,
+    multiplier: 2,
+  }),
+  policy_drift_indicator: Object.freeze({
+    minObservationCount: 1,
+    minDelta: 1,
+    multiplier: 1.5,
+  }),
+});
 const PROFILE_EVIDENCE_CONTRACT_ERROR =
   "EVIDENCE_POINTER_CONTRACT_VIOLATION: learner_profile_update requires at least one evidence pointer or an explicit policy exception.";
 const MISCONCEPTION_EVIDENCE_CONTRACT_ERROR =
@@ -2821,6 +2842,15 @@ function addDaysToIso(baseIso, days) {
   }
   const safeDays = Number.isFinite(days) ? Number(days) : 0;
   return new Date(parsed + Math.trunc(safeDays) * 24 * 60 * 60 * 1000).toISOString();
+}
+
+function addHoursToIso(baseIso, hours) {
+  const parsed = Date.parse(baseIso);
+  if (!Number.isFinite(parsed)) {
+    return baseIso;
+  }
+  const safeHours = Number.isFinite(hours) ? Number(hours) : 0;
+  return new Date(parsed + Math.trunc(safeHours) * 60 * 60 * 1000).toISOString();
 }
 
 function detectPromptInjection(statement) {
@@ -8589,6 +8619,476 @@ function hasMatchingReasonCode(reasonCodes, reasonCodeFilters) {
   return reasonCodeFilters.some((reasonCode) => normalizedCodes.has(reasonCode));
 }
 
+function isTimestampWithinRange(timestamp, { since = null, until = null, includeUntil = true } = {}) {
+  if (since && timestamp.localeCompare(since) < 0) {
+    return false;
+  }
+  if (!until) {
+    return true;
+  }
+  const compareUntil = timestamp.localeCompare(until);
+  if (compareUntil > 0) {
+    return false;
+  }
+  if (!includeUntil && compareUntil === 0) {
+    return false;
+  }
+  return true;
+}
+
+function filterEventsByWindow(events, { since = null, until = null, includeUntil = true } = {}) {
+  return (Array.isArray(events) ? events : []).filter((entry) =>
+    isTimestampWithinRange(toMemoryConsoleTimestamp(entry?.timestamp), { since, until, includeUntil }),
+  );
+}
+
+function resolveAnomalyWindow(request, latestTimestamp) {
+  const operationName = "memory_console_anomaly_alerts";
+  const { since: requestedSince, until: requestedUntil } = normalizeMemoryConsoleTimestampRange(
+    request,
+    operationName,
+  );
+  const windowHours = Math.min(
+    Math.max(
+      toPositiveInteger(request.windowHours ?? request.lookbackHours, DEFAULT_ANOMALY_WINDOW_HOURS),
+      1,
+    ),
+    MAX_ANOMALY_WINDOW_HOURS,
+  );
+  const until = requestedUntil ?? latestTimestamp ?? DEFAULT_VERSION_TIMESTAMP;
+  const since = requestedSince ?? addHoursToIso(until, -windowHours);
+  if (since.localeCompare(until) > 0) {
+    throw new Error(`${operationName}.since must be <= ${operationName}.until.`);
+  }
+  return {
+    windowHours,
+    observation: {
+      since,
+      until,
+    },
+    baseline: {
+      since: addHoursToIso(since, -windowHours),
+      until: since,
+    },
+  };
+}
+
+function countEventsByField(events, fieldName, fallback = "unknown") {
+  const counts = {};
+  for (const event of Array.isArray(events) ? events : []) {
+    const key =
+      normalizeBoundedStringLenient(event?.[fieldName], 128) ??
+      (typeof fallback === "string" ? fallback : "unknown");
+    counts[key] = toNonNegativeInteger(counts[key], 0) + 1;
+  }
+  return stableSortObject(counts);
+}
+
+function evaluateAnomalyRule(events, window, rule) {
+  const baselineEvents = filterEventsByWindow(events, {
+    since: window.baseline.since,
+    until: window.baseline.until,
+    includeUntil: false,
+  });
+  const observationEvents = filterEventsByWindow(events, {
+    since: window.observation.since,
+    until: window.observation.until,
+    includeUntil: true,
+  });
+  const baselineCount = baselineEvents.length;
+  const observationCount = observationEvents.length;
+  const delta = observationCount - baselineCount;
+  const ratio = baselineCount > 0 ? roundNumber(observationCount / baselineCount, 6) : null;
+  const meetsObservationFloor = observationCount >= rule.minObservationCount;
+  const meetsDelta = baselineCount === 0 ? true : delta >= rule.minDelta;
+  const meetsMultiplier =
+    baselineCount === 0 ? true : observationCount >= Math.ceil(baselineCount * rule.multiplier);
+  const triggered = meetsObservationFloor && meetsDelta && meetsMultiplier;
+  let severity = "none";
+  if (triggered) {
+    const criticalThreshold = Math.max(rule.minObservationCount + rule.minDelta, rule.minObservationCount + 1);
+    severity = observationCount >= criticalThreshold ? "critical" : "warn";
+  }
+  return {
+    triggered,
+    severity,
+    baselineCount,
+    observationCount,
+    delta,
+    ratio,
+    baselineEvents,
+    observationEvents,
+  };
+}
+
+function takeAnomalyEvidenceIds(events) {
+  return asSortedUniqueStrings(
+    (Array.isArray(events) ? events : [])
+      .slice(-MAX_ANOMALY_EVIDENCE_IDS)
+      .map((event) => normalizeBoundedStringLenient(event?.eventId, 128))
+      .filter(Boolean),
+  );
+}
+
+function sortAnomalyAlerts(alerts) {
+  const severityOrder = {
+    critical: 2,
+    warn: 1,
+    none: 0,
+  };
+  return [...(Array.isArray(alerts) ? alerts : [])].sort((left, right) => {
+    const severityDiff =
+      toNonNegativeInteger(severityOrder[right?.severity], 0) -
+      toNonNegativeInteger(severityOrder[left?.severity], 0);
+    if (severityDiff !== 0) {
+      return severityDiff;
+    }
+    const typeDiff = String(left?.type ?? "").localeCompare(String(right?.type ?? ""));
+    if (typeDiff !== 0) {
+      return typeDiff;
+    }
+    return String(left?.alertId ?? "").localeCompare(String(right?.alertId ?? ""));
+  });
+}
+
+function buildAnomalyAlertRecord({
+  type,
+  severity,
+  storeId,
+  profile,
+  window,
+  summary,
+  evidenceEventIds,
+  details = {},
+  stats,
+}) {
+  const material = stableSortObject({
+    type,
+    severity,
+    storeId,
+    profile,
+    window,
+    summary,
+    evidenceEventIds,
+    details,
+    stats: {
+      baselineCount: stats.baselineCount,
+      observationCount: stats.observationCount,
+      delta: stats.delta,
+      ratio: stats.ratio,
+    },
+  });
+  return {
+    alertId: makeId("alrt", hash(stableStringify(material))),
+    type,
+    severity,
+    status: "triggered",
+    summary,
+    observationCount: stats.observationCount,
+    baselineCount: stats.baselineCount,
+    delta: stats.delta,
+    ratio: stats.ratio,
+    window: stableSortObject({
+      observation: window.observation,
+      baseline: window.baseline,
+    }),
+    evidenceEventIds,
+    details: stableSortObject(details),
+  };
+}
+
+function collectHarmfulSignalEvents(state) {
+  const events = [];
+  for (const signal of Array.isArray(state?.painSignals) ? state.painSignals : []) {
+    events.push({
+      eventId:
+        normalizeBoundedString(signal?.painSignalId, "memory_console_anomaly_alerts.painSignalId", 64) ??
+        makeId("pain", hash(stableStringify(signal))),
+      timestamp: toMemoryConsoleTimestamp(signal?.recordedAt),
+      source: "pain_signal_ingest",
+    });
+  }
+  for (const signal of Array.isArray(state?.failureSignals) ? state.failureSignals : []) {
+    events.push({
+      eventId:
+        normalizeBoundedString(signal?.failureSignalId, "memory_console_anomaly_alerts.failureSignalId", 64) ??
+        makeId("fail", hash(stableStringify(signal))),
+      timestamp: toMemoryConsoleTimestamp(signal?.recordedAt),
+      source: "failure_signal_ingest",
+    });
+  }
+  for (const feedback of Array.isArray(state?.feedback) ? state.feedback : []) {
+    if (feedback?.signal !== "harmful") {
+      continue;
+    }
+    events.push({
+      eventId:
+        normalizeBoundedString(feedback?.feedbackId, "memory_console_anomaly_alerts.feedbackId", 64) ??
+        makeId("fdbk", hash(stableStringify(feedback))),
+      timestamp: toMemoryConsoleTimestamp(feedback?.recordedAt),
+      source: "feedback",
+    });
+  }
+  for (const outcome of Array.isArray(state?.outcomes) ? state.outcomes : []) {
+    if (outcome?.outcome !== "failure") {
+      continue;
+    }
+    events.push({
+      eventId:
+        normalizeBoundedString(outcome?.outcomeId, "memory_console_anomaly_alerts.outcomeId", 64) ??
+        makeId("out", hash(stableStringify(outcome))),
+      timestamp: toMemoryConsoleTimestamp(outcome?.recordedAt),
+      source: "outcome",
+    });
+  }
+  return sortByTimestampAndId(events, "timestamp", "eventId");
+}
+
+function collectUnauthorizedAccessEvents(state) {
+  const events = [];
+  for (const entry of Array.isArray(state?.policyAuditTrail) ? state.policyAuditTrail : []) {
+    const outcome = normalizeBoundedStringLenient(entry?.outcome, 16)?.toLowerCase() ?? "recorded";
+    if (outcome !== "deny") {
+      continue;
+    }
+    const reasonCodes = asSortedUniqueStrings(entry?.reasonCodes).map((reasonCode) => reasonCode.toLowerCase());
+    if (!reasonCodes.includes("allowlist_denied")) {
+      continue;
+    }
+    events.push({
+      eventId:
+        normalizeBoundedString(entry?.auditEventId, "memory_console_anomaly_alerts.auditEventId", 64) ??
+        makeId("audit", hash(stableStringify(entry))),
+      timestamp: toMemoryConsoleTimestamp(entry?.timestamp),
+      source: normalizeBoundedStringLenient(entry?.operation, 64) ?? "unknown",
+      requesterStoreId: normalizeBoundedStringLenient(entry?.details?.requesterStoreId, 128) ?? "unknown",
+    });
+  }
+  return sortByTimestampAndId(events, "timestamp", "eventId");
+}
+
+function collectPolicyDriftIndicatorEvents(state) {
+  const policyAuditEvents = sortByTimestampAndId(
+    (Array.isArray(state?.policyAuditTrail) ? state.policyAuditTrail : []).filter(
+      (entry) => normalizeBoundedStringLenient(entry?.operation, 64)?.toLowerCase() === "policy_decision_update",
+    ),
+    "timestamp",
+    "auditEventId",
+  );
+  const latestOutcomeByPolicyKey = new Map();
+  const indicators = [];
+
+  for (const entry of policyAuditEvents) {
+    const policyKey = normalizeBoundedStringLenient(entry?.details?.policyKey, 128) ?? "unknown";
+    const outcome = normalizeBoundedStringLenient(entry?.outcome, 16)?.toLowerCase() ?? "review";
+    const previousOutcome = latestOutcomeByPolicyKey.get(policyKey);
+    latestOutcomeByPolicyKey.set(policyKey, outcome);
+    if (!previousOutcome || previousOutcome === outcome) {
+      continue;
+    }
+    indicators.push({
+      eventId:
+        normalizeBoundedString(entry?.auditEventId, "memory_console_anomaly_alerts.auditEventId", 64) ??
+        makeId("audit", hash(stableStringify(entry))),
+      timestamp: toMemoryConsoleTimestamp(entry?.timestamp),
+      source: "policy_decision_update",
+      policyKey,
+      previousOutcome,
+      nextOutcome: outcome,
+    });
+  }
+
+  return sortByTimestampAndId(indicators, "timestamp", "eventId");
+}
+
+function latestAnomalyTimestamp(eventGroups) {
+  let latest = DEFAULT_VERSION_TIMESTAMP;
+  for (const group of Array.isArray(eventGroups) ? eventGroups : []) {
+    for (const event of Array.isArray(group) ? group : []) {
+      const timestamp = toMemoryConsoleTimestamp(event?.timestamp);
+      if (timestamp.localeCompare(latest) > 0) {
+        latest = timestamp;
+      }
+    }
+  }
+  return latest;
+}
+
+function runMemoryConsoleAnomalyAlerts(request) {
+  const { storeId, profile, input } = normalizeRequest("memory_console_anomaly_alerts", request);
+  const state = getReadonlyProfileState(storeId, profile);
+  const harmfulEvents = collectHarmfulSignalEvents(state);
+  const unauthorizedEvents = collectUnauthorizedAccessEvents(state);
+  const policyDriftEvents = collectPolicyDriftIndicatorEvents(state);
+  const window = resolveAnomalyWindow(
+    request,
+    latestAnomalyTimestamp([harmfulEvents, unauthorizedEvents, policyDriftEvents]),
+  );
+
+  const harmfulStats = evaluateAnomalyRule(
+    harmfulEvents,
+    window,
+    ANOMALY_ALERT_RULES.harmful_signal_spike,
+  );
+  const unauthorizedStats = evaluateAnomalyRule(
+    unauthorizedEvents,
+    window,
+    ANOMALY_ALERT_RULES.unauthorized_access_spike,
+  );
+  const policyDriftStats = evaluateAnomalyRule(
+    policyDriftEvents,
+    window,
+    ANOMALY_ALERT_RULES.policy_drift_indicator,
+  );
+
+  const harmfulEvidenceIds = takeAnomalyEvidenceIds(harmfulStats.observationEvents);
+  const unauthorizedEvidenceIds = takeAnomalyEvidenceIds(unauthorizedStats.observationEvents);
+  const policyDriftEvidenceIds = takeAnomalyEvidenceIds(policyDriftStats.observationEvents);
+  const harmfulSourceCounts = countEventsByField(harmfulStats.observationEvents, "source");
+  const unauthorizedOperationCounts = countEventsByField(
+    unauthorizedStats.observationEvents,
+    "source",
+    "unknown_operation",
+  );
+  const unauthorizedRequesterCounts = countEventsByField(
+    unauthorizedStats.observationEvents,
+    "requesterStoreId",
+    "unknown_requester",
+  );
+  const policyDriftByPolicyKey = countEventsByField(
+    policyDriftStats.observationEvents,
+    "policyKey",
+    "unknown",
+  );
+  const policyTransitions = asSortedUniqueStrings(
+    policyDriftStats.observationEvents.map((event) =>
+      normalizeBoundedStringLenient(
+        `${event.policyKey}:${event.previousOutcome}->${event.nextOutcome}`,
+        256,
+      ),
+    ),
+  );
+
+  const alerts = [];
+  if (harmfulStats.triggered) {
+    alerts.push(
+      buildAnomalyAlertRecord({
+        type: "harmful_signal_spike",
+        severity: harmfulStats.severity,
+        storeId,
+        profile,
+        window,
+        summary: "Harmful-signal volume exceeded deterministic spike thresholds.",
+        evidenceEventIds: harmfulEvidenceIds,
+        details: {
+          sourceCounts: harmfulSourceCounts,
+        },
+        stats: harmfulStats,
+      }),
+    );
+  }
+  if (unauthorizedStats.triggered) {
+    alerts.push(
+      buildAnomalyAlertRecord({
+        type: "unauthorized_access_spike",
+        severity: unauthorizedStats.severity,
+        storeId,
+        profile,
+        window,
+        summary: "Unauthorized access attempts exceeded deterministic spike thresholds.",
+        evidenceEventIds: unauthorizedEvidenceIds,
+        details: {
+          operationCounts: unauthorizedOperationCounts,
+          requesterCounts: unauthorizedRequesterCounts,
+        },
+        stats: unauthorizedStats,
+      }),
+    );
+  }
+  if (policyDriftStats.triggered) {
+    alerts.push(
+      buildAnomalyAlertRecord({
+        type: "policy_drift_indicator",
+        severity: policyDriftStats.severity,
+        storeId,
+        profile,
+        window,
+        summary: "Policy outcome transitions indicate deterministic drift pressure.",
+        evidenceEventIds: policyDriftEvidenceIds,
+        details: {
+          policyKeyCounts: policyDriftByPolicyKey,
+          transitions: policyTransitions,
+        },
+        stats: policyDriftStats,
+      }),
+    );
+  }
+
+  const orderedAlerts = sortAnomalyAlerts(alerts);
+  const criticalAlertCount = orderedAlerts.filter((alert) => alert.severity === "critical").length;
+  const warningAlertCount = orderedAlerts.filter((alert) => alert.severity === "warn").length;
+
+  return {
+    ...buildMeta("memory_console_anomaly_alerts", storeId, profile, input),
+    action: "analyzed",
+    filters: {
+      since: window.observation.since,
+      until: window.observation.until,
+      windowHours: window.windowHours,
+    },
+    windows: stableSortObject({
+      observation: window.observation,
+      baseline: window.baseline,
+    }),
+    thresholds: stableSortObject({
+      harmfulSignalSpike: ANOMALY_ALERT_RULES.harmful_signal_spike,
+      unauthorizedAccessSpike: ANOMALY_ALERT_RULES.unauthorized_access_spike,
+      policyDriftIndicator: ANOMALY_ALERT_RULES.policy_drift_indicator,
+    }),
+    signals: {
+      harmfulSignalSpike: {
+        triggered: harmfulStats.triggered,
+        severity: harmfulStats.severity,
+        observationCount: harmfulStats.observationCount,
+        baselineCount: harmfulStats.baselineCount,
+        delta: harmfulStats.delta,
+        ratio: harmfulStats.ratio,
+        sourceCounts: harmfulSourceCounts,
+        evidenceEventIds: harmfulEvidenceIds,
+      },
+      unauthorizedAccessSpike: {
+        triggered: unauthorizedStats.triggered,
+        severity: unauthorizedStats.severity,
+        observationCount: unauthorizedStats.observationCount,
+        baselineCount: unauthorizedStats.baselineCount,
+        delta: unauthorizedStats.delta,
+        ratio: unauthorizedStats.ratio,
+        operationCounts: unauthorizedOperationCounts,
+        requesterCounts: unauthorizedRequesterCounts,
+        evidenceEventIds: unauthorizedEvidenceIds,
+      },
+      policyDriftIndicator: {
+        triggered: policyDriftStats.triggered,
+        severity: policyDriftStats.severity,
+        observationCount: policyDriftStats.observationCount,
+        baselineCount: policyDriftStats.baselineCount,
+        delta: policyDriftStats.delta,
+        ratio: policyDriftStats.ratio,
+        policyKeyCounts: policyDriftByPolicyKey,
+        transitions: policyTransitions,
+        evidenceEventIds: policyDriftEvidenceIds,
+      },
+    },
+    alerts: orderedAlerts,
+    summary: {
+      totalAlerts: orderedAlerts.length,
+      criticalAlerts: criticalAlertCount,
+      warningAlerts: warningAlertCount,
+      categoriesTriggered: asSortedUniqueStrings(orderedAlerts.map((alert) => alert.type)),
+    },
+  };
+}
+
 function runMemoryConsoleSearch(request) {
   const { storeId, profile, input } = normalizeRequest("memory_console_search", request);
   const state = getReadonlyProfileState(storeId, profile);
@@ -9084,6 +9584,10 @@ const runners = {
   memory_console_policy_audit: runMemoryConsolePolicyAudit,
   memory_policy_audit: runMemoryConsolePolicyAudit,
   console_policy_audit: runMemoryConsolePolicyAudit,
+  memory_console_anomaly_alerts: runMemoryConsoleAnomalyAlerts,
+  memory_console_anomalies: runMemoryConsoleAnomalyAlerts,
+  memory_anomaly_alerts: runMemoryConsoleAnomalyAlerts,
+  console_anomaly_alerts: runMemoryConsoleAnomalyAlerts,
   feedback: runFeedback,
   outcome: runOutcome,
   audit: runAudit,
