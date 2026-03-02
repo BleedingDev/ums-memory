@@ -183,6 +183,7 @@ Before adapter cutover:
 
 1. `ums-memory-dd2.2`: implement pluggable storage adapter contracts (pre-req for runtime routing).
 2. `ums-memory-dd2.3`: evaluate optional vector retrieval extension in [Optional Vector Retrieval Extension Evaluation](./vector-retrieval-extension-evaluation.md).
-3. `ums-memory-dd2.5`: define enterprise identity lifecycle and role sync contracts in [Enterprise SSO/SCIM Integration Plan](./enterprise-sso-scim-integration-plan.md).
-4. Add Postgres schema + migration parity test suite mirroring SQLite migration tests.
-5. Add dual-run telemetry fields (request hash, backend result digest, mismatch category) to storage operation logs.
+3. `ums-memory-dd2.4`: design controlled sharing in [Cross-Repo Memory Federation Model](./cross-repo-memory-federation-model.md).
+4. `ums-memory-dd2.5`: define enterprise identity lifecycle and role sync contracts in [Enterprise SSO/SCIM Integration Plan](./enterprise-sso-scim-integration-plan.md).
+5. Add Postgres schema + migration parity test suite mirroring SQLite migration tests.
+6. Add dual-run telemetry fields (request hash, backend result digest, mismatch category) to storage operation logs.

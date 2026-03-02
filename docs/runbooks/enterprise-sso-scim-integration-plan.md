@@ -21,6 +21,7 @@ Out of scope:
 - Full runtime implementation details (separate implementation beads).
 - UI/admin portal design work.
 - Cross-tenant federation and multi-region identity replication.
+- Cross-repository memory sharing design (covered by bead `ums-memory-dd2.4` in [Cross-Repo Memory Federation Model](./cross-repo-memory-federation-model.md)).
 
 ## UMS Domain Alignment (Current Model)
 
@@ -92,6 +93,11 @@ Current schema has no dedicated external-identity link table. Until that exists,
 - Canonical external subject key: `idp_issuer + \"::\" + scim_user_id`.
 - Deterministic `users.user_id` generation from that key (stable hash/encoding strategy).
 - Raw external IDs (`externalId`, `id`, issuer) must be preserved in `audit_events.details`.
+- Normalization is mandatory before key generation:
+  - trim whitespace for issuer and SCIM id
+  - lowercase issuer value
+  - preserve SCIM id case but encode with canonical UTF-8 normalization
+  - reject empty normalized values with deterministic `ScimMappingError`
 
 ### `/Users` mapping
 
