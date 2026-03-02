@@ -10,6 +10,7 @@ const OPS = [
   "replay_eval",
   "promote",
   "demote",
+  "addweight",
   "learner_profile_update",
   "identity_graph_update",
   "misconception_update",
@@ -45,6 +46,7 @@ const MAX_ACTIVE_REVIEW_SET_LIMIT = 256;
 const DEFAULT_ACTIVE_REVIEW_SET_LIMIT = 32;
 const DEFAULT_SLEEP_THRESHOLD = 8;
 const MAX_POLICY_AUDIT_EVENTS = 2048;
+const MAX_WEIGHT_ADJUSTMENT_LEDGER_EVENTS = 4096;
 const MAX_RECOMMENDATIONS = 64;
 const MAX_RECOMMENDATION_TOKEN_BUDGET = 8192;
 const DEFAULT_RECOMMENDATION_TOKEN_BUDGET = 1024;
@@ -79,6 +81,14 @@ const REPLAY_EVAL_CANDIDATE_CONTRACT_ERROR =
   "VALIDATION_CONTRACT_VIOLATION: replay_eval requires an existing shadow candidate.";
 const PROMOTE_GATE_CONTRACT_ERROR =
   "VALIDATION_CONTRACT_VIOLATION: promote requires latest replay_eval status pass and no safety regressions.";
+const ADDWEIGHT_CANDIDATE_CONTRACT_ERROR =
+  "VALIDATION_CONTRACT_VIOLATION: addweight requires an existing shadow candidate.";
+const ADDWEIGHT_REASON_CONTRACT_ERROR =
+  "VALIDATION_CONTRACT_VIOLATION: addweight requires a non-empty reason.";
+const ADDWEIGHT_DELTA_CONTRACT_ERROR =
+  "VALIDATION_CONTRACT_VIOLATION: addweight requires numeric delta in [-1, 1].";
+const ADDWEIGHT_ADJUSTMENT_COLLISION_CONTRACT_ERROR =
+  "VALIDATION_CONTRACT_VIOLATION: addweight adjustmentId already exists with a different payload.";
 const PROFILE_LINEAGE_ATTRIBUTES = Object.freeze([
   "status",
   "profileConfidence",
@@ -1589,6 +1599,7 @@ function getProfileState(storeId, profile) {
     degradedTutorSessions: [],
     policyDecisions: [],
     policyAuditTrail: [],
+    weightAdjustmentLedger: [],
     shadowCandidates: [],
     replayEvaluations: [],
   };
@@ -1747,6 +1758,133 @@ function resolveMemoryCandidate(state, candidateId) {
     candidateIndex,
     candidate: candidates[candidateIndex],
   };
+}
+
+function normalizeAddWeightRequest(request, storeId, profile) {
+  const candidateId = requireNonEmptyString(request.candidateId, "candidateId");
+  const parsedDelta = Number(
+    request.delta ?? request.weightDelta ?? request.adjustmentDelta ?? request.adjustment ?? request.amount,
+  );
+  if (!Number.isFinite(parsedDelta) || parsedDelta < -1 || parsedDelta > 1) {
+    throw new Error(ADDWEIGHT_DELTA_CONTRACT_ERROR);
+  }
+  const requestedDelta = roundNumber(parsedDelta, 6);
+  const reason = normalizeBoundedString(request.reason, "addweight.reason", 512);
+  if (!reason) {
+    throw new Error(ADDWEIGHT_REASON_CONTRACT_ERROR);
+  }
+  const actor =
+    normalizeBoundedString(
+      request.actor ?? request.approvedBy ?? request.createdByUserId ?? request.userId,
+      "addweight.actor",
+      128,
+    ) ?? "human_unspecified";
+  const timestamp = normalizeIsoTimestamp(
+    request.timestamp ?? request.adjustedAt ?? request.createdAt,
+    "addweight.timestamp",
+    DEFAULT_VERSION_TIMESTAMP,
+  );
+  const sourceEventIds = normalizeGuardedStringArray(
+    request.sourceEventIds ?? (request.sourceEventId ? [request.sourceEventId] : null),
+    "sourceEventIds",
+  );
+  const evidenceEventIds = normalizeGuardedStringArray(
+    request.evidenceEventIds ??
+      request.evidenceEpisodeIds ??
+      (request.evidenceEventId ? [request.evidenceEventId] : null) ??
+      sourceEventIds,
+    "evidenceEventIds",
+  );
+  const metadata = normalizeMetadata(request.metadata);
+  const reasonCodes = mergeStringLists(normalizeGuardedStringArray(request.reasonCodes, "reasonCodes"), [
+    requestedDelta >= 0 ? "human_weight_increase" : "human_weight_decrease",
+    "addweight_manual",
+  ]);
+  const idempotencyDigest = hash(
+    stableStringify({
+      storeId,
+      profile,
+      candidateId,
+      requestedDelta,
+      reason,
+      actor,
+      sourceEventIds,
+      evidenceEventIds,
+      metadata,
+      reasonCodes,
+      timestamp,
+    }),
+  );
+  const adjustmentId =
+    normalizeBoundedString(request.adjustmentId, "addweight.adjustmentId", 64) ??
+    makeId("wadj", idempotencyDigest);
+
+  return {
+    candidateId,
+    adjustmentId,
+    requestedDelta,
+    reason,
+    actor,
+    sourceEventIds,
+    evidenceEventIds,
+    metadata,
+    reasonCodes,
+    timestamp,
+    idempotencyDigest,
+  };
+}
+
+function findExistingAddWeightAuditEvent(state, adjustmentId) {
+  const auditTrail = Array.isArray(state.policyAuditTrail) ? state.policyAuditTrail : [];
+  return (
+    auditTrail.find(
+      (entry) => entry?.operation === "addweight" && entry?.details?.adjustmentId === adjustmentId,
+    ) ?? null
+  );
+}
+
+function findWeightAdjustmentLedgerEntry(state, adjustmentId) {
+  const ledger = Array.isArray(state.weightAdjustmentLedger) ? state.weightAdjustmentLedger : [];
+  return ledger.find((entry) => entry?.adjustmentId === adjustmentId) ?? null;
+}
+
+function upsertWeightAdjustmentLedgerEntry(state, rawEntry) {
+  const entry = isPlainObject(rawEntry) ? rawEntry : {};
+  const adjustmentId =
+    normalizeBoundedString(entry.adjustmentId, "weightAdjustmentLedger.adjustmentId", 64) ??
+    makeId("wadj", hash(stableStringify(entry)));
+  const idempotencyDigest =
+    normalizeBoundedString(entry.idempotencyDigest, "weightAdjustmentLedger.idempotencyDigest", 128) ??
+    hash(stableStringify({ adjustmentId }));
+  const timestamp = normalizeIsoTimestampOrFallback(entry.timestamp, DEFAULT_VERSION_TIMESTAMP);
+  const nextEntry = {
+    adjustmentId,
+    idempotencyDigest,
+    candidateId: normalizeBoundedString(entry.candidateId, "weightAdjustmentLedger.candidateId", 64),
+    auditEventId: normalizeBoundedString(entry.auditEventId, "weightAdjustmentLedger.auditEventId", 64),
+    timestamp,
+  };
+  const ledger = Array.isArray(state.weightAdjustmentLedger) ? state.weightAdjustmentLedger : [];
+  const existingIndex = ledger.findIndex((candidate) => candidate?.adjustmentId === adjustmentId);
+  if (existingIndex >= 0) {
+    const existing = ledger[existingIndex];
+    const existingDigest =
+      normalizeBoundedString(existing?.idempotencyDigest, "weightAdjustmentLedger.idempotencyDigest", 128) ?? null;
+    if (existingDigest && existingDigest !== idempotencyDigest) {
+      throw new Error(ADDWEIGHT_ADJUSTMENT_COLLISION_CONTRACT_ERROR);
+    }
+    state.weightAdjustmentLedger = sortByTimestampAndId(ledger, "timestamp", "adjustmentId").slice(
+      -MAX_WEIGHT_ADJUSTMENT_LEDGER_EVENTS,
+    );
+    return existing;
+  }
+
+  state.weightAdjustmentLedger = sortByTimestampAndId(
+    [...ledger, nextEntry],
+    "timestamp",
+    "adjustmentId",
+  ).slice(-MAX_WEIGHT_ADJUSTMENT_LEDGER_EVENTS);
+  return nextEntry;
 }
 
 function normalizeReplayEvalMetrics(request) {
@@ -3234,6 +3372,198 @@ function runDemote(request) {
       demotionApplied: true,
       ruleRemoved: Boolean(removedRule),
       slo: buildSloObservability(meta.requestDigest, "demote", 40),
+    },
+  };
+}
+
+function runAddWeight(request) {
+  const { storeId, profile, input } = normalizeRequest("addweight", request);
+  const state = getProfileState(storeId, profile);
+  const normalized = normalizeAddWeightRequest(request, storeId, profile);
+  const ledgerEntry = findWeightAdjustmentLedgerEntry(state, normalized.adjustmentId);
+  if (ledgerEntry) {
+    const existingDigest =
+      normalizeBoundedString(ledgerEntry.idempotencyDigest, "weightAdjustmentLedger.idempotencyDigest", 128) ?? null;
+    if (existingDigest && existingDigest !== normalized.idempotencyDigest) {
+      throw new Error(ADDWEIGHT_ADJUSTMENT_COLLISION_CONTRACT_ERROR);
+    }
+    const resolvedCandidate = resolveMemoryCandidate(state, normalized.candidateId);
+    const meta = buildMeta("addweight", storeId, profile, input);
+    return {
+      ...meta,
+      action: "noop",
+      candidate: resolvedCandidate.candidate ? buildShadowWriteAppliedEntry(resolvedCandidate.candidate, "noop") : null,
+      adjustment: {
+        adjustmentId: normalized.adjustmentId,
+        requestedDelta: normalized.requestedDelta,
+        appliedDelta: 0,
+        reason: normalized.reason,
+        actor: normalized.actor,
+        sourceEventIds: normalized.sourceEventIds,
+        evidenceEventIds: normalized.evidenceEventIds,
+        metadata: normalized.metadata,
+        timestamp: normalized.timestamp,
+      },
+      ruleAction: "noop",
+      policyAuditEventId: ledgerEntry.auditEventId ?? null,
+      observability: {
+        replaySafe: true,
+        deterministicNoop: true,
+        slo: buildSloObservability(meta.requestDigest, "addweight", 35),
+      },
+    };
+  }
+
+  const resolved = resolveMemoryCandidate(state, normalized.candidateId);
+  if (!resolved.candidate) {
+    throw new Error(ADDWEIGHT_CANDIDATE_CONTRACT_ERROR);
+  }
+  const meta = buildMeta("addweight", storeId, profile, input);
+  const existingAuditEvent = findExistingAddWeightAuditEvent(state, normalized.adjustmentId);
+  if (existingAuditEvent) {
+    const existingDigest =
+      normalizeBoundedString(existingAuditEvent?.details?.idempotencyDigest, "policyAuditTrail.idempotencyDigest", 128) ??
+      null;
+    if (existingDigest && existingDigest !== normalized.idempotencyDigest) {
+      throw new Error(ADDWEIGHT_ADJUSTMENT_COLLISION_CONTRACT_ERROR);
+    }
+    const persisted = upsertWeightAdjustmentLedgerEntry(state, {
+      adjustmentId: normalized.adjustmentId,
+      idempotencyDigest: normalized.idempotencyDigest,
+      candidateId: normalized.candidateId,
+      auditEventId: existingAuditEvent.auditEventId,
+      timestamp: normalized.timestamp,
+    });
+    return {
+      ...meta,
+      action: "noop",
+      candidate: buildShadowWriteAppliedEntry(resolved.candidate, "noop"),
+      adjustment: {
+        adjustmentId: normalized.adjustmentId,
+        requestedDelta: normalized.requestedDelta,
+        appliedDelta: 0,
+        reason: normalized.reason,
+        actor: normalized.actor,
+        sourceEventIds: normalized.sourceEventIds,
+        evidenceEventIds: normalized.evidenceEventIds,
+        metadata: normalized.metadata,
+        timestamp: normalized.timestamp,
+      },
+      ruleAction: "noop",
+      policyAuditEventId: persisted.auditEventId ?? existingAuditEvent.auditEventId,
+      observability: {
+        replaySafe: true,
+        deterministicNoop: true,
+        slo: buildSloObservability(meta.requestDigest, "addweight", 35),
+      },
+    };
+  }
+
+  const previousConfidence = clamp01(resolved.candidate.confidence, 0.5);
+  const nextConfidence = roundNumber(
+    clamp01(previousConfidence + normalized.requestedDelta, previousConfidence),
+    6,
+  );
+  const appliedDelta = roundNumber(nextConfidence - previousConfidence, 6);
+  const nextCandidate = {
+    ...resolved.candidate,
+    confidence: nextConfidence,
+    updatedAt: normalized.timestamp,
+    metadata: stableSortObject({
+      ...(resolved.candidate.metadata ?? {}),
+      latestWeightAdjustment: {
+        adjustmentId: normalized.adjustmentId,
+        requestedDelta: normalized.requestedDelta,
+        appliedDelta,
+        reason: normalized.reason,
+        actor: normalized.actor,
+        sourceEventIds: normalized.sourceEventIds,
+        evidenceEventIds: normalized.evidenceEventIds,
+        metadata: normalized.metadata,
+        timestamp: normalized.timestamp,
+      },
+    }),
+  };
+  state.shadowCandidates[resolved.candidateIndex] = nextCandidate;
+  state.shadowCandidates = sortByTimestampAndId(state.shadowCandidates, "updatedAt", "candidateId");
+
+  let ruleAction = "skipped";
+  if (Array.isArray(state.rules)) {
+    const existingRuleIndex = state.rules.findIndex((rule) => rule.ruleId === resolved.candidate.ruleId);
+    if (existingRuleIndex >= 0) {
+      const existingRule = state.rules[existingRuleIndex];
+      const nextRule = {
+        ...existingRule,
+        confidence: nextConfidence,
+        updatedAt: normalized.timestamp,
+      };
+      if (stableStringify(existingRule) === stableStringify(nextRule)) {
+        ruleAction = "noop";
+      } else {
+        ruleAction = "updated";
+        state.rules[existingRuleIndex] = nextRule;
+      }
+    }
+  }
+
+  const auditEvent = appendPolicyAuditTrail(state, {
+    operation: "addweight",
+    storeId,
+    profile,
+    entityId: normalized.candidateId,
+    outcome: "recorded",
+    reasonCodes: normalized.reasonCodes,
+    details: {
+      adjustmentId: normalized.adjustmentId,
+      idempotencyDigest: normalized.idempotencyDigest,
+      candidateId: normalized.candidateId,
+      ruleId: resolved.candidate.ruleId ?? null,
+      requestedDelta: normalized.requestedDelta,
+      appliedDelta,
+      previousConfidence,
+      nextConfidence,
+      reason: normalized.reason,
+      actor: normalized.actor,
+      sourceEventIds: normalized.sourceEventIds,
+      evidenceEventIds: normalized.evidenceEventIds,
+      metadata: normalized.metadata,
+      timestamp: normalized.timestamp,
+      ruleAction,
+    },
+    timestamp: normalized.timestamp,
+  });
+  upsertWeightAdjustmentLedgerEntry(state, {
+    adjustmentId: normalized.adjustmentId,
+    idempotencyDigest: normalized.idempotencyDigest,
+    candidateId: normalized.candidateId,
+    auditEventId: auditEvent.auditEventId,
+    timestamp: normalized.timestamp,
+  });
+
+  return {
+    ...meta,
+    action: "adjusted",
+    candidate: buildShadowWriteAppliedEntry(nextCandidate, "updated"),
+    adjustment: {
+      adjustmentId: normalized.adjustmentId,
+      requestedDelta: normalized.requestedDelta,
+      appliedDelta,
+      previousConfidence,
+      nextConfidence,
+      reason: normalized.reason,
+      actor: normalized.actor,
+      sourceEventIds: normalized.sourceEventIds,
+      evidenceEventIds: normalized.evidenceEventIds,
+      metadata: normalized.metadata,
+      timestamp: normalized.timestamp,
+      effective: appliedDelta !== 0,
+    },
+    ruleAction,
+    policyAuditEventId: auditEvent.auditEventId,
+    observability: {
+      replaySafe: true,
+      weightAdjusted: appliedDelta !== 0,
+      slo: buildSloObservability(meta.requestDigest, "addweight", 35),
     },
   };
 }
@@ -5133,6 +5463,7 @@ function runDoctor(request) {
     reviewArchivalRecords: state.reviewArchivalTiers?.archivedRecords?.length ?? 0,
     policyDecisions: state.policyDecisions.length,
     policyAuditTrail: state.policyAuditTrail.length,
+    weightAdjustmentLedger: Array.isArray(state.weightAdjustmentLedger) ? state.weightAdjustmentLedger.length : 0,
     shadowCandidates: Array.isArray(state.shadowCandidates) ? state.shadowCandidates.length : 0,
     replayEvaluations: Array.isArray(state.replayEvaluations) ? state.replayEvaluations.length : 0,
   };
@@ -5159,6 +5490,9 @@ const runners = {
   replay_eval: runReplayEval,
   promote: runPromote,
   demote: runDemote,
+  addweight: runAddWeight,
+  add_weight: runAddWeight,
+  "/addweight": runAddWeight,
   curate_guarded: runCurateGuarded,
   guarded_curate: runCurateGuarded,
   secure_curate: runCurateGuarded,
@@ -5286,6 +5620,7 @@ export function snapshotProfile(profile = INTERNAL_PROFILE_ID, storeId = DEFAULT
       metadata: { ...(decision.metadata ?? {}) },
     })),
     policyAuditTrail: cloneStable(state.policyAuditTrail ?? [], []),
+    weightAdjustmentLedger: cloneStable(state.weightAdjustmentLedger ?? [], []),
     shadowCandidates: cloneStable(state.shadowCandidates ?? [], []),
     replayEvaluations: cloneStable(state.replayEvaluations ?? [], []),
   };
@@ -5333,6 +5668,7 @@ function serializeState(state) {
       metadata: { ...(decision.metadata ?? {}) },
     })),
     policyAuditTrail: cloneStable(state.policyAuditTrail ?? [], []),
+    weightAdjustmentLedger: cloneStable(state.weightAdjustmentLedger ?? [], []),
     shadowCandidates: cloneStable(state.shadowCandidates ?? [], []),
     replayEvaluations: cloneStable(state.replayEvaluations ?? [], []),
   };
@@ -5372,6 +5708,7 @@ function normalizeState(rawState) {
   const degradedTutorSessions = Array.isArray(state.degradedTutorSessions) ? state.degradedTutorSessions : [];
   const policyDecisions = Array.isArray(state.policyDecisions) ? state.policyDecisions : [];
   const policyAuditTrail = Array.isArray(state.policyAuditTrail) ? state.policyAuditTrail : [];
+  const weightAdjustmentLedger = Array.isArray(state.weightAdjustmentLedger) ? state.weightAdjustmentLedger : [];
   const shadowCandidates = Array.isArray(state.shadowCandidates) ? state.shadowCandidates : [];
   const replayEvaluations = Array.isArray(state.replayEvaluations) ? state.replayEvaluations : [];
   const eventDigests = new Set(
@@ -5594,6 +5931,36 @@ function normalizeState(rawState) {
       "timestamp",
       "auditEventId",
     ),
+    weightAdjustmentLedger: sortByTimestampAndId(
+      weightAdjustmentLedger.map((entry) => {
+        const adjustmentId =
+          normalizeBoundedString(entry?.adjustmentId, "weightAdjustmentLedger.adjustmentId", 64) ??
+          makeId("wadj", hash(stableStringify(entry)));
+        const candidateId = normalizeBoundedString(entry?.candidateId, "weightAdjustmentLedger.candidateId", 64);
+        const auditEventId = normalizeBoundedString(entry?.auditEventId, "weightAdjustmentLedger.auditEventId", 64);
+        const timestamp = normalizeIsoTimestampOrFallback(entry?.timestamp, DEFAULT_VERSION_TIMESTAMP);
+        const idempotencyDigest =
+          normalizeBoundedString(entry?.idempotencyDigest, "weightAdjustmentLedger.idempotencyDigest", 128) ??
+          hash(
+            stableStringify({
+              adjustmentId,
+              candidateId,
+              auditEventId,
+              timestamp,
+            }),
+          );
+        return {
+          ...entry,
+          adjustmentId,
+          idempotencyDigest,
+          candidateId,
+          auditEventId,
+          timestamp,
+        };
+      }),
+      "timestamp",
+      "adjustmentId",
+    ).slice(-MAX_WEIGHT_ADJUSTMENT_LEDGER_EVENTS),
   };
 }
 

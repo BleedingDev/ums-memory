@@ -26,6 +26,7 @@ test("core exposes the full required operation surface", () => {
     "replay_eval",
     "promote",
     "demote",
+    "addweight",
     "learner_profile_update",
     "identity_graph_update",
     "misconception_update",
@@ -218,6 +219,230 @@ test("shadow_write accepts evidence-only pointers and normalizes source pointers
   assert.equal(result.applied[0].action, "created");
   assert.deepEqual(result.applied[0].evidenceEventIds, ["evt-evidence-1", "evt-evidence-2"]);
   assert.deepEqual(result.applied[0].sourceEventIds, ["evt-evidence-1", "evt-evidence-2"]);
+});
+
+test("ums-memory-hpl.5 addweight adjusts candidate influence with audit trace and deterministic replay", () => {
+  const storeId = "tenant-addweight";
+  const profile = "addweight-profile";
+  const shadow = executeOperation("shadow_write", {
+    storeId,
+    profile,
+    statement: "Keep release workflows deterministic with evidence-backed commands.",
+    confidence: 0.6,
+    sourceEventIds: ["evt-addweight-shadow-1"],
+    evidenceEventIds: ["evt-addweight-shadow-1"],
+    createdAt: "2026-03-01T12:00:00.000Z",
+  });
+  const candidateId = shadow.applied[0].candidateId;
+  executeOperation("replay_eval", {
+    storeId,
+    profile,
+    candidateId,
+    successRateDelta: 1,
+    evaluatedAt: "2026-03-01T12:30:00.000Z",
+  });
+  executeOperation("promote", {
+    storeId,
+    profile,
+    candidateId,
+    promotedAt: "2026-03-01T13:00:00.000Z",
+  });
+  const request = {
+    storeId,
+    profile,
+    candidateId,
+    delta: 0.2,
+    reason: "Human reviewer validated this guidance in production incidents.",
+    actor: "reviewer-1",
+    sourceEventIds: ["evt-addweight-shadow-1", "evt-addweight-shadow-2"],
+    evidenceEventIds: ["evt-addweight-shadow-2"],
+    timestamp: "2026-03-02T09:00:00.000Z",
+    metadata: {
+      ticketId: "OPS-42",
+    },
+  };
+
+  const adjusted = executeOperation("addweight", request);
+  const replay = executeOperation("addweight", request);
+
+  assert.equal(adjusted.action, "adjusted");
+  assert.equal(replay.action, "noop");
+  assert.equal(adjusted.candidate.candidateId, candidateId);
+  assert.equal(adjusted.candidate.confidence, 0.8);
+  assert.equal(adjusted.adjustment.previousConfidence, 0.6);
+  assert.equal(adjusted.adjustment.nextConfidence, 0.8);
+  assert.equal(adjusted.adjustment.appliedDelta, 0.2);
+  assert.equal(adjusted.ruleAction, "updated");
+  assert.equal(replay.policyAuditEventId, adjusted.policyAuditEventId);
+  assert.equal(replay.adjustment.adjustmentId, adjusted.adjustment.adjustmentId);
+  assert.equal(replay.candidate.confidence, adjusted.candidate.confidence);
+
+  const snapshot = snapshotProfile(profile, storeId);
+  const storedCandidate = snapshot.shadowCandidates.find((entry) => entry.candidateId === candidateId);
+  assert.ok(storedCandidate);
+  assert.equal(storedCandidate.confidence, 0.8);
+  assert.equal(storedCandidate.updatedAt, "2026-03-02T09:00:00.000Z");
+  assert.equal(storedCandidate.metadata.latestWeightAdjustment.adjustmentId, adjusted.adjustment.adjustmentId);
+  assert.equal(
+    storedCandidate.metadata.latestWeightAdjustment.reason,
+    "Human reviewer validated this guidance in production incidents.",
+  );
+  assert.equal(storedCandidate.metadata.latestWeightAdjustment.actor, "reviewer-1");
+  assert.deepEqual(storedCandidate.metadata.latestWeightAdjustment.sourceEventIds, [
+    "evt-addweight-shadow-1",
+    "evt-addweight-shadow-2",
+  ]);
+  assert.deepEqual(storedCandidate.metadata.latestWeightAdjustment.evidenceEventIds, ["evt-addweight-shadow-2"]);
+  assert.deepEqual(storedCandidate.metadata.latestWeightAdjustment.metadata, { ticketId: "OPS-42" });
+  const storedRule = snapshot.rules.find((entry) => entry.ruleId === storedCandidate.ruleId);
+  assert.ok(storedRule);
+  assert.equal(storedRule.confidence, 0.8);
+
+  const auditEntry = snapshot.policyAuditTrail.find((entry) => entry.auditEventId === adjusted.policyAuditEventId);
+  assert.ok(auditEntry);
+  assert.equal(auditEntry.operation, "addweight");
+  assert.equal(auditEntry.details.adjustmentId, adjusted.adjustment.adjustmentId);
+  assert.equal(auditEntry.details.candidateId, candidateId);
+  assert.equal(auditEntry.details.reason, "Human reviewer validated this guidance in production incidents.");
+  assert.equal(auditEntry.details.actor, "reviewer-1");
+  assert.deepEqual(auditEntry.reasonCodes, ["addweight_manual", "human_weight_increase"]);
+});
+
+test("ums-memory-hpl.5 addweight rejects adjustmentId collisions with mismatched payload", () => {
+  const storeId = "tenant-addweight-collision";
+  const profile = "addweight-collision";
+  const created = executeOperation("shadow_write", {
+    storeId,
+    profile,
+    statement: "Keep memory promotion gated by replay metrics.",
+    sourceEventIds: ["evt-addweight-collision-1"],
+    evidenceEventIds: ["evt-addweight-collision-1"],
+  });
+  const candidateId = created.applied[0].candidateId;
+  const request = {
+    storeId,
+    profile,
+    candidateId,
+    adjustmentId: "manual-adjustment-1",
+    delta: 0.12,
+    reason: "Confirmed in manual review.",
+    actor: "reviewer-2",
+    timestamp: "2026-03-02T10:00:00.000Z",
+  };
+  executeOperation("addweight", request);
+
+  assert.throws(
+    () =>
+      executeOperation("addweight", {
+        ...request,
+        delta: -0.25,
+      }),
+    /addweight adjustmentId already exists with a different payload/,
+  );
+});
+
+test("ums-memory-hpl.5 addweight replay stays idempotent after policy audit export/import rotation", () => {
+  const storeId = "tenant-addweight-replay";
+  const profile = "addweight-replay";
+  const created = executeOperation("shadow_write", {
+    storeId,
+    profile,
+    statement: "Replay-safe human weighting should survive audit trail truncation.",
+    confidence: 0.5,
+    sourceEventIds: ["evt-addweight-replay-1"],
+    evidenceEventIds: ["evt-addweight-replay-1"],
+  });
+  const candidateId = created.applied[0].candidateId;
+  const request = {
+    storeId,
+    profile,
+    candidateId,
+    adjustmentId: "manual-adjustment-replay-1",
+    delta: 0.18,
+    reason: "Validated by postmortem follow-up.",
+    actor: "reviewer-4",
+    timestamp: "2026-03-02T11:00:00.000Z",
+  };
+  const first = executeOperation("addweight", request);
+
+  const snapshot = exportStoreSnapshot();
+  const profileEntries = snapshot.stores[storeId]?.profiles ?? {};
+  const [profileKey] = Object.keys(profileEntries).sort();
+  assert.ok(profileKey);
+  profileEntries[profileKey].policyAuditTrail = [];
+  importStoreSnapshot(snapshot);
+
+  const replay = executeOperation("addweight", request);
+  assert.equal(replay.action, "noop");
+  assert.equal(replay.policyAuditEventId, first.policyAuditEventId);
+
+  const restored = snapshotProfile(profile, storeId);
+  const storedCandidate = restored.shadowCandidates.find((entry) => entry.candidateId === candidateId);
+  assert.ok(storedCandidate);
+  assert.equal(storedCandidate.confidence, 0.68);
+});
+
+test("ums-memory-hpl.5 addweight enforces bounded delta and non-empty reason contracts", () => {
+  const storeId = "tenant-addweight-contract";
+  const profile = "addweight-contract";
+  const created = executeOperation("shadow_write", {
+    storeId,
+    profile,
+    statement: "Contract checks should reject invalid manual weighting requests.",
+    sourceEventIds: ["evt-addweight-contract-1"],
+    evidenceEventIds: ["evt-addweight-contract-1"],
+  });
+  const candidateId = created.applied[0].candidateId;
+
+  assert.throws(
+    () =>
+      executeOperation("addweight", {
+        storeId,
+        profile,
+        candidateId,
+        delta: 1.5,
+        reason: "Too large delta should fail.",
+      }),
+    /addweight requires numeric delta in \[-1, 1\]/,
+  );
+  assert.throws(
+    () =>
+      executeOperation("addweight", {
+        storeId,
+        profile,
+        candidateId,
+        delta: 0.1,
+        reason: "   ",
+      }),
+    /addweight requires a non-empty reason/,
+  );
+});
+
+test("ums-memory-hpl.5 /addweight alias resolves to addweight operation", () => {
+  const storeId = "tenant-addweight-alias";
+  const profile = "addweight-alias";
+  const created = executeOperation("shadow_write", {
+    storeId,
+    profile,
+    statement: "Alias coverage for human weighting endpoint.",
+    confidence: 0.45,
+    sourceEventIds: ["evt-addweight-alias-1"],
+    evidenceEventIds: ["evt-addweight-alias-1"],
+  });
+  const candidateId = created.applied[0].candidateId;
+
+  const result = executeOperation("/addweight", {
+    storeId,
+    profile,
+    candidateId,
+    delta: 0.2,
+    reason: "Manual override from incident postmortem.",
+    actor: "reviewer-3",
+  });
+
+  assert.equal(result.action, "adjusted");
+  assert.equal(result.candidate.candidateId, candidateId);
+  assert.equal(result.candidate.confidence, 0.65);
 });
 
 test("context and curate operate on shared profile state", () => {
