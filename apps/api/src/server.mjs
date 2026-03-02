@@ -5,6 +5,7 @@ import {
   listRuntimeOperations,
 } from "./runtime-adapter.mjs";
 import { createInMemoryApiTelemetry, PROMETHEUS_CONTENT_TYPE } from "./telemetry.mjs";
+import { CONSOLE_CSS, CONSOLE_HTML, CONSOLE_JS } from "./console-ui.mjs";
 
 const HOST = process.env.UMS_API_HOST ?? "127.0.0.1";
 const PORT = Number.parseInt(process.env.UMS_API_PORT ?? "8787", 10);
@@ -214,6 +215,27 @@ export function createApiServer({
         return methodNotAllowed(res, "Only GET is supported for /metrics.");
       }
       return text(res, 200, activeTelemetry.renderPrometheusMetrics());
+    }
+
+    if (url.pathname === "/console") {
+      if (req.method !== "GET") {
+        return methodNotAllowed(res, "Only GET is supported for /console.");
+      }
+      return text(res, 200, CONSOLE_HTML, "text/html; charset=utf-8");
+    }
+
+    if (url.pathname === "/console.js") {
+      if (req.method !== "GET") {
+        return methodNotAllowed(res, "Only GET is supported for /console.js.");
+      }
+      return text(res, 200, CONSOLE_JS, "text/javascript; charset=utf-8");
+    }
+
+    if (url.pathname === "/console.css") {
+      if (req.method !== "GET") {
+        return methodNotAllowed(res, "Only GET is supported for /console.css.");
+      }
+      return text(res, 200, CONSOLE_CSS, "text/css; charset=utf-8");
     }
 
     const operation = parseOperation(url.pathname);

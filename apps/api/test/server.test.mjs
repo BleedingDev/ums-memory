@@ -260,6 +260,60 @@ test("http server exposes deterministic JSON operation routes", async () => {
   }
 });
 
+test("ums-memory-yji.7 serves deterministic memory console UI and static assets", async () => {
+  resetStore();
+  const { server, host, port } = await startApiServer({
+    host: "127.0.0.1",
+    port: 0,
+    stateFile: null,
+  });
+  const base = `http://${host}:${port}`;
+
+  try {
+    const consoleRes = await fetch(`${base}/console`);
+    assert.equal(consoleRes.status, 200);
+    assert.match(consoleRes.headers.get("content-type") ?? "", /^text\/html/i);
+    const consoleHtml = await consoleRes.text();
+    assert.match(consoleHtml, /<title>UMS Memory Console<\/title>/);
+    assert.match(consoleHtml, /href="\/console\.css"/);
+    assert.match(consoleHtml, /src="\/console\.js"/);
+    assert.match(consoleHtml, /data-operation="memory_console_search"/);
+    assert.match(consoleHtml, /data-operation="memory_console_timeline"/);
+    assert.match(consoleHtml, /data-operation="memory_console_provenance"/);
+    assert.match(consoleHtml, /data-operation="memory_console_policy_audit"/);
+    assert.match(consoleHtml, /data-operation="memory_console_anomaly_alerts"/);
+    assert.match(consoleHtml, /data-operation="manual_quarantine_override"/);
+
+    const scriptRes = await fetch(`${base}/console.js`);
+    assert.equal(scriptRes.status, 200);
+    assert.match(scriptRes.headers.get("content-type") ?? "", /javascript/i);
+    const scriptBody = await scriptRes.text();
+    assert.match(scriptBody, /memory_console_search/);
+    assert.match(scriptBody, /memory_console_timeline/);
+    assert.match(scriptBody, /memory_console_provenance/);
+    assert.match(scriptBody, /memory_console_policy_audit/);
+    assert.match(scriptBody, /memory_console_anomaly_alerts/);
+    assert.match(scriptBody, /manual_quarantine_override/);
+
+    const styleRes = await fetch(`${base}/console.css`);
+    assert.equal(styleRes.status, 200);
+    assert.match(styleRes.headers.get("content-type") ?? "", /^text\/css/i);
+    const styleBody = await styleRes.text();
+    assert.match(styleBody, /\.console-app/);
+    assert.match(styleBody, /\.operation-card/);
+
+    const wrongMethodRes = await fetch(`${base}/console`, { method: "POST" });
+    assert.equal(wrongMethodRes.status, 405);
+    const wrongMethodBody = await wrongMethodRes.json();
+    assert.equal(wrongMethodBody.ok, false);
+    assert.equal(wrongMethodBody.error.code, "METHOD_NOT_ALLOWED");
+  } finally {
+    await new Promise((resolvePromise, rejectPromise) => {
+      server.close((error) => (error ? rejectPromise(error) : resolvePromise()));
+    });
+  }
+});
+
 test("ums-memory-yji.6 memory_console HTTP routes expose deterministic operator contracts", async () => {
   resetStore();
   const { server, host, port } = await startApiServer({
