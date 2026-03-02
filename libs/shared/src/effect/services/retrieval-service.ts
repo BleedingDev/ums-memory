@@ -56,6 +56,8 @@ const actionablePackLineTokenLimit = 18;
 const actionablePackSourceExcerptTokenLimit = 14;
 const actionablePackWarningTokenLimit = 18;
 const actionablePackTextCharacterLimit = 200;
+const actionablePackLowConfidenceScoreThreshold = 0.5;
+const actionablePackStaleAgeGapMillis = 7 * 24 * 60 * 60 * 1_000;
 
 type ActionablePackCategory = "do" | "dont" | "examples" | "risks";
 type ActionablePackSource = ActionableRetrievalPack["sources"][number];
@@ -73,6 +75,11 @@ interface BoundedActionableText {
   readonly value: string | null;
   readonly tokenCount: number;
   readonly truncated: boolean;
+}
+
+interface ActionablePackWarningSignal {
+  readonly updatedAtMillis: number;
+  readonly score: number;
 }
 
 interface ActionablePackCompilerStats {
@@ -1639,6 +1646,46 @@ const toActionablePackWarnings = (stats: ActionablePackCompilerStats): readonly 
   return Object.freeze(warnings);
 };
 
+const toActionablePackAnnotationWarnings = (
+  sourceSignals: readonly ActionablePackWarningSignal[],
+): readonly string[] => {
+  const firstSourceSignal = sourceSignals[0];
+  if (firstSourceSignal === undefined) {
+    return Object.freeze([]);
+  }
+
+  let freshestUpdatedAtMillis = firstSourceSignal.updatedAtMillis;
+  let staleSourceCount = 0;
+  let lowConfidenceSourceCount = 0;
+
+  for (const sourceSignal of sourceSignals) {
+    freshestUpdatedAtMillis = Math.max(freshestUpdatedAtMillis, sourceSignal.updatedAtMillis);
+    if (sourceSignal.score < actionablePackLowConfidenceScoreThreshold) {
+      lowConfidenceSourceCount += 1;
+    }
+  }
+
+  for (const sourceSignal of sourceSignals) {
+    if (freshestUpdatedAtMillis - sourceSignal.updatedAtMillis >= actionablePackStaleAgeGapMillis) {
+      staleSourceCount += 1;
+    }
+  }
+
+  const warnings: string[] = [];
+  if (staleSourceCount > 0) {
+    warnings.push(
+      `Actionable pack includes stale guidance; ${staleSourceCount} source${staleSourceCount === 1 ? "" : "s"} ${staleSourceCount === 1 ? "is" : "are"} older than the freshest source.`,
+    );
+  }
+  if (lowConfidenceSourceCount > 0) {
+    warnings.push(
+      `Actionable pack includes low-confidence guidance; ${lowConfidenceSourceCount} source${lowConfidenceSourceCount === 1 ? "" : "s"} scored below ${actionablePackLowConfidenceScoreThreshold.toFixed(2)}.`,
+    );
+  }
+
+  return Object.freeze(warnings);
+};
+
 const finalizeActionablePack = (pack: MutableActionablePack): ActionableRetrievalPack => ({
   do: Object.freeze([...pack.do]),
   dont: Object.freeze([...pack.dont]),
@@ -1657,9 +1704,10 @@ const finalizeActionablePack = (pack: MutableActionablePack): ActionableRetrieva
   warnings: Object.freeze([...pack.warnings]),
 });
 
-const compileActionablePack = (hits: readonly RetrievalHit[]): ActionableRetrievalPack => {
+const compileActionablePack = (hits: readonly PlannedHit[]): ActionableRetrievalPack => {
   const pack = createMutableActionablePack();
   const seenLineKeys = new Set<string>();
+  const sourceSignals: ActionablePackWarningSignal[] = [];
   const stats: ActionablePackCompilerStats = {
     categoryLimitDrops: createCategoryCounter(),
     tokenBudgetDrops: 0,
@@ -1723,13 +1771,20 @@ const compileActionablePack = (hits: readonly RetrievalHit[]): ActionableRetriev
       continue;
     }
     pack.sources.push(source);
+    sourceSignals.push({
+      updatedAtMillis: hit.updatedAtMillis,
+      score: hit.score,
+    });
     contentTokens = nextContentTokenCount;
     if (boundedSourceExcerpt.truncated) {
       stats.sourceExcerptTruncations += 1;
     }
   }
 
-  const warningCandidates = toActionablePackWarnings(stats);
+  const warningCandidates = Object.freeze([
+    ...toActionablePackAnnotationWarnings(sourceSignals),
+    ...toActionablePackWarnings(stats),
+  ]);
   let warningTokens = 0;
   for (const warningCandidate of warningCandidates) {
     if (pack.warnings.length >= actionablePackWarningLimit) {
@@ -1790,7 +1845,7 @@ const paginateHits = (
     hits: retrievalHits,
     totalHits,
     nextCursor,
-    actionablePack: compileActionablePack(retrievalHits),
+    actionablePack: compileActionablePack(pageHits),
   };
 };
 
@@ -1885,6 +1940,10 @@ export const makeRetrievalService = (
 };
 
 export const makePolicyAwareRetrievalService = makeRetrievalService;
+
+export const __testOnly = Object.freeze({
+  toActionablePackAnnotationWarnings,
+});
 
 export const noopRetrievalLayer: Layer.Layer<RetrievalService> = Layer.succeed(
   RetrievalServiceTag,

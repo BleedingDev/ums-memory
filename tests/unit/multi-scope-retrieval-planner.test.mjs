@@ -1093,3 +1093,143 @@ test("ums-memory-8as.5: actionable pack enforces token budget and category/sourc
     db.close();
   }
 });
+
+test("ums-memory-8as.6: actionable pack warns when included sources are stale relative to freshest source", async () => {
+  const { retrievalServiceModule, storageServiceModule } = await loadModules();
+  const db = new DatabaseSync(":memory:");
+
+  try {
+    const tenantId = "tenant-actionable-pack-stale-warning";
+    const storageService = storageServiceModule.makeSqliteStorageService(db);
+
+    upsertMemorySync(storageService, {
+      spaceId: tenantId,
+      memoryId: "memory-fresh-guidance",
+      layer: "working",
+      payload: {
+        title: "actionable stale warning token fresh guidance",
+        summary: "Do: rely on the latest deployment checklist.",
+        updatedAtMillis: 9 * 24 * 60 * 60 * 1_000,
+      },
+    });
+    upsertMemorySync(storageService, {
+      spaceId: tenantId,
+      memoryId: "memory-stale-guidance",
+      layer: "working",
+      payload: {
+        title: "actionable stale warning token stale guidance",
+        summary: "Risk: legacy rollout notes can drift from the latest state.",
+        updatedAtMillis: 0,
+      },
+    });
+
+    const retrievalService = retrievalServiceModule.makeRetrievalService(
+      storageService,
+      makePolicyService(),
+    );
+    const response = await Effect.runPromise(
+      retrievalService.retrieve({
+        spaceId: tenantId,
+        query: "actionable stale warning token",
+        limit: 10,
+      }),
+    );
+
+    assert.ok(response.actionablePack);
+    assert.equal(response.actionablePack.sources.length, 2);
+    assert.ok(response.actionablePack.warnings.some((warning) => /stale guidance/i.test(warning)));
+    assert.ok(
+      !response.actionablePack.warnings.some((warning) => /low-confidence/i.test(warning)),
+    );
+  } finally {
+    db.close();
+  }
+});
+
+test("ums-memory-8as.6: actionable pack warns when included sources have low-confidence scores", async () => {
+  const { retrievalServiceModule, storageServiceModule } = await loadModules();
+  const db = new DatabaseSync(":memory:");
+
+  try {
+    const tenantId = "tenant-actionable-pack-low-confidence-warning";
+    const storageService = storageServiceModule.makeSqliteStorageService(db);
+
+    upsertMemorySync(storageService, {
+      spaceId: tenantId,
+      memoryId: "memory-high-confidence",
+      layer: "working",
+      payload: {
+        title: "actionable confidence warning token alpha beta gamma profile",
+        summary: "Do: prioritize guidance with complete query coverage.",
+        updatedAtMillis: 5_000,
+      },
+    });
+    upsertMemorySync(storageService, {
+      spaceId: tenantId,
+      memoryId: "memory-low-confidence",
+      layer: "working",
+      payload: {
+        title: "confidence trace fallback",
+        summary: "Example: partial overlap can still produce a retrieval hit.",
+        updatedAtMillis: 5_000,
+      },
+    });
+
+    const retrievalService = retrievalServiceModule.makeRetrievalService(
+      storageService,
+      makePolicyService(),
+    );
+    const response = await Effect.runPromise(
+      retrievalService.retrieve({
+        spaceId: tenantId,
+        query: "actionable confidence warning token alpha beta gamma",
+        limit: 10,
+        ranking_weights: {
+          relevance: 1,
+          evidence_strength: 0,
+          decay: 0,
+          human_weight: 0,
+          utility_score: 0,
+        },
+      }),
+    );
+
+    assert.ok(response.actionablePack);
+    assert.ok(
+      response.actionablePack.warnings.some((warning) => /low-confidence guidance/i.test(warning)),
+    );
+    assert.ok(!response.actionablePack.warnings.some((warning) => /stale guidance/i.test(warning)));
+  } finally {
+    db.close();
+  }
+});
+
+test("ums-memory-8as.6: annotation warning helper remains deterministic for stale and low-confidence signals", async () => {
+  const { retrievalServiceModule } = await loadModules();
+  const dayMillis = 24 * 60 * 60 * 1_000;
+
+  const firstWarnings = retrievalServiceModule.__testOnly.toActionablePackAnnotationWarnings([
+    {
+      updatedAtMillis: 9 * dayMillis,
+      score: 0.82,
+    },
+    {
+      updatedAtMillis: 0,
+      score: 0.34,
+    },
+  ]);
+  const secondWarnings = retrievalServiceModule.__testOnly.toActionablePackAnnotationWarnings([
+    {
+      updatedAtMillis: 9 * dayMillis,
+      score: 0.82,
+    },
+    {
+      updatedAtMillis: 0,
+      score: 0.34,
+    },
+  ]);
+
+  assert.deepEqual(firstWarnings, secondWarnings);
+  assert.ok(firstWarnings.some((warning) => /stale guidance/i.test(warning)));
+  assert.ok(firstWarnings.some((warning) => /low-confidence guidance/i.test(warning)));
+});
