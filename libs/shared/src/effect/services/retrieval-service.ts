@@ -13,6 +13,7 @@ import type {
   RetrievalRankingWeights,
   RetrievalRequest,
   RetrievalResponse,
+  ScopeAuthorizationInput,
   RetrievalScopeLevel,
   RetrievalScopeSelectors,
 } from "../contracts/index.js";
@@ -173,10 +174,19 @@ interface NormalizedPolicyInput {
   readonly context: PolicyRequest["context"];
 }
 
+interface NormalizedScopeAuthorization {
+  readonly tenantId: string | null;
+  readonly allowedProjectIds: ReadonlySet<string>;
+  readonly allowedRoleIds: ReadonlySet<string>;
+  readonly allowedUserIds: ReadonlySet<string>;
+}
+
 interface NormalizedRetrievalRequest {
   readonly request: RetrievalRequest;
   readonly selectors: NormalizedScopeSelectors;
   readonly policy: NormalizedPolicyInput;
+  readonly scopeAuthorization: NormalizedScopeAuthorization | null;
+  readonly scopeAuthorizationSelectorDenyMessage: string | null;
   readonly rankingWeights: NormalizedRankingWeights;
   readonly queryNormalized: string;
   readonly queryTokens: readonly string[];
@@ -1327,6 +1337,7 @@ const toCursorDigest = (
   request: RetrievalRequest,
   selectors: NormalizedScopeSelectors,
   policy: NormalizedPolicyInput,
+  scopeAuthorization: NormalizedScopeAuthorization | null,
   rankingWeights: NormalizedRankingWeights,
   queryNormalized: string
 ): string =>
@@ -1344,6 +1355,21 @@ const toCursorDigest = (
           left.localeCompare(right)
         ),
         policyContext: toStableDomainValue(policy.context),
+        scopeAuthorization:
+          scopeAuthorization === null
+            ? null
+            : {
+                tenantId: scopeAuthorization.tenantId,
+                projectIds: [...scopeAuthorization.allowedProjectIds].sort(
+                  (left, right) => left.localeCompare(right)
+                ),
+                roleIds: [...scopeAuthorization.allowedRoleIds].sort(
+                  (left, right) => left.localeCompare(right)
+                ),
+                userIds: [...scopeAuthorization.allowedUserIds].sort(
+                  (left, right) => left.localeCompare(right)
+                ),
+              },
         rankingWeights,
       })
     )
@@ -1365,6 +1391,109 @@ const resolveScopeSelectors = (
     roleId,
     userId: scope?.userId ?? request.userId ?? null,
   });
+};
+
+const resolveScopeAuthorization = (
+  request: RetrievalRequest
+): NormalizedScopeAuthorization | null => {
+  const requestWithAliases = request as RetrievalRequest & {
+    readonly scopeAuthorization?: ScopeAuthorizationInput;
+    readonly scope_authorization?: ScopeAuthorizationInput;
+  };
+  const scopeAuthorizationInput =
+    requestWithAliases.scopeAuthorization ??
+    requestWithAliases.scope_authorization;
+  if (scopeAuthorizationInput === undefined) {
+    return null;
+  }
+
+  const allowedProjectIds = new Set([
+    ...(scopeAuthorizationInput.projectIds ?? []),
+    ...(scopeAuthorizationInput.project_ids ?? []),
+  ]);
+  const allowedRoleIds = new Set([
+    ...(scopeAuthorizationInput.roleIds ?? []),
+    ...(scopeAuthorizationInput.role_ids ?? []),
+    ...(scopeAuthorizationInput.jobRoleIds ?? []),
+    ...(scopeAuthorizationInput.job_role_ids ?? []),
+  ]);
+  const allowedUserIds = new Set([
+    ...(scopeAuthorizationInput.userIds ?? []),
+    ...(scopeAuthorizationInput.user_ids ?? []),
+  ]);
+
+  return Object.freeze({
+    tenantId:
+      scopeAuthorizationInput.tenantId ??
+      scopeAuthorizationInput.tenant_id ??
+      null,
+    allowedProjectIds,
+    allowedRoleIds,
+    allowedUserIds,
+  });
+};
+
+const resolveScopeAuthorizationSelectorDenyMessage = (
+  request: RetrievalRequest,
+  selectors: NormalizedScopeSelectors,
+  scopeAuthorization: NormalizedScopeAuthorization | null
+): string | null => {
+  if (scopeAuthorization === null) {
+    return null;
+  }
+  if (
+    scopeAuthorization.tenantId !== null &&
+    scopeAuthorization.tenantId !== request.spaceId
+  ) {
+    return `Scope authorization denied retrieval tenant "${request.spaceId}".`;
+  }
+  if (
+    selectors.projectId !== null &&
+    !scopeAuthorization.allowedProjectIds.has(selectors.projectId)
+  ) {
+    return `Scope authorization denied retrieval selector projectId "${selectors.projectId}".`;
+  }
+  if (
+    selectors.roleId !== null &&
+    !scopeAuthorization.allowedRoleIds.has(selectors.roleId)
+  ) {
+    return `Scope authorization denied retrieval selector roleId "${selectors.roleId}".`;
+  }
+  if (
+    selectors.userId !== null &&
+    !scopeAuthorization.allowedUserIds.has(selectors.userId)
+  ) {
+    return `Scope authorization denied retrieval selector userId "${selectors.userId}".`;
+  }
+
+  return null;
+};
+
+const isScopeRowAuthorizedByMatrix = (
+  scopeRow: ParsedScopeRow,
+  scopeAuthorization: NormalizedScopeAuthorization
+): boolean => {
+  switch (scopeRow.scopeLevel) {
+    case "common":
+      return true;
+    case "project":
+      return (
+        scopeRow.projectId !== null &&
+        scopeAuthorization.allowedProjectIds.has(scopeRow.projectId)
+      );
+    case "job_role":
+      return (
+        scopeRow.roleId !== null &&
+        scopeAuthorization.allowedRoleIds.has(scopeRow.roleId)
+      );
+    case "user":
+      return (
+        scopeRow.userId !== null &&
+        scopeAuthorization.allowedUserIds.has(scopeRow.userId)
+      );
+    default:
+      return false;
+  }
 };
 
 const resolvePolicyInput = (
@@ -1397,6 +1526,7 @@ const normalizeRetrievalRequest = (
 ): NormalizedRetrievalRequest => {
   const queryNormalized = request.query.trim().toLowerCase();
   const selectors = resolveScopeSelectors(request);
+  const scopeAuthorization = resolveScopeAuthorization(request);
   const policy = resolvePolicyInput(request, selectors);
   const rankingWeights = resolveRankingWeights(request);
 
@@ -1404,6 +1534,13 @@ const normalizeRetrievalRequest = (
     request,
     selectors,
     policy,
+    scopeAuthorization,
+    scopeAuthorizationSelectorDenyMessage:
+      resolveScopeAuthorizationSelectorDenyMessage(
+        request,
+        selectors,
+        scopeAuthorization
+      ),
     rankingWeights,
     queryNormalized,
     queryTokens: tokenize(queryNormalized),
@@ -1412,7 +1549,8 @@ const normalizeRetrievalRequest = (
 
 const resolveAllowedScopeIds = (
   scopeRows: readonly ParsedScopeRow[],
-  selectors: NormalizedScopeSelectors
+  selectors: NormalizedScopeSelectors,
+  scopeAuthorization: NormalizedScopeAuthorization | null
 ): ReadonlySet<string> => {
   const scopeById = new Map(
     scopeRows.map((row) => [row.scopeId, row] as const)
@@ -1439,79 +1577,96 @@ const resolveAllowedScopeIds = (
     for (const scopeRow of scopeRows) {
       allowedScopeIds.add(scopeRow.scopeId);
     }
+  } else {
+    const selectorSeedScopeIds = new Set<string>();
+    for (const scopeRow of scopeRows) {
+      if (scopeRow.scopeLevel === "common") {
+        allowedScopeIds.add(scopeRow.scopeId);
+        continue;
+      }
+      if (
+        selectors.projectId !== null &&
+        scopeRow.scopeLevel === "project" &&
+        scopeRow.projectId === selectors.projectId
+      ) {
+        allowedScopeIds.add(scopeRow.scopeId);
+        selectorSeedScopeIds.add(scopeRow.scopeId);
+        continue;
+      }
+      if (
+        selectors.roleId !== null &&
+        scopeRow.scopeLevel === "job_role" &&
+        scopeRow.roleId === selectors.roleId
+      ) {
+        allowedScopeIds.add(scopeRow.scopeId);
+        selectorSeedScopeIds.add(scopeRow.scopeId);
+        continue;
+      }
+      if (
+        selectors.userId !== null &&
+        scopeRow.scopeLevel === "user" &&
+        scopeRow.userId === selectors.userId
+      ) {
+        allowedScopeIds.add(scopeRow.scopeId);
+        selectorSeedScopeIds.add(scopeRow.scopeId);
+      }
+    }
+
+    const ancestorQueue = [...allowedScopeIds];
+    while (ancestorQueue.length > 0) {
+      const scopeId = ancestorQueue.pop();
+      if (scopeId === undefined) {
+        continue;
+      }
+
+      const row = scopeById.get(scopeId);
+      if (
+        row === undefined ||
+        row.parentScopeId === null ||
+        allowedScopeIds.has(row.parentScopeId)
+      ) {
+        continue;
+      }
+      allowedScopeIds.add(row.parentScopeId);
+      ancestorQueue.push(row.parentScopeId);
+    }
+
+    const descendantQueue = [...selectorSeedScopeIds];
+    while (descendantQueue.length > 0) {
+      const scopeId = descendantQueue.pop();
+      if (scopeId === undefined) {
+        continue;
+      }
+      const childScopeIds = childScopeIdsByParent.get(scopeId) ?? [];
+      for (const childScopeId of childScopeIds) {
+        if (allowedScopeIds.has(childScopeId)) {
+          continue;
+        }
+        allowedScopeIds.add(childScopeId);
+        descendantQueue.push(childScopeId);
+      }
+    }
+  }
+
+  if (scopeAuthorization === null) {
     return allowedScopeIds;
   }
 
-  const selectorSeedScopeIds = new Set<string>();
+  const matrixAllowedScopeIds = new Set<string>();
   for (const scopeRow of scopeRows) {
-    if (scopeRow.scopeLevel === "common") {
-      allowedScopeIds.add(scopeRow.scopeId);
-      continue;
-    }
-    if (
-      selectors.projectId !== null &&
-      scopeRow.scopeLevel === "project" &&
-      scopeRow.projectId === selectors.projectId
-    ) {
-      allowedScopeIds.add(scopeRow.scopeId);
-      selectorSeedScopeIds.add(scopeRow.scopeId);
-      continue;
-    }
-    if (
-      selectors.roleId !== null &&
-      scopeRow.scopeLevel === "job_role" &&
-      scopeRow.roleId === selectors.roleId
-    ) {
-      allowedScopeIds.add(scopeRow.scopeId);
-      selectorSeedScopeIds.add(scopeRow.scopeId);
-      continue;
-    }
-    if (
-      selectors.userId !== null &&
-      scopeRow.scopeLevel === "user" &&
-      scopeRow.userId === selectors.userId
-    ) {
-      allowedScopeIds.add(scopeRow.scopeId);
-      selectorSeedScopeIds.add(scopeRow.scopeId);
+    if (isScopeRowAuthorizedByMatrix(scopeRow, scopeAuthorization)) {
+      matrixAllowedScopeIds.add(scopeRow.scopeId);
     }
   }
 
-  const ancestorQueue = [...allowedScopeIds];
-  while (ancestorQueue.length > 0) {
-    const scopeId = ancestorQueue.pop();
-    if (scopeId === undefined) {
-      continue;
-    }
-
-    const row = scopeById.get(scopeId);
-    if (
-      row === undefined ||
-      row.parentScopeId === null ||
-      allowedScopeIds.has(row.parentScopeId)
-    ) {
-      continue;
-    }
-    allowedScopeIds.add(row.parentScopeId);
-    ancestorQueue.push(row.parentScopeId);
-  }
-
-  const descendantQueue = [...selectorSeedScopeIds];
-  while (descendantQueue.length > 0) {
-    const scopeId = descendantQueue.pop();
-    if (scopeId === undefined) {
-      continue;
-    }
-    const childScopeIds = childScopeIdsByParent.get(scopeId) ?? [];
-    for (const childScopeId of childScopeIds) {
-      if (allowedScopeIds.has(childScopeId)) {
-        continue;
-      }
-      allowedScopeIds.add(childScopeId);
-      descendantQueue.push(childScopeId);
+  const restrictedScopeIds = new Set<string>();
+  for (const scopeId of allowedScopeIds) {
+    if (matrixAllowedScopeIds.has(scopeId)) {
+      restrictedScopeIds.add(scopeId);
     }
   }
 
-  return allowedScopeIds;
+  return restrictedScopeIds;
 };
 
 const buildPlannedHits = (
@@ -1524,7 +1679,8 @@ const buildPlannedHits = (
   );
   const allowedScopeIds = resolveAllowedScopeIds(
     scopeRows,
-    normalized.selectors
+    normalized.selectors,
+    normalized.scopeAuthorization
   );
   const candidateHits: PlannedHitCandidate[] = [];
 
@@ -2218,6 +2374,7 @@ const paginateHits = (
     normalized.request,
     normalized.selectors,
     normalized.policy,
+    normalized.scopeAuthorization,
     normalized.rankingWeights,
     normalized.queryNormalized
   );
@@ -2314,6 +2471,14 @@ const executeRetrievalPlan = (
   decodeRetrievalRequestEffect(request).pipe(
     Effect.flatMap((decodedRequest) => {
       const normalized = normalizeRetrievalRequest(decodedRequest);
+      if (normalized.scopeAuthorizationSelectorDenyMessage !== null) {
+        return Effect.fail(
+          toRetrievalQueryError(
+            decodedRequest,
+            normalized.scopeAuthorizationSelectorDenyMessage
+          )
+        );
+      }
       return storageService
         .exportSnapshot({
           signatureSecret: snapshotSignatureSecret,

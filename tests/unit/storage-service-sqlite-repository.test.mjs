@@ -1262,6 +1262,198 @@ test("ums-memory-5cb.4: rejects mixed explicit scopeId and scope anchors", async
   }
 });
 
+test("ums-memory-a9v.2: sqlite storage upsert enforces scope authorization for anchors and explicit scopeId", async () => {
+  const storageServiceModule = await loadStorageServiceModule();
+  const db = new DatabaseSync(":memory:");
+
+  try {
+    const storageService = storageServiceModule.makeSqliteStorageService(db);
+    const tenantId = "tenant-scope-authz-upsert";
+    const projectId = "project-authz-upsert";
+    const roleId = "role-authz-upsert";
+    const userId = "user-authz-upsert";
+    seedScopeLatticeAnchors(db, tenantId, {
+      projectIds: [projectId],
+      roleIds: [roleId],
+      userIds: [userId],
+    });
+
+    Effect.runSync(
+      storageService.upsertMemory({
+        spaceId: tenantId,
+        memoryId: "memory-authz-role-bootstrap",
+        layer: "working",
+        payload: {
+          title: "bootstrap role scope for explicit scopeId authorization checks",
+          scope: {
+            roleId,
+          },
+          updatedAtMillis: 1_700_000_000_200,
+        },
+      }),
+    );
+
+    const denyScopeAuthorization = {
+      tenantId,
+      projectIds: [projectId],
+      userIds: [userId],
+    };
+    const deniedRoleAnchorEither = Effect.runSync(
+      Effect.either(
+        storageService.upsertMemory({
+          spaceId: tenantId,
+          memoryId: "memory-authz-denied-role-anchor",
+          layer: "working",
+          payload: {
+            title: "role anchor should be denied by scope authorization matrix",
+            scope: {
+              roleId,
+            },
+            updatedAtMillis: 1_700_000_000_201,
+          },
+          scopeAuthorization: denyScopeAuthorization,
+        }),
+      ),
+    );
+    const deniedRoleAnchorFailure = unwrapFailure(deniedRoleAnchorEither);
+    assert.equal(deniedRoleAnchorFailure._tag, "ContractValidationError");
+    assert.equal(deniedRoleAnchorFailure.contract, "StorageScopeAuthorizationGuardrail");
+    assert.match(deniedRoleAnchorFailure.details, /role anchor/i);
+
+    const roleScopeId = `job_role:${tenantId}:${roleId}`;
+    const deniedScopeIdEither = Effect.runSync(
+      Effect.either(
+        storageService.upsertMemory({
+          spaceId: tenantId,
+          memoryId: "memory-authz-denied-explicit-scope-id",
+          layer: "working",
+          payload: {
+            title: "explicit role scopeId should be denied by scope authorization matrix",
+            scopeId: roleScopeId,
+            updatedAtMillis: 1_700_000_000_202,
+          },
+          scopeAuthorization: denyScopeAuthorization,
+        }),
+      ),
+    );
+    const deniedScopeIdFailure = unwrapFailure(deniedScopeIdEither);
+    assert.equal(deniedScopeIdFailure._tag, "ContractValidationError");
+    assert.equal(deniedScopeIdFailure.contract, "StorageScopeAuthorizationGuardrail");
+    assert.match(deniedScopeIdFailure.details, /scope .*job_role/i);
+
+    const acceptedProjectResponse = Effect.runSync(
+      storageService.upsertMemory({
+        spaceId: tenantId,
+        memoryId: "memory-authz-allowed-project-anchor",
+        layer: "working",
+        payload: {
+          title: "project anchor should be allowed by scope authorization matrix",
+          scope: {
+            projectId,
+          },
+          updatedAtMillis: 1_700_000_000_203,
+        },
+        scopeAuthorization: denyScopeAuthorization,
+      }),
+    );
+    assert.equal(acceptedProjectResponse.accepted, true);
+
+    const persistedScopeRow = db
+      .prepare("SELECT scope_id FROM memory_items WHERE tenant_id = ? AND memory_id = ?;")
+      .get(tenantId, "memory-authz-allowed-project-anchor");
+    assert.ok(persistedScopeRow);
+    assert.equal(persistedScopeRow.scope_id, `project:${tenantId}:${projectId}`);
+  } finally {
+    db.close();
+  }
+});
+
+test("ums-memory-a9v.2: sqlite storage delete enforces scope authorization using target memory scope anchors", async () => {
+  const storageServiceModule = await loadStorageServiceModule();
+  const db = new DatabaseSync(":memory:");
+
+  try {
+    const storageService = storageServiceModule.makeSqliteStorageService(db);
+    const tenantId = "tenant-scope-authz-delete";
+    const projectId = "project-authz-delete";
+    const roleId = "role-authz-delete";
+    seedScopeLatticeAnchors(db, tenantId, {
+      projectIds: [projectId],
+      roleIds: [roleId],
+    });
+
+    Effect.runSync(
+      storageService.upsertMemory({
+        spaceId: tenantId,
+        memoryId: "memory-authz-delete-project",
+        layer: "working",
+        payload: {
+          title: "project scoped delete authorization",
+          scope: {
+            projectId,
+          },
+          updatedAtMillis: 1_700_000_000_210,
+        },
+      }),
+    );
+    Effect.runSync(
+      storageService.upsertMemory({
+        spaceId: tenantId,
+        memoryId: "memory-authz-delete-role",
+        layer: "working",
+        payload: {
+          title: "role scoped delete authorization",
+          scope: {
+            roleId,
+          },
+          updatedAtMillis: 1_700_000_000_211,
+        },
+      }),
+    );
+
+    const projectOnlyAuthorization = {
+      tenantId,
+      projectIds: [projectId],
+    };
+    const deniedDeleteEither = Effect.runSync(
+      Effect.either(
+        storageService.deleteMemory({
+          spaceId: tenantId,
+          memoryId: "memory-authz-delete-role",
+          scopeAuthorization: projectOnlyAuthorization,
+        }),
+      ),
+    );
+    const deniedDeleteFailure = unwrapFailure(deniedDeleteEither);
+    assert.equal(deniedDeleteFailure._tag, "ContractValidationError");
+    assert.equal(deniedDeleteFailure.contract, "StorageScopeAuthorizationGuardrail");
+    assert.match(deniedDeleteFailure.details, /scope .*job_role/i);
+
+    const allowedDeleteResponse = Effect.runSync(
+      storageService.deleteMemory({
+        spaceId: tenantId,
+        memoryId: "memory-authz-delete-project",
+        scopeAuthorization: projectOnlyAuthorization,
+      }),
+    );
+    assert.deepEqual(allowedDeleteResponse, {
+      spaceId: tenantId,
+      memoryId: "memory-authz-delete-project",
+      deleted: true,
+    });
+
+    const remainingMemoryRows = db
+      .prepare("SELECT memory_id FROM memory_items WHERE tenant_id = ? ORDER BY memory_id ASC;")
+      .all(tenantId);
+    assert.deepEqual(
+      remainingMemoryRows.map((row) => row.memory_id),
+      ["memory-authz-delete-role"],
+    );
+  } finally {
+    db.close();
+  }
+});
+
 test("ums-memory-5cb.5: upsert denies cross-tenant references and emits audit events", async () => {
   const storageServiceModule = await loadStorageServiceModule();
   const db = new DatabaseSync(":memory:");

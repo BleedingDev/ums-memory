@@ -625,6 +625,224 @@ test("ums-memory-8as.2: partial scope selectors include descendant scopes", asyn
   }
 });
 
+test("ums-memory-a9v.2: retrieval fails closed for unauthorized explicit scope selectors", async () => {
+  const { retrievalServiceModule, storageServiceModule } = await loadModules();
+  const db = new DatabaseSync(":memory:");
+
+  try {
+    const tenantId = "tenant-scope-authz-deny";
+    const projectId = "project-authz-deny";
+    const roleId = "role-authz-deny";
+    const userId = "user-authz-deny";
+    const storageService = storageServiceModule.makeSqliteStorageService(db);
+    seedScopeLatticeAnchors(db, tenantId, {
+      projectIds: [projectId],
+      roleIds: [roleId],
+      userIds: [userId],
+    });
+
+    upsertMemorySync(storageService, {
+      spaceId: tenantId,
+      memoryId: "memory-authz-baseline",
+      layer: "working",
+      payload: {
+        title: "scope authz deny token baseline",
+        updatedAtMillis: 10,
+      },
+    });
+
+    const retrievalService = retrievalServiceModule.makeRetrievalService(
+      storageService,
+      makePolicyService(),
+    );
+    const deniedSelectorRequests = [
+      {
+        scope: { projectId },
+        scopeAuthorization: {
+          tenantId,
+          roleIds: [roleId],
+          userIds: [userId],
+        },
+        expectedMessage: `Scope authorization denied retrieval selector projectId "${projectId}".`,
+      },
+      {
+        scope: { roleId },
+        scopeAuthorization: {
+          tenantId,
+          projectIds: [projectId],
+          userIds: [userId],
+        },
+        expectedMessage: `Scope authorization denied retrieval selector roleId "${roleId}".`,
+      },
+      {
+        scope: { userId },
+        scopeAuthorization: {
+          tenantId,
+          projectIds: [projectId],
+          roleIds: [roleId],
+        },
+        expectedMessage: `Scope authorization denied retrieval selector userId "${userId}".`,
+      },
+    ];
+
+    for (const deniedRequest of deniedSelectorRequests) {
+      await assert.rejects(
+        Effect.runPromise(
+          retrievalService.retrieve({
+            spaceId: tenantId,
+            query: "scope authz deny token",
+            limit: 10,
+            scope: deniedRequest.scope,
+            scopeAuthorization: deniedRequest.scopeAuthorization,
+          }),
+        ),
+        (error) => {
+          const errorMessage =
+            typeof error?.message === "string" && error.message.length > 0
+              ? error.message
+              : String(error);
+          assert.equal(errorMessage, deniedRequest.expectedMessage);
+          return true;
+        },
+      );
+    }
+
+    await assert.rejects(
+      Effect.runPromise(
+        retrievalService.retrieve({
+          spaceId: tenantId,
+          query: "scope authz deny token",
+          limit: 10,
+          scopeAuthorization: {
+            tenantId: "tenant-other",
+            projectIds: [projectId],
+          },
+        }),
+      ),
+      (error) => {
+        const errorMessage =
+          typeof error?.message === "string" && error.message.length > 0
+            ? error.message
+            : String(error);
+        assert.equal(
+          errorMessage,
+          `Scope authorization denied retrieval tenant "${tenantId}".`,
+        );
+        return true;
+      },
+    );
+  } finally {
+    db.close();
+  }
+});
+
+test("ums-memory-a9v.2: retrieval scope authorization matrix restricts allowed scopes deterministically", async () => {
+  const { retrievalServiceModule, storageServiceModule } = await loadModules();
+  const db = new DatabaseSync(":memory:");
+
+  try {
+    const tenantId = "tenant-scope-authz-restrict";
+    const projectId = "project-authz-restrict";
+    const roleId = "role-authz-restrict";
+    const projectUserId = "user-authz-project";
+    const roleUserId = "user-authz-role";
+    const storageService = storageServiceModule.makeSqliteStorageService(db);
+    seedScopeLatticeAnchors(db, tenantId, {
+      projectIds: [projectId],
+      roleIds: [roleId],
+      userIds: [projectUserId, roleUserId],
+    });
+
+    upsertMemorySync(storageService, {
+      spaceId: tenantId,
+      memoryId: "memory-authz-common",
+      layer: "working",
+      payload: {
+        title: "scope authz matrix token common",
+        updatedAtMillis: 20,
+      },
+    });
+    upsertMemorySync(storageService, {
+      spaceId: tenantId,
+      memoryId: "memory-authz-project",
+      layer: "working",
+      payload: {
+        title: "scope authz matrix token project",
+        scope: { projectId },
+        updatedAtMillis: 20,
+      },
+    });
+    upsertMemorySync(storageService, {
+      spaceId: tenantId,
+      memoryId: "memory-authz-project-user",
+      layer: "working",
+      payload: {
+        title: "scope authz matrix token project user",
+        scope: { userId: projectUserId, projectId },
+        updatedAtMillis: 20,
+      },
+    });
+    upsertMemorySync(storageService, {
+      spaceId: tenantId,
+      memoryId: "memory-authz-role",
+      layer: "working",
+      payload: {
+        title: "scope authz matrix token role",
+        scope: { roleId },
+        updatedAtMillis: 20,
+      },
+    });
+    upsertMemorySync(storageService, {
+      spaceId: tenantId,
+      memoryId: "memory-authz-role-user",
+      layer: "working",
+      payload: {
+        title: "scope authz matrix token role user",
+        scope: { userId: roleUserId, roleId },
+        updatedAtMillis: 20,
+      },
+    });
+
+    const retrievalService = retrievalServiceModule.makeRetrievalService(
+      storageService,
+      makePolicyService(),
+    );
+    const scopeAuthorization = {
+      tenantId,
+      projectIds: [projectId],
+      userIds: [projectUserId],
+    };
+    const restrictedResponse = await Effect.runPromise(
+      retrievalService.retrieve({
+        spaceId: tenantId,
+        query: "scope authz matrix token",
+        limit: 10,
+        scopeAuthorization,
+      }),
+    );
+    const projectScopedResponse = await Effect.runPromise(
+      retrievalService.retrieve({
+        spaceId: tenantId,
+        query: "scope authz matrix token",
+        limit: 10,
+        scope: { projectId },
+        scopeAuthorization,
+      }),
+    );
+
+    assert.deepEqual(
+      restrictedResponse.hits.map((hit) => hit.memoryId),
+      ["memory-authz-project-user", "memory-authz-project", "memory-authz-common"],
+    );
+    assert.deepEqual(
+      projectScopedResponse.hits.map((hit) => hit.memoryId),
+      ["memory-authz-project-user", "memory-authz-project", "memory-authz-common"],
+    );
+  } finally {
+    db.close();
+  }
+});
+
 test("ums-memory-8as.3: ranking combines evidence, decay, human weight, and utility with request weight overrides", async () => {
   const { retrievalServiceModule, storageServiceModule } = await loadModules();
   const db = new DatabaseSync(":memory:");

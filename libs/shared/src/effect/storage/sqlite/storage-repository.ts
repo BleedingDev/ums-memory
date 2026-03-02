@@ -6,6 +6,7 @@ import { Effect } from "effect";
 import type {
   DomainRecord,
   DomainValue,
+  ScopeAuthorizationInput,
   StorageDeleteRequest,
   StorageDeleteResponse,
   StorageSnapshotExportRequest,
@@ -64,6 +65,8 @@ const evidenceRelationKindSet: ReadonlySet<string> = new Set(
   enterpriseEvidenceRelationKinds
 );
 const sqliteForeignKeysModeByConnection = new WeakMap<DatabaseSync, boolean>();
+const storageScopeAuthorizationGuardrailContract =
+  "StorageScopeAuthorizationGuardrail";
 
 type CanonicalJsonValue =
   | string
@@ -102,6 +105,15 @@ class TenantIsolationViolationFailure extends Error {
   constructor(event: TenantIsolationViolationAuditEvent) {
     super(event.details);
     this.event = event;
+  }
+}
+
+class ScopeAuthorizationViolationFailure extends Error {
+  readonly operation: "upsert" | "delete";
+
+  constructor(operation: "upsert" | "delete", details: string) {
+    super(details);
+    this.operation = operation;
   }
 }
 const storageRuntimeFailureContract = "StorageRuntimeFailure";
@@ -998,6 +1010,157 @@ interface ScopeControlProjection {
   readonly scopeUserId: string | null;
 }
 
+type StorageScopeLevel = "common" | "project" | "job_role" | "user";
+
+interface ScopeAuthorizationScopeAnchor {
+  readonly scopeId: string;
+  readonly scopeLevel: StorageScopeLevel;
+  readonly scopeProjectId: string | null;
+  readonly scopeRoleId: string | null;
+  readonly scopeUserId: string | null;
+}
+
+interface NormalizedScopeAuthorizationContext {
+  readonly tenantId: string | null;
+  readonly allowedProjectIds: ReadonlySet<string>;
+  readonly allowedRoleIds: ReadonlySet<string>;
+  readonly allowedUserIds: ReadonlySet<string>;
+}
+
+const resolveScopeAuthorizationContext = (
+  request: StorageUpsertRequest | StorageDeleteRequest
+): NormalizedScopeAuthorizationContext | null => {
+  const requestWithAliases = request as (
+    | StorageUpsertRequest
+    | StorageDeleteRequest
+  ) & {
+    readonly scopeAuthorization?: ScopeAuthorizationInput;
+    readonly scope_authorization?: ScopeAuthorizationInput;
+  };
+  const scopeAuthorizationInput =
+    requestWithAliases.scopeAuthorization ??
+    requestWithAliases.scope_authorization;
+  if (scopeAuthorizationInput === undefined) {
+    return null;
+  }
+
+  return Object.freeze({
+    tenantId:
+      scopeAuthorizationInput.tenantId ??
+      scopeAuthorizationInput.tenant_id ??
+      null,
+    allowedProjectIds: new Set([
+      ...(scopeAuthorizationInput.projectIds ?? []),
+      ...(scopeAuthorizationInput.project_ids ?? []),
+    ]),
+    allowedRoleIds: new Set([
+      ...(scopeAuthorizationInput.roleIds ?? []),
+      ...(scopeAuthorizationInput.role_ids ?? []),
+      ...(scopeAuthorizationInput.jobRoleIds ?? []),
+      ...(scopeAuthorizationInput.job_role_ids ?? []),
+    ]),
+    allowedUserIds: new Set([
+      ...(scopeAuthorizationInput.userIds ?? []),
+      ...(scopeAuthorizationInput.user_ids ?? []),
+    ]),
+  });
+};
+
+const isScopeAuthorizationAllowedForScopeAnchor = (
+  scopeAuthorization: NormalizedScopeAuthorizationContext,
+  scopeAnchor: ScopeAuthorizationScopeAnchor
+): boolean => {
+  switch (scopeAnchor.scopeLevel) {
+    case "common":
+      return true;
+    case "project":
+      return (
+        scopeAnchor.scopeProjectId !== null &&
+        scopeAuthorization.allowedProjectIds.has(scopeAnchor.scopeProjectId)
+      );
+    case "job_role":
+      return (
+        scopeAnchor.scopeRoleId !== null &&
+        scopeAuthorization.allowedRoleIds.has(scopeAnchor.scopeRoleId)
+      );
+    case "user":
+      return (
+        scopeAnchor.scopeUserId !== null &&
+        scopeAuthorization.allowedUserIds.has(scopeAnchor.scopeUserId)
+      );
+    default:
+      return false;
+  }
+};
+
+const denyScopeAuthorizationViolation = (
+  operation: "upsert" | "delete",
+  details: string
+): never => {
+  throw new ScopeAuthorizationViolationFailure(operation, details);
+};
+
+const assertScopeAuthorizationTenantAccess = (
+  scopeAuthorization: NormalizedScopeAuthorizationContext | null,
+  operation: "upsert" | "delete",
+  spaceId: string
+): void => {
+  if (
+    scopeAuthorization !== null &&
+    scopeAuthorization.tenantId !== null &&
+    scopeAuthorization.tenantId !== spaceId
+  ) {
+    denyScopeAuthorizationViolation(
+      operation,
+      `Scope authorization denied ${operation} tenant "${spaceId}".`
+    );
+  }
+};
+
+const assertScopeAuthorizationAnchorAccess = (
+  scopeAuthorization: NormalizedScopeAuthorizationContext | null,
+  operation: "upsert" | "delete",
+  anchorKind: "project" | "role" | "user",
+  anchorId: string
+): void => {
+  if (scopeAuthorization === null) {
+    return;
+  }
+
+  const allowed =
+    anchorKind === "project"
+      ? scopeAuthorization.allowedProjectIds.has(anchorId)
+      : anchorKind === "role"
+        ? scopeAuthorization.allowedRoleIds.has(anchorId)
+        : scopeAuthorization.allowedUserIds.has(anchorId);
+  if (!allowed) {
+    denyScopeAuthorizationViolation(
+      operation,
+      `Scope authorization denied ${operation} ${anchorKind} anchor "${anchorId}".`
+    );
+  }
+};
+
+const assertScopeAuthorizationScopeAccess = (
+  scopeAuthorization: NormalizedScopeAuthorizationContext | null,
+  operation: "upsert" | "delete",
+  scopeAnchor: ScopeAuthorizationScopeAnchor
+): void => {
+  if (scopeAuthorization === null) {
+    return;
+  }
+  if (
+    isScopeAuthorizationAllowedForScopeAnchor(scopeAuthorization, scopeAnchor)
+  ) {
+    return;
+  }
+
+  denyScopeAuthorizationViolation(
+    operation,
+    `Scope authorization denied ${operation} scope "${scopeAnchor.scopeId}" at level "${scopeAnchor.scopeLevel}".`
+  );
+};
+
 const parseScopeControlProjection = (
   payload: DomainRecord
 ): ScopeControlProjection => {
@@ -1598,6 +1761,13 @@ const mapUpsertFailure = (
   if (cause instanceof ContractValidationError) {
     return cause;
   }
+  if (cause instanceof ScopeAuthorizationViolationFailure) {
+    return new ContractValidationError({
+      contract: storageScopeAuthorizationGuardrailContract,
+      message: "Scope authorization guardrail denied storage upsert request.",
+      details: cause.message,
+    });
+  }
   if (cause instanceof TenantIsolationViolationFailure) {
     return new ContractValidationError({
       contract: "StorageTenantIsolationGuardrail",
@@ -1630,6 +1800,13 @@ const mapDeleteFailure = (
 ): StorageServiceError => {
   if (cause instanceof ContractValidationError) {
     return cause;
+  }
+  if (cause instanceof ScopeAuthorizationViolationFailure) {
+    return new ContractValidationError({
+      contract: storageScopeAuthorizationGuardrailContract,
+      message: "Scope authorization guardrail denied storage delete request.",
+      details: cause.message,
+    });
   }
   if (cause instanceof TenantIsolationViolationFailure) {
     return new ContractValidationError({
@@ -1884,6 +2061,14 @@ export const makeSqliteStorageRepository = (
   const selectTenantScopedScopeStatement = database.prepare(
     "SELECT scope_id FROM scopes WHERE tenant_id = ? AND scope_id = ? LIMIT 1;"
   );
+  const selectTenantScopedScopeAuthorizationStatement = database.prepare(
+    [
+      "SELECT scope_id, scope_level, project_id, role_id, user_id",
+      "FROM scopes",
+      "WHERE tenant_id = ? AND scope_id = ?",
+      "LIMIT 1;",
+    ].join("\n")
+  );
   const selectForeignScopeOwnerStatement = database.prepare(
     "SELECT tenant_id FROM scopes WHERE scope_id = ? AND tenant_id <> ? ORDER BY tenant_id ASC LIMIT 1;"
   );
@@ -1929,8 +2114,16 @@ export const makeSqliteStorageRepository = (
   const selectTenantMemoryStatement = database.prepare(
     "SELECT memory_id FROM memory_items WHERE tenant_id = ? AND memory_id = ? LIMIT 1;"
   );
-  const selectTenantMemoryUpdatedAtStatement = database.prepare(
-    "SELECT updated_at_ms FROM memory_items WHERE tenant_id = ? AND memory_id = ? LIMIT 1;"
+  const selectTenantMemoryScopeAuthorizationStatement = database.prepare(
+    [
+      "SELECT m.updated_at_ms, m.scope_id, s.scope_level, s.project_id, s.role_id, s.user_id",
+      "FROM memory_items AS m",
+      "INNER JOIN scopes AS s",
+      "  ON s.tenant_id = m.tenant_id",
+      " AND s.scope_id = m.scope_id",
+      "WHERE m.tenant_id = ? AND m.memory_id = ?",
+      "LIMIT 1;",
+    ].join("\n")
   );
   const selectForeignMemoryOwnerStatement = database.prepare(
     "SELECT tenant_id FROM memory_items WHERE memory_id = ? AND tenant_id <> ? ORDER BY tenant_id ASC LIMIT 1;"
@@ -2028,6 +2221,59 @@ export const makeSqliteStorageRepository = (
 
     return scopeId;
   };
+  const readScopeAuthorizationScopeLevel = (
+    scopeRow: unknown,
+    errorPrefix: string
+  ): StorageScopeLevel => {
+    const scopeLevel = readRowColumn(scopeRow, "scope_level");
+    if (
+      scopeLevel === "common" ||
+      scopeLevel === "project" ||
+      scopeLevel === "job_role" ||
+      scopeLevel === "user"
+    ) {
+      return scopeLevel;
+    }
+    throw new Error(`${errorPrefix} scope_level is not a valid scope level.`);
+  };
+  const readNullableScopeAuthorizationAnchorId = (
+    scopeRow: unknown,
+    columnName: "project_id" | "role_id" | "user_id",
+    errorPrefix: string
+  ): string | null => {
+    const value = readRowColumn(scopeRow, columnName);
+    if (value === null) {
+      return null;
+    }
+    if (typeof value !== "string" || value.trim().length === 0) {
+      throw new Error(
+        `${errorPrefix} ${columnName} is not a valid nullable id.`
+      );
+    }
+    return value;
+  };
+  const readScopeAuthorizationScopeAnchor = (
+    scopeRow: unknown,
+    errorPrefix: string
+  ): ScopeAuthorizationScopeAnchor => ({
+    scopeId: readResolvedScopeId(scopeRow, errorPrefix),
+    scopeLevel: readScopeAuthorizationScopeLevel(scopeRow, errorPrefix),
+    scopeProjectId: readNullableScopeAuthorizationAnchorId(
+      scopeRow,
+      "project_id",
+      errorPrefix
+    ),
+    scopeRoleId: readNullableScopeAuthorizationAnchorId(
+      scopeRow,
+      "role_id",
+      errorPrefix
+    ),
+    scopeUserId: readNullableScopeAuthorizationAnchorId(
+      scopeRow,
+      "user_id",
+      errorPrefix
+    ),
+  });
   const readResolvedMemoryLayer = (
     memoryRow: unknown,
     errorPrefix: string
@@ -2473,6 +2719,54 @@ export const makeSqliteStorageRepository = (
           withImmediateTransaction(database, () => {
             assertExpectedForeignKeysMode();
             const payloadProjection = parsePayloadProjection(request);
+            const scopeAuthorization =
+              resolveScopeAuthorizationContext(request);
+            assertScopeAuthorizationTenantAccess(
+              scopeAuthorization,
+              "upsert",
+              request.spaceId
+            );
+            if (payloadProjection.scopeProjectId !== null) {
+              assertScopeAuthorizationAnchorAccess(
+                scopeAuthorization,
+                "upsert",
+                "project",
+                payloadProjection.scopeProjectId
+              );
+            }
+            if (payloadProjection.scopeRoleId !== null) {
+              assertScopeAuthorizationAnchorAccess(
+                scopeAuthorization,
+                "upsert",
+                "role",
+                payloadProjection.scopeRoleId
+              );
+            }
+            if (payloadProjection.scopeUserId !== null) {
+              assertScopeAuthorizationAnchorAccess(
+                scopeAuthorization,
+                "upsert",
+                "user",
+                payloadProjection.scopeUserId
+              );
+            }
+            if (payloadProjection.scopeId !== null) {
+              const tenantScopedScopeAuthorizationRow =
+                selectTenantScopedScopeAuthorizationStatement.get(
+                  request.spaceId,
+                  payloadProjection.scopeId
+                );
+              if (tenantScopedScopeAuthorizationRow !== undefined) {
+                assertScopeAuthorizationScopeAccess(
+                  scopeAuthorization,
+                  "upsert",
+                  readScopeAuthorizationScopeAnchor(
+                    tenantScopedScopeAuthorizationRow,
+                    "Explicit scope authorization"
+                  )
+                );
+              }
+            }
             const idempotencyKey = resolveOptionalIdempotencyKey(
               request,
               "upsert"
@@ -2796,6 +3090,28 @@ export const makeSqliteStorageRepository = (
         try: () =>
           withImmediateTransaction(database, () => {
             assertExpectedForeignKeysMode();
+            const scopeAuthorization =
+              resolveScopeAuthorizationContext(request);
+            assertScopeAuthorizationTenantAccess(
+              scopeAuthorization,
+              "delete",
+              request.spaceId
+            );
+            const existingMemoryScopeAuthorizationRow =
+              selectTenantMemoryScopeAuthorizationStatement.get(
+                request.spaceId,
+                request.memoryId
+              );
+            if (existingMemoryScopeAuthorizationRow !== undefined) {
+              assertScopeAuthorizationScopeAccess(
+                scopeAuthorization,
+                "delete",
+                readScopeAuthorizationScopeAnchor(
+                  existingMemoryScopeAuthorizationRow,
+                  "Delete scope authorization"
+                )
+              );
+            }
             const idempotencyKey = resolveOptionalIdempotencyKey(
               request,
               "delete"
@@ -2833,10 +3149,7 @@ export const makeSqliteStorageRepository = (
                 );
               }
             }
-            const existingMemoryRow = selectTenantMemoryUpdatedAtStatement.get(
-              request.spaceId,
-              request.memoryId
-            );
+            const existingMemoryRow = existingMemoryScopeAuthorizationRow;
             const deleteResult = deleteMemoryStatement.run(
               request.spaceId,
               request.memoryId

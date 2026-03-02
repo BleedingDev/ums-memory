@@ -18,11 +18,26 @@ import {
 const NonNegativeIntSchema = Schema.NonNegativeInt;
 const Sha256HexSchema = Schema.String.pipe(Schema.pattern(/^[0-9A-Fa-f]{64}$/));
 
+export const ScopeAuthorizationInputSchema = Schema.Struct({
+  tenantId: Schema.optional(SpaceIdSchema),
+  tenant_id: Schema.optional(SpaceIdSchema),
+  projectIds: Schema.optional(Schema.Array(ProjectIdSchema)),
+  project_ids: Schema.optional(Schema.Array(ProjectIdSchema)),
+  roleIds: Schema.optional(Schema.Array(RoleIdSchema)),
+  role_ids: Schema.optional(Schema.Array(RoleIdSchema)),
+  jobRoleIds: Schema.optional(Schema.Array(RoleIdSchema)),
+  job_role_ids: Schema.optional(Schema.Array(RoleIdSchema)),
+  userIds: Schema.optional(Schema.Array(UserIdSchema)),
+  user_ids: Schema.optional(Schema.Array(UserIdSchema)),
+});
+
 export const StorageUpsertRequestSchema = Schema.Struct({
   spaceId: SpaceIdSchema,
   memoryId: MemoryIdSchema,
   layer: MemoryLayerSchema,
   payload: IngestionMetadataSchema,
+  scopeAuthorization: Schema.optional(ScopeAuthorizationInputSchema),
+  scope_authorization: Schema.optional(ScopeAuthorizationInputSchema),
   idempotencyKey: Schema.optional(Schema.String),
   idempotency_key: Schema.optional(Schema.String),
 });
@@ -38,6 +53,8 @@ export const StorageUpsertResponseSchema = Schema.Struct({
 export const StorageDeleteRequestSchema = Schema.Struct({
   spaceId: SpaceIdSchema,
   memoryId: MemoryIdSchema,
+  scopeAuthorization: Schema.optional(ScopeAuthorizationInputSchema),
+  scope_authorization: Schema.optional(ScopeAuthorizationInputSchema),
   idempotencyKey: Schema.optional(Schema.String),
   idempotency_key: Schema.optional(Schema.String),
 });
@@ -120,6 +137,8 @@ export const RetrievalRequestSchema = Schema.Struct({
   query: Schema.String,
   limit: NonNegativeIntSchema,
   cursor: Schema.optional(Schema.NullOr(Schema.String)),
+  scopeAuthorization: Schema.optional(ScopeAuthorizationInputSchema),
+  scope_authorization: Schema.optional(ScopeAuthorizationInputSchema),
   scope: Schema.optional(RetrievalScopeSelectorsSchema),
   projectId: Schema.optional(ProjectIdSchema),
   roleId: Schema.optional(RoleIdSchema),
@@ -353,6 +372,9 @@ export type StorageSnapshotImportRequest = Schema.Schema.Type<
 >;
 export type StorageSnapshotImportResponse = Schema.Schema.Type<
   typeof StorageSnapshotImportResponseSchema
+>;
+export type ScopeAuthorizationInput = Schema.Schema.Type<
+  typeof ScopeAuthorizationInputSchema
 >;
 export type RetrievalScopeSelectors = Schema.Schema.Type<
   typeof RetrievalScopeSelectorsSchema
