@@ -580,3 +580,221 @@ test("ums-memory-d6q.5.8: integration/replay policy lane enforces deterministic 
   assert.equal(snapshotProfile("learner-policy-lane", "tenant-policy-lane-a").policyDecisions.length, 1);
   assert.equal(snapshotProfile("learner-policy-lane", "tenant-policy-lane-b").policyDecisions.length, 1);
 });
+
+test("ums-memory-hpl.10: integration lifecycle replay-safety stays idempotent across repeated requests", () => {
+  resetStore();
+  const storeId = "tenant-hpl10-idempotent";
+  const profile = "hpl10-idempotent";
+  const candidateId = "candidate-hpl10-idempotent";
+  const ruleId = "rule-hpl10-idempotent";
+  const shadowWriteRequest = {
+    storeId,
+    profile,
+    candidateId,
+    ruleId,
+    statement: "Lifecycle replay safety requires deterministic idempotency across all transitions.",
+    scope: "workspace",
+    confidence: 0.64,
+    sourceEventIds: ["evt-hpl10-idempotent-2", "evt-hpl10-idempotent-1"],
+    evidenceEventIds: ["evt-hpl10-idempotent-1"],
+    createdAt: "2026-03-02T10:00:00.000Z",
+    expiresAt: "2026-04-02T10:00:00.000Z",
+  };
+
+  const shadowCreated = executeOperation("shadow_write", shadowWriteRequest);
+  const shadowReplay = executeOperation("shadow_write", shadowWriteRequest);
+  assert.equal(shadowCreated.applied[0].action, "created");
+  assert.equal(shadowReplay.applied[0].action, "noop");
+  assert.equal(shadowReplay.applied[0].status, "shadow");
+  assert.equal(shadowReplay.observability.replaySafe, true);
+  assert.equal(shadowReplay.observability.slo.replaySafe, true);
+
+  const replayEvalRequest = {
+    storeId,
+    profile,
+    candidateId,
+    replayEvalId: "reval-hpl10-idempotent",
+    evaluationPackId: "pack-hpl10-idempotent",
+    successRateDelta: 0.8,
+    gateThreshold: 0,
+    evaluatedAt: "2026-03-02T10:20:00.000Z",
+  };
+  const replayCreated = executeOperation("replay_eval", replayEvalRequest);
+  const replayNoop = executeOperation("replay_eval", replayEvalRequest);
+  assert.equal(replayCreated.action, "created");
+  assert.equal(replayCreated.gate.pass, true);
+  assert.equal(replayNoop.action, "noop");
+  assert.equal(replayNoop.autoDemotion, null);
+  assert.equal(replayNoop.observability.replaySafe, true);
+  assert.equal(replayNoop.observability.slo.replaySafe, true);
+
+  const promoteRequest = {
+    storeId,
+    profile,
+    candidateId,
+    promotedAt: "2026-03-02T10:30:00.000Z",
+    freshEvidenceThresholdDays: 14,
+  };
+  const promoted = executeOperation("promote", promoteRequest);
+  const promoteNoop = executeOperation("promote", promoteRequest);
+  assert.equal(promoted.action, "promoted");
+  assert.equal(promoted.ruleAction, "created");
+  assert.equal(promoted.candidate.status, "promoted");
+  assert.equal(promoted.observability.replayGatePass, true);
+  assert.equal(promoted.observability.replaySafe, true);
+  assert.equal(promoted.observability.slo.replaySafe, true);
+  assert.equal(promoteNoop.action, "noop");
+  assert.equal(promoteNoop.ruleAction, "noop");
+  assert.equal(promoteNoop.candidate.status, "promoted");
+  assert.equal(promoteNoop.observability.replayGatePass, true);
+  assert.equal(promoteNoop.observability.replaySafe, true);
+  assert.equal(promoteNoop.observability.slo.replaySafe, true);
+
+  const demoteRequest = {
+    storeId,
+    profile,
+    candidateId,
+    force: true,
+    reasonCodes: ["stability_check", "manual_override"],
+    demotedAt: "2026-03-02T10:40:00.000Z",
+  };
+  const demoted = executeOperation("demote", demoteRequest);
+  const demoteNoop = executeOperation("demote", demoteRequest);
+  assert.equal(demoted.action, "demoted");
+  assert.equal(demoted.candidate.status, "demoted");
+  assert.equal(demoted.removedRuleId, ruleId);
+  assert.deepEqual(demoted.reasonCodes, ["manual_override", "stability_check"]);
+  assert.equal(demoted.observability.demotionApplied, true);
+  assert.equal(demoted.observability.replaySafe, true);
+  assert.equal(demoted.observability.slo.replaySafe, true);
+  assert.equal(demoteNoop.action, "noop");
+  assert.equal(demoteNoop.candidate.status, "demoted");
+  assert.equal(demoteNoop.removedRuleId, null);
+  assert.deepEqual(demoteNoop.reasonCodes, ["manual_override", "stability_check"]);
+  assert.equal(demoteNoop.observability.demotionApplied, false);
+  assert.equal(demoteNoop.observability.replaySafe, true);
+  assert.equal(demoteNoop.observability.slo.replaySafe, true);
+
+  const snapshot = snapshotProfile(profile, storeId);
+  const storedCandidate = snapshot.shadowCandidates.find((entry) => entry.candidateId === candidateId);
+  assert.ok(storedCandidate);
+  assert.equal(storedCandidate.status, "demoted");
+  assert.equal(storedCandidate.promotedAt, "2026-03-02T10:30:00.000Z");
+  assert.equal(storedCandidate.demotedAt, "2026-03-02T10:40:00.000Z");
+  assert.deepEqual(storedCandidate.latestDemotionReasonCodes, ["manual_override", "stability_check"]);
+  assert.equal(snapshot.rules.some((entry) => entry.ruleId === ruleId), false);
+  assert.equal(snapshot.replayEvaluations.length, 1);
+  assert.equal(snapshot.replayEvaluations[0].replayEvalId, "reval-hpl10-idempotent");
+});
+
+test("ums-memory-hpl.10: integration lifecycle reordered requests converge with deterministic contract errors", () => {
+  const storeId = "tenant-hpl10-reordered";
+  const profile = "hpl10-reordered";
+  const candidateId = "candidate-hpl10-reordered";
+  const ruleId = "rule-hpl10-reordered";
+  const shadowWriteRequest = {
+    storeId,
+    profile,
+    candidateId,
+    ruleId,
+    statement: "Reordered lifecycle requests should converge after valid replay and promotion gates.",
+    sourceEventIds: ["evt-hpl10-reordered-1"],
+    evidenceEventIds: ["evt-hpl10-reordered-1"],
+    createdAt: "2026-03-02T11:00:00.000Z",
+    expiresAt: "2026-04-02T11:00:00.000Z",
+  };
+  const replayEvalRequest = {
+    storeId,
+    profile,
+    candidateId,
+    replayEvalId: "reval-hpl10-reordered",
+    evaluationPackId: "pack-hpl10-reordered",
+    successRateDelta: 0.75,
+    gateThreshold: 0,
+    evaluatedAt: "2026-03-02T11:10:00.000Z",
+  };
+  const promoteRequest = {
+    storeId,
+    profile,
+    candidateId,
+    promotedAt: "2026-03-02T11:20:00.000Z",
+    freshEvidenceThresholdDays: 14,
+  };
+  const demoteRequest = {
+    storeId,
+    profile,
+    candidateId,
+    force: true,
+    reasonCodes: ["stability_check", "manual_override"],
+    demotedAt: "2026-03-02T11:30:00.000Z",
+  };
+  const selectLifecycleProjection = (profileSnapshot) => ({
+    candidate: profileSnapshot.shadowCandidates.find((entry) => entry.candidateId === candidateId),
+    replayEvaluations: profileSnapshot.replayEvaluations.filter((entry) => entry.candidateId === candidateId),
+    rules: profileSnapshot.rules.filter((entry) => entry.ruleId === ruleId),
+  });
+  const captureThrownMessage = (operation) => {
+    try {
+      operation();
+      return null;
+    } catch (error) {
+      return error instanceof Error ? error.message : String(error);
+    }
+  };
+
+  resetStore();
+  executeOperation("shadow_write", shadowWriteRequest);
+  executeOperation("replay_eval", replayEvalRequest);
+  executeOperation("promote", promoteRequest);
+  executeOperation("demote", demoteRequest);
+  const canonicalProjection = selectLifecycleProjection(snapshotProfile(profile, storeId));
+
+  resetStore();
+  const replayBeforeShadowError = captureThrownMessage(() => executeOperation("replay_eval", replayEvalRequest));
+  const promoteBeforeShadowError = captureThrownMessage(() => executeOperation("promote", promoteRequest));
+  assert.equal(
+    replayBeforeShadowError,
+    "VALIDATION_CONTRACT_VIOLATION: replay_eval requires an existing shadow candidate.",
+  );
+  assert.equal(promoteBeforeShadowError, replayBeforeShadowError);
+
+  const shadowCreated = executeOperation("shadow_write", shadowWriteRequest);
+  const promoteBeforeReplayError = captureThrownMessage(() => executeOperation("promote", promoteRequest));
+  assert.equal(shadowCreated.applied[0].action, "created");
+  assert.equal(
+    promoteBeforeReplayError,
+    "VALIDATION_CONTRACT_VIOLATION: promote requires latest replay_eval status pass and no safety regressions.",
+  );
+
+  const replayCreated = executeOperation("replay_eval", replayEvalRequest);
+  const promoted = executeOperation("promote", promoteRequest);
+  const demoted = executeOperation("demote", demoteRequest);
+  const demoteNoop = executeOperation("demote", demoteRequest);
+
+  assert.equal(replayCreated.action, "created");
+  assert.equal(replayCreated.gate.pass, true);
+  assert.equal(replayCreated.observability.replaySafe, true);
+  assert.equal(replayCreated.observability.slo.replaySafe, true);
+  assert.equal(promoted.action, "promoted");
+  assert.equal(promoted.candidate.status, "promoted");
+  assert.equal(promoted.observability.replayGatePass, true);
+  assert.equal(promoted.observability.replaySafe, true);
+  assert.equal(promoted.observability.slo.replaySafe, true);
+  assert.equal(demoted.action, "demoted");
+  assert.equal(demoted.candidate.status, "demoted");
+  assert.equal(demoted.removedRuleId, ruleId);
+  assert.equal(demoted.observability.demotionApplied, true);
+  assert.equal(demoted.observability.replaySafe, true);
+  assert.equal(demoted.observability.slo.replaySafe, true);
+  assert.equal(demoteNoop.action, "noop");
+  assert.equal(demoteNoop.candidate.status, "demoted");
+  assert.equal(demoteNoop.observability.demotionApplied, false);
+
+  const reorderedProjection = selectLifecycleProjection(snapshotProfile(profile, storeId));
+  assert.deepEqual(reorderedProjection, canonicalProjection);
+  assert.equal(reorderedProjection.candidate?.status, "demoted");
+  assert.equal(reorderedProjection.candidate?.promotedAt, "2026-03-02T11:20:00.000Z");
+  assert.equal(reorderedProjection.candidate?.demotedAt, "2026-03-02T11:30:00.000Z");
+  assert.deepEqual(reorderedProjection.candidate?.latestDemotionReasonCodes, ["manual_override", "stability_check"]);
+  assert.deepEqual(reorderedProjection.rules, []);
+});
