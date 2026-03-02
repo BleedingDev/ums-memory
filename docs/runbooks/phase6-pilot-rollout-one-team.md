@@ -176,6 +176,11 @@ npm run pilot:report -- \
   --output docs/reports/pilot-rollout/<pilot-id>-final-summary.json
 ```
 
+Report generator guarantees:
+1. Fails fast when required telemetry fields are missing (`timestamp`, `team`, `project`, `operation`, outcome indicator, latency).
+2. Creates missing parent output directories automatically.
+3. Emits deterministic per-operation latency/failure distributions for tuning workflows.
+
 ## Handoff to n4m.2 and n4m.3
 - For `n4m.2` dashboards:
   - Use `requestVolume`, `successRate`, `failureRate`, `p95LatencyMs`, `operationHistogram`, `failureCodeHistogram`, `policyDecisionHistogram`, and `anomalyHistogram`.

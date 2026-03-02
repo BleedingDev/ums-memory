@@ -1,5 +1,5 @@
-import { readFileSync, writeFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
 const SUCCESS_TOKENS = new Set([
@@ -11,6 +11,9 @@ const SUCCESS_TOKENS = new Set([
   "updated",
   "noop",
   "done",
+  "allow",
+  "deny",
+  "review",
 ]);
 const FAILURE_TOKENS = new Set(["error", "failed", "failure", "timeout", "exception"]);
 
@@ -28,6 +31,18 @@ const POLICY_KEYS = ["policyDecision", "policyOutcome", ["policy", "decision"], 
 const ANOMALY_KEYS = ["anomalyType", "anomaly_type", ["anomaly", "type"], "anomalyCode", "anomaly_code"];
 const TIMESTAMP_KEYS = ["timestamp", "time", "ts", "createdAt", "created_at"];
 const OUTCOME_KEYS = ["status", "result", "requestStatus", "request_status", "outcome"];
+const TEAM_KEYS = ["team", "teamId", "team_id"];
+const PROJECT_KEYS = ["project", "projectId", "project_id"];
+
+function compareStrings(left, right) {
+  if (left < right) {
+    return -1;
+  }
+  if (left > right) {
+    return 1;
+  }
+  return 0;
+}
 
 function normalizeToken(value) {
   return String(value ?? "")
@@ -162,40 +177,81 @@ export function parseTelemetryEvents(source) {
   return events;
 }
 
-function classifySuccess(record) {
-  const explicit = pickFirst(record, ["success", "ok", "isSuccess", "is_success"]);
-  if (typeof explicit === "boolean") {
-    return explicit;
+function parseOutcomeToken(value) {
+  if (typeof value === "boolean") {
+    return value;
   }
-  if (typeof explicit === "number") {
-    return explicit !== 0;
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value !== 0;
+  }
+  if (typeof value === "string") {
+    const token = normalizeToken(value);
+    if (!token) {
+      return null;
+    }
+    if (token === "true" || token === "1") {
+      return true;
+    }
+    if (token === "false" || token === "0") {
+      return false;
+    }
+    if (SUCCESS_TOKENS.has(token)) {
+      return true;
+    }
+    if (FAILURE_TOKENS.has(token)) {
+      return false;
+    }
+  }
+  return null;
+}
+
+function classifySuccess(record, index) {
+  const explicit = pickFirst(record, ["success", "ok", "isSuccess", "is_success"]);
+  const explicitOutcome = parseOutcomeToken(explicit);
+  if (explicitOutcome !== null) {
+    return explicitOutcome;
+  }
+  if (explicit !== undefined && explicit !== null) {
+    throw new Error(
+      `Telemetry event at index ${index} has unsupported explicit outcome value: ${JSON.stringify(explicit)}`,
+    );
+  }
+
+  const outcomeRaw = pickFirst(record, OUTCOME_KEYS);
+  const parsedOutcome = parseOutcomeToken(outcomeRaw);
+  if (parsedOutcome !== null) {
+    return parsedOutcome;
+  }
+  if (outcomeRaw !== undefined && outcomeRaw !== null) {
+    throw new Error(
+      `Telemetry event at index ${index} has unsupported outcome token: ${JSON.stringify(outcomeRaw)}`,
+    );
   }
 
   const failureCode = pickFirst(record, FAILURE_CODE_KEYS);
   if (typeof failureCode === "string" && failureCode.trim()) {
-    return false;
+    throw new Error(
+      `Telemetry event at index ${index} is missing outcome indicator (success/ok/status/result).`,
+    );
   }
 
   const errorObject = pickFirst(record, ["error"]);
   if (errorObject && typeof errorObject === "object") {
-    return false;
+    throw new Error(
+      `Telemetry event at index ${index} is missing outcome indicator (success/ok/status/result).`,
+    );
   }
 
-  const outcomeToken = normalizeToken(pickFirst(record, OUTCOME_KEYS));
-  if (outcomeToken && FAILURE_TOKENS.has(outcomeToken)) {
-    return false;
-  }
-  if (outcomeToken && SUCCESS_TOKENS.has(outcomeToken)) {
-    return true;
-  }
-  return true;
+  throw new Error(
+    `Telemetry event at index ${index} is missing outcome indicator (success/ok/status/result).`,
+  );
 }
 
-function extractLatencyMs(record) {
+function extractLatencyMs(record, index) {
   const raw = pickFirst(record, LATENCY_KEYS);
   const parsed = toNumber(raw);
   if (parsed === null || parsed < 0) {
-    return null;
+    throw new Error(`Telemetry event at index ${index} must include a non-negative latency field.`);
   }
   return Number(parsed.toFixed(3));
 }
@@ -207,8 +263,12 @@ function extractFailureCode(record, success) {
   return normalizeFailureCode(pickFirst(record, FAILURE_CODE_KEYS));
 }
 
-function extractOperation(record) {
-  return normalizeOperation(pickFirst(record, OPERATION_KEYS));
+function extractOperation(record, index) {
+  const operation = normalizeOperation(pickFirst(record, OPERATION_KEYS));
+  if (operation === "unknown") {
+    throw new Error(`Telemetry event at index ${index} is missing required field: operation.`);
+  }
+  return operation;
 }
 
 function extractPolicyDecision(record) {
@@ -227,8 +287,28 @@ function extractAnomalyType(record) {
   return normalizeSliceLabel(value, "unknown_anomaly");
 }
 
-function extractTimestamp(record) {
-  return toIsoTimestamp(pickFirst(record, TIMESTAMP_KEYS));
+function extractTimestamp(record, index) {
+  const timestamp = toIsoTimestamp(pickFirst(record, TIMESTAMP_KEYS));
+  if (!timestamp) {
+    throw new Error(`Telemetry event at index ${index} is missing required field: timestamp.`);
+  }
+  return timestamp;
+}
+
+function extractTeam(record, index) {
+  const team = normalizeSliceLabel(pickFirst(record, TEAM_KEYS), "");
+  if (!team) {
+    throw new Error(`Telemetry event at index ${index} is missing required field: team.`);
+  }
+  return team;
+}
+
+function extractProject(record, index) {
+  const project = normalizeSliceLabel(pickFirst(record, PROJECT_KEYS), "");
+  if (!project) {
+    throw new Error(`Telemetry event at index ${index} is missing required field: project.`);
+  }
+  return project;
 }
 
 function incrementHistogram(histogram, key) {
@@ -236,7 +316,7 @@ function incrementHistogram(histogram, key) {
 }
 
 function histogramToSortedObject(histogram) {
-  const entries = [...histogram.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+  const entries = [...histogram.entries()].sort((a, b) => compareStrings(a[0], b[0]));
   return Object.fromEntries(entries);
 }
 
@@ -260,11 +340,30 @@ function computeWindow(timestamps) {
   if (timestamps.length === 0) {
     return { start: null, end: null };
   }
-  const sorted = [...timestamps].sort((a, b) => a.localeCompare(b));
+  const sorted = [...timestamps].sort((a, b) => compareStrings(a, b));
   return {
     start: sorted[0],
     end: sorted[sorted.length - 1],
   };
+}
+
+function summarizePerOperation(operationTotals) {
+  const entries = [...operationTotals.entries()].sort((a, b) => compareStrings(a[0], b[0]));
+  return Object.fromEntries(
+    entries.map(([operation, stats]) => [
+      operation,
+      {
+        requestVolume: stats.requestVolume,
+        successCount: stats.successCount,
+        failureCount: stats.failureCount,
+        successRate: roundRate(stats.successCount, stats.requestVolume),
+        failureRate: roundRate(stats.failureCount, stats.requestVolume),
+        p95LatencyMs: computeP95(stats.latencies),
+        latencySampleSize: stats.latencies.length,
+        failureCodeHistogram: histogramToSortedObject(stats.failureCodeHistogram),
+      },
+    ]),
+  );
 }
 
 export function generatePilotRolloutReport(events) {
@@ -279,6 +378,9 @@ export function generatePilotRolloutReport(events) {
   const failureCodeHistogram = new Map();
   const policyDecisionHistogram = new Map();
   const anomalyHistogram = new Map();
+  const teamHistogram = new Map();
+  const projectHistogram = new Map();
+  const perOperation = new Map();
 
   const latencies = [];
   const timestamps = [];
@@ -289,20 +391,42 @@ export function generatePilotRolloutReport(events) {
       throw new Error(`Telemetry event at index ${index} must be a JSON object.`);
     }
 
-    const success = classifySuccess(event);
-    const operation = extractOperation(event);
+    const success = classifySuccess(event, index);
+    const operation = extractOperation(event, index);
     const failureCode = extractFailureCode(event, success);
     const policyDecision = extractPolicyDecision(event);
     const anomalyType = extractAnomalyType(event);
-    const latencyMs = extractLatencyMs(event);
-    const timestamp = extractTimestamp(event);
+    const latencyMs = extractLatencyMs(event, index);
+    const timestamp = extractTimestamp(event, index);
+    const team = extractTeam(event, index);
+    const project = extractProject(event, index);
 
     incrementHistogram(operationHistogram, operation);
+    incrementHistogram(teamHistogram, team);
+    incrementHistogram(projectHistogram, project);
+
+    let opTotals = perOperation.get(operation);
+    if (!opTotals) {
+      opTotals = {
+        requestVolume: 0,
+        successCount: 0,
+        failureCount: 0,
+        latencies: [],
+        failureCodeHistogram: new Map(),
+      };
+      perOperation.set(operation, opTotals);
+    }
+    opTotals.requestVolume += 1;
+    opTotals.latencies.push(latencyMs);
+
     if (success) {
       successCount += 1;
+      opTotals.successCount += 1;
     } else {
       failureCount += 1;
       incrementHistogram(failureCodeHistogram, failureCode ?? "UNKNOWN_FAILURE");
+      opTotals.failureCount += 1;
+      incrementHistogram(opTotals.failureCodeHistogram, failureCode ?? "UNKNOWN_FAILURE");
     }
     if (policyDecision) {
       incrementHistogram(policyDecisionHistogram, policyDecision);
@@ -310,12 +434,8 @@ export function generatePilotRolloutReport(events) {
     if (anomalyType) {
       incrementHistogram(anomalyHistogram, anomalyType);
     }
-    if (latencyMs !== null) {
-      latencies.push(latencyMs);
-    }
-    if (timestamp) {
-      timestamps.push(timestamp);
-    }
+    latencies.push(latencyMs);
+    timestamps.push(timestamp);
   }
 
   const requestVolume = events.length;
@@ -335,6 +455,10 @@ export function generatePilotRolloutReport(events) {
     failureCodeHistogram: histogramToSortedObject(failureCodeHistogram),
     policyDecisionHistogram: histogramToSortedObject(policyDecisionHistogram),
     anomalyHistogram: histogramToSortedObject(anomalyHistogram),
+    teamHistogram: histogramToSortedObject(teamHistogram),
+    projectHistogram: histogramToSortedObject(projectHistogram),
+    perOperation: summarizePerOperation(perOperation),
+    invalidEventCount: 0,
     telemetryWindow: window,
   };
 }
@@ -432,7 +556,9 @@ export async function main(argv = process.argv.slice(2)) {
   const output = `${JSON.stringify(report, null, parsed.compact ? 0 : 2)}\n`;
 
   if (parsed.output) {
-    writeFileSync(resolve(process.cwd(), parsed.output), output, "utf8");
+    const resolvedPath = resolve(process.cwd(), parsed.output);
+    mkdirSync(dirname(resolvedPath), { recursive: true });
+    writeFileSync(resolvedPath, output, "utf8");
   }
 
   process.stdout.write(output);

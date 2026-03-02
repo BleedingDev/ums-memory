@@ -1,14 +1,20 @@
 import assert from "node:assert/strict";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { resolve } from "node:path";
 import test from "node:test";
 
 import {
   generatePilotRolloutReport,
+  main,
   parseTelemetryEvents,
 } from "../../scripts/generate-pilot-rollout-report.mjs";
 
 const FIXTURE_EVENTS = Object.freeze([
   {
     timestamp: "2026-03-01T10:00:00.000Z",
+    team: "team-alpha",
+    project: "project-x",
     operation: "context",
     status: "ok",
     latencyMs: 50,
@@ -16,6 +22,8 @@ const FIXTURE_EVENTS = Object.freeze([
   },
   {
     timestamp: "2026-03-01T10:00:01.000Z",
+    team: "team-alpha",
+    project: "project-x",
     operation: "context",
     status: "failed",
     latencyMs: 420,
@@ -24,6 +32,8 @@ const FIXTURE_EVENTS = Object.freeze([
   },
   {
     timestamp: "2026-03-01T10:00:02.000Z",
+    team: "team-alpha",
+    project: "project-x",
     operation: "policy_decision_update",
     outcome: "deny",
     latencyMs: 20,
@@ -32,6 +42,8 @@ const FIXTURE_EVENTS = Object.freeze([
   },
   {
     timestamp: "2026-03-01T10:00:03.000Z",
+    team: "team-alpha",
+    project: "project-x",
     operation: "ingest",
     status: "ok",
     durationMs: 100,
@@ -39,6 +51,8 @@ const FIXTURE_EVENTS = Object.freeze([
   },
   {
     timestamp: "2026-03-01T10:00:04.000Z",
+    team: "team-alpha",
+    project: "project-x",
     operation: "ingest",
     success: false,
     latency_ms: 300,
@@ -89,8 +103,96 @@ test("pilot rollout report schema includes required KPI fields", () => {
     latency_spike: 1,
     policy_spike: 1,
   });
+  assert.deepEqual(report.teamHistogram, {
+    team_alpha: 5,
+  });
+  assert.deepEqual(report.projectHistogram, {
+    project_x: 5,
+  });
+  assert.equal(report.invalidEventCount, 0);
+  assert.deepEqual(report.perOperation, {
+    context: {
+      requestVolume: 2,
+      successCount: 1,
+      failureCount: 1,
+      successRate: 0.5,
+      failureRate: 0.5,
+      p95LatencyMs: 420,
+      latencySampleSize: 2,
+      failureCodeHistogram: { TIMEOUT: 1 },
+    },
+    ingest: {
+      requestVolume: 2,
+      successCount: 1,
+      failureCount: 1,
+      successRate: 0.5,
+      failureRate: 0.5,
+      p95LatencyMs: 300,
+      latencySampleSize: 2,
+      failureCodeHistogram: { VALIDATION_ERROR: 1 },
+    },
+    policy_decision_update: {
+      requestVolume: 1,
+      successCount: 1,
+      failureCount: 0,
+      successRate: 1,
+      failureRate: 0,
+      p95LatencyMs: 20,
+      latencySampleSize: 1,
+      failureCodeHistogram: {},
+    },
+  });
   assert.deepEqual(report.telemetryWindow, {
     start: "2026-03-01T10:00:00.000Z",
     end: "2026-03-01T10:00:04.000Z",
   });
+});
+
+test("pilot rollout report rejects telemetry events missing required fields", () => {
+  assert.throws(
+    () =>
+      generatePilotRolloutReport([
+        {
+          timestamp: "2026-03-01T10:00:00.000Z",
+          team: "team-alpha",
+          project: "project-x",
+          operation: "context",
+          latencyMs: 10,
+        },
+      ]),
+    /missing outcome indicator/i,
+  );
+
+  assert.throws(
+    () =>
+      generatePilotRolloutReport([
+        {
+          timestamp: "2026-03-01T10:00:00.000Z",
+          project: "project-x",
+          operation: "context",
+          status: "ok",
+          latencyMs: 10,
+        },
+      ]),
+    /missing required field: team/i,
+  );
+});
+
+test("pilot rollout report main creates parent output directories automatically", async () => {
+  const fixtureRoot = await mkdtemp(resolve(tmpdir(), "pilot-rollout-report-"));
+  const inputPath = resolve(fixtureRoot, "telemetry.ndjson");
+  const outputPath = resolve(fixtureRoot, "nested", "reports", "summary.json");
+
+  try {
+    const fixture = `${JSON.stringify(FIXTURE_EVENTS[0])}\n`;
+    await writeFile(inputPath, fixture, "utf8");
+    const code = await main(["--input", inputPath, "--output", outputPath, "--compact"]);
+    assert.equal(code, 0);
+
+    const written = JSON.parse(await readFile(outputPath, "utf8"));
+    assert.equal(written.schemaVersion, "pilot_rollout_report.v1");
+    assert.equal(written.requestVolume, 1);
+  } finally {
+    await rm(fixtureRoot, { recursive: true, force: true });
+  }
 });
