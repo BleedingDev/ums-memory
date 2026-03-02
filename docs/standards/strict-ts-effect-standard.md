@@ -112,6 +112,7 @@ The project command contract is:
 
 - `npm run quality:ts`
 - `npm run validate:legacy-shims`
+- `npm run validate:cutover`
 - `npm run test`
 - `npm run test:sfe`
 - `npm run ci:verify` (local aggregate: quality + tests + SFE + single-file build)
@@ -140,6 +141,7 @@ All items are required unless explicitly marked `N/A` with reason.
 - [ ] No strictness flags were relaxed.
 - [ ] `npm run quality:ts` passed.
 - [ ] `npm run validate:legacy-shims` passed.
+- [ ] `npm run validate:cutover` passed.
 
 2. Effect service/layer compliance
 
