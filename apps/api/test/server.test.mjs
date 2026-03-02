@@ -51,6 +51,7 @@ test("http server exposes deterministic JSON operation routes", async () => {
     assert.equal(rootBody.operations.includes("/v1/curriculum_plan_update"), true);
     assert.equal(rootBody.operations.includes("/v1/review_schedule_update"), true);
     assert.equal(rootBody.operations.includes("/v1/policy_decision_update"), true);
+    assert.equal(rootBody.operations.includes("/v1/incident_escalation_signal"), true);
 
     const ingestRes = await fetch(`${base}/v1/ingest`, {
       method: "POST",

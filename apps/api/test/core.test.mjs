@@ -35,6 +35,7 @@ test("core exposes the full required operation surface", () => {
     "policy_decision_update",
     "pain_signal_ingest",
     "failure_signal_ingest",
+    "incident_escalation_signal",
     "curriculum_recommendation",
     "review_schedule_clock",
     "review_set_rebalance",
@@ -1215,6 +1216,135 @@ test("ums-memory-hpl.6 legacy overlength feedback/outcome snapshots import lenie
   assert.equal(snapshot.outcomes.length, 1);
   assert.equal(snapshot.outcomes[0].task.length, 128);
   assert.equal(snapshot.outcomes[0].usedRuleIds[0].length, 256);
+});
+
+test("ums-memory-hpl.7 incident escalation signals quarantine critical failures and remain replay-safe", () => {
+  const storeId = "tenant-hpl7-critical";
+  const profile = "hpl7-critical";
+  const shadow = executeOperation("shadow_write", {
+    storeId,
+    profile,
+    statement: "Escalated incidents should quarantine this memory immediately.",
+    sourceEventIds: ["evt-hpl7-shadow-1"],
+    evidenceEventIds: ["evt-hpl7-shadow-1"],
+    createdAt: "2026-03-02T17:00:00.000Z",
+    expiresAt: "2026-04-02T17:00:00.000Z",
+  });
+  const candidateId = shadow.applied[0].candidateId;
+  executeOperation("replay_eval", {
+    storeId,
+    profile,
+    candidateId,
+    successRateDelta: 0.9,
+    evaluatedAt: "2026-03-02T17:10:00.000Z",
+  });
+  const promoted = executeOperation("promote", {
+    storeId,
+    profile,
+    candidateId,
+    promotedAt: "2026-03-02T17:20:00.000Z",
+  });
+  const ruleId = promoted.rule.ruleId;
+  const request = {
+    storeId,
+    profile,
+    escalationSignalId: "esc-hpl7-critical-1",
+    incidentRef: "inc-hpl7-critical",
+    escalationType: "runtime_error",
+    severity: "critical",
+    reasonCodes: ["production_incident", "memory_quarantine_required"],
+    targetCandidateIds: [candidateId],
+    targetRuleIds: [ruleId],
+    evidenceEventIds: ["evt-hpl7-incident-1"],
+    sourceEventIds: ["evt-hpl7-incident-2"],
+    timestamp: "2026-03-02T18:00:00.000Z",
+  };
+
+  const first = executeOperation("incident_escalation_signal", request);
+  const firstSnapshot = snapshotProfile(profile, storeId);
+  const firstCandidate = firstSnapshot.shadowCandidates.find((entry) => entry.candidateId === candidateId);
+
+  assert.equal(first.action, "created");
+  assert.equal(first.quarantine.required, true);
+  assert.equal(first.quarantine.triggered, true);
+  assert.equal(first.quarantine.changed, true);
+  assert.deepEqual(first.quarantine.demotedCandidateIds, [candidateId]);
+  assert.deepEqual(first.quarantine.quarantinedRuleIds, [ruleId]);
+  assert.ok(firstCandidate);
+  assert.equal(firstCandidate.status, "demoted");
+  assert.equal(firstSnapshot.rules.some((entry) => entry.ruleId === ruleId), false);
+
+  const auditCountAfterFirst = firstSnapshot.policyAuditTrail.length;
+  const second = executeOperation("incident_escalation_signal", request);
+  const secondSnapshot = snapshotProfile(profile, storeId);
+
+  assert.equal(second.action, "noop");
+  assert.equal(second.policyAuditEventId, first.policyAuditEventId);
+  assert.equal(second.quarantine.required, true);
+  assert.equal(second.quarantine.triggered, true);
+  assert.equal(second.quarantine.changed, false);
+  assert.deepEqual(second.quarantine.demotedCandidateIds, []);
+  assert.deepEqual(second.quarantine.alreadyQuarantinedCandidateIds, [candidateId]);
+  assert.deepEqual(second.quarantine.quarantinedRuleIds, []);
+  assert.equal(second.observability.replaySafe, true);
+  assert.equal(secondSnapshot.policyAuditTrail.length, auditCountAfterFirst);
+});
+
+test("ums-memory-hpl.7 non-severe escalation records signal without immediate quarantine and supports alias route", () => {
+  const storeId = "tenant-hpl7-high";
+  const profile = "hpl7-high";
+  const shadow = executeOperation("shadow_write", {
+    storeId,
+    profile,
+    statement: "High severity signals should be review-only unless marked severe/critical.",
+    sourceEventIds: ["evt-hpl7-high-shadow-1"],
+    evidenceEventIds: ["evt-hpl7-high-shadow-1"],
+    createdAt: "2026-03-02T19:00:00.000Z",
+    expiresAt: "2026-04-02T19:00:00.000Z",
+  });
+  const candidateId = shadow.applied[0].candidateId;
+  executeOperation("replay_eval", {
+    storeId,
+    profile,
+    candidateId,
+    successRateDelta: 0.8,
+    evaluatedAt: "2026-03-02T19:10:00.000Z",
+  });
+  const promoted = executeOperation("promote", {
+    storeId,
+    profile,
+    candidateId,
+    promotedAt: "2026-03-02T19:20:00.000Z",
+  });
+  const ruleId = promoted.rule.ruleId;
+
+  const escalation = executeOperation("incident_escalation_ingest", {
+    storeId,
+    profile,
+    escalationSignalId: "esc-hpl7-high-1",
+    incidentRef: "inc-hpl7-high",
+    escalationType: "regression",
+    severity: "high",
+    targetCandidateIds: [candidateId],
+    targetRuleIds: [ruleId],
+    evidenceEventIds: ["evt-hpl7-high-incident-1"],
+    sourceEventIds: ["evt-hpl7-high-incident-2"],
+    timestamp: "2026-03-02T19:30:00.000Z",
+  });
+  const snapshot = snapshotProfile(profile, storeId);
+  const candidate = snapshot.shadowCandidates.find((entry) => entry.candidateId === candidateId);
+
+  assert.equal(escalation.operation, "incident_escalation_signal");
+  assert.equal(escalation.action, "created");
+  assert.equal(escalation.quarantine.required, false);
+  assert.equal(escalation.quarantine.triggered, false);
+  assert.equal(escalation.quarantine.changed, false);
+  assert.deepEqual(escalation.quarantine.demotedCandidateIds, []);
+  assert.deepEqual(escalation.quarantine.quarantinedRuleIds, []);
+  assert.equal(escalation.observability.immediateQuarantineTriggered, false);
+  assert.ok(candidate);
+  assert.equal(candidate.status, "promoted");
+  assert.equal(snapshot.rules.some((entry) => entry.ruleId === ruleId), true);
 });
 
 test("context and curate operate on shared profile state", () => {

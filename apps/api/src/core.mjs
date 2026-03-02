@@ -19,6 +19,7 @@ const OPS = [
   "policy_decision_update",
   "pain_signal_ingest",
   "failure_signal_ingest",
+  "incident_escalation_signal",
   "curriculum_recommendation",
   "review_schedule_clock",
   "review_set_rebalance",
@@ -65,6 +66,8 @@ const PAIN_SIGNAL_EVIDENCE_CONTRACT_ERROR =
   "EVIDENCE_POINTER_CONTRACT_VIOLATION: pain_signal_ingest requires at least one evidenceEventId.";
 const FAILURE_SIGNAL_EVIDENCE_CONTRACT_ERROR =
   "EVIDENCE_POINTER_CONTRACT_VIOLATION: failure_signal_ingest requires at least one evidenceEventId.";
+const INCIDENT_ESCALATION_EVIDENCE_CONTRACT_ERROR =
+  "EVIDENCE_POINTER_CONTRACT_VIOLATION: incident_escalation_signal requires at least one evidenceEventId.";
 const GUARDED_CURATION_EVIDENCE_CONTRACT_ERROR =
   "VALIDATION_CONTRACT_VIOLATION: curate_guarded candidate promotion requires evidence-backed validation.";
 const RECALL_AUTHORIZATION_REQUESTER_ERROR =
@@ -1119,6 +1122,8 @@ const FAILURE_SIGNAL_DEFAULT_SEVERITY = Object.freeze({
   runtime_error: 0.82,
   assertion_failure: 0.75,
 });
+const INCIDENT_ESCALATION_SEVERITIES = new Set(["low", "medium", "high", "severe", "critical"]);
+const INCIDENT_ESCALATION_IMMEDIATE_QUARANTINE_SEVERITIES = new Set(["severe", "critical"]);
 const CLOCK_MODES = new Set(["auto", "interaction", "sleep"]);
 const RECALL_AUTH_MODES = new Set(["check", "grant", "revoke", "replace"]);
 const DEGRADATION_WARNINGS = Object.freeze([
@@ -1617,6 +1622,7 @@ function getProfileState(storeId, profile) {
     reviewScheduleEntries: [],
     painSignals: [],
     failureSignals: [],
+    incidentEscalations: [],
     schedulerClocks: {
       interactionTick: 0,
       sleepTick: 0,
@@ -2969,6 +2975,104 @@ function normalizeFailureSignalIngestRequest(request, storeId, profile) {
     outcomeRef,
     recordedAt,
     metadata: normalizeMetadata(request.metadata),
+  };
+}
+
+function normalizeIncidentEscalationSignalRequest(request, storeId, profile) {
+  const severity = normalizeDeterministicEnum(
+    request.severity ?? request.escalationSeverity ?? request.level,
+    "severity",
+    "incident_escalation_signal",
+    INCIDENT_ESCALATION_SEVERITIES,
+    "high",
+  );
+  const evidenceEventIds = normalizeGuardedStringArray(
+    request.evidenceEventIds ?? request.evidenceEpisodeIds,
+    "evidenceEventIds",
+    { required: true, requiredError: INCIDENT_ESCALATION_EVIDENCE_CONTRACT_ERROR },
+  );
+  const sourceEventIds = normalizeGuardedStringArray(
+    request.sourceEventIds ?? request.provenanceEventIds,
+    "sourceEventIds",
+  );
+  const targetCandidateIds = normalizeGuardedStringArray(
+    request.targetCandidateIds ??
+      (request.targetCandidateId ? [request.targetCandidateId] : null) ??
+      request.candidateIds ??
+      (request.candidateId ? [request.candidateId] : null),
+    "targetCandidateIds",
+  );
+  const targetRuleIds = normalizeGuardedStringArray(
+    request.targetRuleIds ??
+      (request.targetRuleId ? [request.targetRuleId] : null) ??
+      request.ruleIds ??
+      (request.ruleId ? [request.ruleId] : null),
+    "targetRuleIds",
+  );
+  const incidentRef =
+    normalizeBoundedString(
+      request.incidentRef ?? request.incidentId ?? request.ticketId ?? request.outcomeId ?? request.taskId,
+      "incidentRef",
+      128,
+    ) ?? "unspecified_incident";
+  const escalationType =
+    normalizeBoundedString(
+      request.escalationType ?? request.failureType ?? request.signalType ?? request.type,
+      "escalationType",
+      64,
+    ) ?? "failure_event";
+  const note = normalizeBoundedString(request.note ?? request.message ?? request.summary, "note", 1024);
+  const reasonCodes = mergeStringLists(normalizeGuardedStringArray(request.reasonCodes, "reasonCodes"), [
+    "incident_escalation_signal",
+    `incident_severity_${severity}`,
+  ]);
+  const recordedAt = normalizeIsoTimestamp(
+    request.timestamp ?? request.recordedAt ?? request.createdAt,
+    "incident_escalation_signal.timestamp",
+    DEFAULT_VERSION_TIMESTAMP,
+  );
+  const quarantineRequired = INCIDENT_ESCALATION_IMMEDIATE_QUARANTINE_SEVERITIES.has(severity);
+  const metadata = normalizeMetadata(request.metadata);
+  const idempotencyDigest = hash(
+    stableStringify({
+      storeId,
+      profile,
+      severity,
+      escalationType,
+      incidentRef,
+      note: note ?? null,
+      targetCandidateIds,
+      targetRuleIds,
+      evidenceEventIds,
+      sourceEventIds,
+      reasonCodes,
+      quarantineRequired,
+      metadata,
+      recordedAt,
+    }),
+  );
+  const escalationSignalId =
+    normalizeBoundedString(
+      request.escalationSignalId ?? request.incidentSignalId ?? request.signalId,
+      "escalationSignalId",
+      64,
+    ) ?? makeId("esc", idempotencyDigest);
+
+  return {
+    escalationSignalId,
+    idempotencyDigest,
+    incidentRef,
+    escalationType,
+    severity,
+    note,
+    targetCandidateIds,
+    targetRuleIds,
+    evidenceEventIds,
+    sourceEventIds,
+    reasonCodes,
+    quarantineRequired,
+    metadata,
+    recordedAt,
   };
 }
 
@@ -4740,6 +4844,253 @@ function runFailureSignalIngest(request) {
       totalFailureSignals: state.failureSignals.length,
       totalMisconceptions: state.misconceptions.length,
       slo: buildSloObservability(meta.requestDigest, "failure_signal_ingest", 40),
+    },
+  };
+}
+
+function applyIncidentEscalationQuarantine(
+  state,
+  {
+    escalationSignalId,
+    severity,
+    reasonCodes = [],
+    targetCandidateIds = [],
+    targetRuleIds = [],
+    recordedAt = DEFAULT_VERSION_TIMESTAMP,
+  } = {},
+) {
+  const normalizedReasonCodes = mergeStringLists(reasonCodes, ["incident_quarantine_triggered"]);
+  const resolvedCandidateIds = resolveDemotionTargetCandidateIds(state, targetRuleIds, targetCandidateIds);
+  const candidateActions = [];
+  const demotedCandidateIds = [];
+  const alreadyQuarantinedCandidateIds = [];
+  const missingCandidateIds = [];
+  const removedRuleIdsViaCandidates = [];
+
+  for (const candidateId of resolvedCandidateIds) {
+    const resolved = resolveMemoryCandidate(state, candidateId);
+    if (!resolved.candidate) {
+      missingCandidateIds.push(candidateId);
+      candidateActions.push({
+        candidateId,
+        action: "missing",
+      });
+      continue;
+    }
+    const previousStatus = resolved.candidate.status ?? "shadow";
+    const demotion = applyCandidateDemotion(state, resolved, {
+      demotedAt: recordedAt,
+      reasonCodes: normalizedReasonCodes,
+    });
+    if (demotion.action === "demoted") {
+      demotedCandidateIds.push(candidateId);
+    } else {
+      alreadyQuarantinedCandidateIds.push(candidateId);
+    }
+    if (demotion.removedRuleId) {
+      removedRuleIdsViaCandidates.push(demotion.removedRuleId);
+    }
+    candidateActions.push({
+      candidateId,
+      action: demotion.action === "demoted" ? "quarantined" : "already_quarantined",
+      previousStatus,
+      nextStatus: demotion.candidate?.status ?? previousStatus,
+      removedRuleId: demotion.removedRuleId,
+    });
+  }
+
+  const candidateRemovedRuleIds = asSortedUniqueStrings(removedRuleIdsViaCandidates);
+  const candidateRemovedRuleSet = new Set(candidateRemovedRuleIds);
+  const directRuleActions = [];
+  const directlyQuarantinedRuleIds = [];
+  const missingRuleIds = [];
+  const explicitRuleIds = asSortedUniqueStrings(targetRuleIds);
+  for (const ruleId of explicitRuleIds) {
+    if (candidateRemovedRuleSet.has(ruleId)) {
+      directRuleActions.push({
+        ruleId,
+        action: "quarantined_via_candidate",
+      });
+      continue;
+    }
+    const existingRuleIndex = state.rules.findIndex((rule) => rule?.ruleId === ruleId);
+    if (existingRuleIndex < 0) {
+      missingRuleIds.push(ruleId);
+      directRuleActions.push({
+        ruleId,
+        action: "missing",
+      });
+      continue;
+    }
+    state.rules.splice(existingRuleIndex, 1);
+    directlyQuarantinedRuleIds.push(ruleId);
+    directRuleActions.push({
+      ruleId,
+      action: "quarantined",
+    });
+  }
+
+  const quarantinedRuleIds = asSortedUniqueStrings([...candidateRemovedRuleIds, ...directlyQuarantinedRuleIds]);
+  const quarantinePathId = makeId(
+    "qpath",
+    hash(
+      stableStringify({
+        escalationSignalId,
+        severity,
+        targetCandidateIds: asSortedUniqueStrings(targetCandidateIds),
+        targetRuleIds: explicitRuleIds,
+        resolvedCandidateIds,
+        demotedCandidateIds,
+        quarantinedRuleIds,
+        recordedAt,
+      }),
+    ),
+  );
+
+  return {
+    quarantinePathId,
+    targetCandidateIds: asSortedUniqueStrings(targetCandidateIds),
+    targetRuleIds: explicitRuleIds,
+    resolvedCandidateIds,
+    candidateActions,
+    demotedCandidateIds: asSortedUniqueStrings(demotedCandidateIds),
+    alreadyQuarantinedCandidateIds: asSortedUniqueStrings(alreadyQuarantinedCandidateIds),
+    missingCandidateIds: asSortedUniqueStrings(missingCandidateIds),
+    quarantinedRuleIds,
+    ruleActions: directRuleActions,
+    missingRuleIds: asSortedUniqueStrings(missingRuleIds),
+    changed: demotedCandidateIds.length > 0 || directlyQuarantinedRuleIds.length > 0,
+    reasonCodes: normalizedReasonCodes,
+  };
+}
+
+function runIncidentEscalationSignal(request) {
+  const { storeId, profile, input } = normalizeRequest("incident_escalation_signal", request);
+  const state = getProfileState(storeId, profile);
+  const normalized = normalizeIncidentEscalationSignalRequest(request, storeId, profile);
+  const meta = buildMeta("incident_escalation_signal", storeId, profile, input);
+  const record = {
+    escalationSignalId: normalized.escalationSignalId,
+    idempotencyDigest: normalized.idempotencyDigest,
+    incidentRef: normalized.incidentRef,
+    escalationType: normalized.escalationType,
+    severity: normalized.severity,
+    note: normalized.note,
+    targetCandidateIds: normalized.targetCandidateIds,
+    targetRuleIds: normalized.targetRuleIds,
+    evidenceEventIds: normalized.evidenceEventIds,
+    sourceEventIds: normalized.sourceEventIds,
+    reasonCodes: normalized.reasonCodes,
+    quarantineRequired: normalized.quarantineRequired,
+    metadata: normalized.metadata,
+    recordedAt: normalized.recordedAt,
+  };
+  const escalationUpsert = upsertDeterministicRecord(
+    state.incidentEscalations,
+    "escalationSignalId",
+    record,
+    "recordedAt",
+  );
+  state.incidentEscalations = escalationUpsert.nextRecords;
+
+  const quarantine = normalized.quarantineRequired
+    ? applyIncidentEscalationQuarantine(state, {
+        escalationSignalId: normalized.escalationSignalId,
+        severity: normalized.severity,
+        reasonCodes: normalized.reasonCodes,
+        targetCandidateIds: normalized.targetCandidateIds,
+        targetRuleIds: normalized.targetRuleIds,
+        recordedAt: normalized.recordedAt,
+      })
+    : {
+        quarantinePathId: null,
+        targetCandidateIds: normalized.targetCandidateIds,
+        targetRuleIds: normalized.targetRuleIds,
+        resolvedCandidateIds: [],
+        candidateActions: [],
+        demotedCandidateIds: [],
+        alreadyQuarantinedCandidateIds: [],
+        missingCandidateIds: [],
+        quarantinedRuleIds: [],
+        ruleActions: [],
+        missingRuleIds: [],
+        changed: false,
+        reasonCodes: normalized.reasonCodes,
+      };
+  const action =
+    escalationUpsert.action === "noop" && !quarantine.changed
+      ? "noop"
+      : escalationUpsert.action === "created"
+        ? "created"
+        : "updated";
+  const existingAudit = findPolicyAuditTrailByOperationEntity(
+    state,
+    "incident_escalation_signal",
+    normalized.escalationSignalId,
+  );
+  const auditEvent =
+    action === "noop"
+      ? null
+      : appendPolicyAuditTrail(state, {
+          operation: "incident_escalation_signal",
+          storeId,
+          profile,
+          entityId: normalized.escalationSignalId,
+          outcome: normalized.quarantineRequired ? "deny" : "review",
+          reasonCodes:
+            normalized.quarantineRequired && quarantine.changed
+              ? mergeStringLists(normalized.reasonCodes, ["incident_quarantine_triggered"])
+              : normalized.reasonCodes,
+          details: {
+            escalationType: normalized.escalationType,
+            severity: normalized.severity,
+            incidentRef: normalized.incidentRef,
+            idempotencyDigest: normalized.idempotencyDigest,
+            quarantineRequired: normalized.quarantineRequired,
+            quarantinePathId: quarantine.quarantinePathId,
+            targetCandidateIds: quarantine.targetCandidateIds,
+            targetRuleIds: quarantine.targetRuleIds,
+            demotedCandidateIds: quarantine.demotedCandidateIds,
+            quarantinedRuleIds: quarantine.quarantinedRuleIds,
+            missingCandidateIds: quarantine.missingCandidateIds,
+            missingRuleIds: quarantine.missingRuleIds,
+          },
+          timestamp: normalized.recordedAt,
+        });
+
+  return {
+    ...meta,
+    action,
+    escalationSignalId: normalized.escalationSignalId,
+    signalDigest: hash(stableStringify(escalationUpsert.record)),
+    escalationSignal: escalationUpsert.record,
+    quarantine: {
+      required: normalized.quarantineRequired,
+      triggered: normalized.quarantineRequired,
+      pathId: quarantine.quarantinePathId,
+      targetCandidateIds: quarantine.targetCandidateIds,
+      targetRuleIds: quarantine.targetRuleIds,
+      resolvedCandidateIds: quarantine.resolvedCandidateIds,
+      demotedCandidateIds: quarantine.demotedCandidateIds,
+      alreadyQuarantinedCandidateIds: quarantine.alreadyQuarantinedCandidateIds,
+      missingCandidateIds: quarantine.missingCandidateIds,
+      quarantinedRuleIds: quarantine.quarantinedRuleIds,
+      missingRuleIds: quarantine.missingRuleIds,
+      changed: quarantine.changed,
+      reasonCodes: quarantine.reasonCodes,
+      candidateActions: quarantine.candidateActions,
+      ruleActions: quarantine.ruleActions,
+    },
+    policyAuditEventId: auditEvent?.auditEventId ?? existingAudit?.auditEventId ?? null,
+    observability: {
+      severity: normalized.severity,
+      immediateQuarantineTriggered: normalized.quarantineRequired,
+      quarantineMutationCount: quarantine.demotedCandidateIds.length + quarantine.quarantinedRuleIds.length,
+      evidenceCount: normalized.evidenceEventIds.length,
+      provenanceCount: normalized.sourceEventIds.length,
+      totalIncidentEscalations: state.incidentEscalations.length,
+      replaySafe: true,
+      slo: buildSloObservability(meta.requestDigest, "incident_escalation_signal", 35),
     },
   };
 }
@@ -6566,6 +6917,7 @@ function runDoctor(request) {
     misconceptions: state.misconceptions.length,
     painSignals: state.painSignals.length,
     failureSignals: state.failureSignals.length,
+    incidentEscalations: Array.isArray(state.incidentEscalations) ? state.incidentEscalations.length : 0,
     curriculumPlanItems: state.curriculumPlanItems.length,
     curriculumRecommendationSnapshots: state.curriculumRecommendationSnapshots.length,
     reviewScheduleEntries: state.reviewScheduleEntries.length,
@@ -6612,6 +6964,9 @@ const runners = {
   explicit_pain_signal_ingest: runPainSignalIngest,
   failure_signal_ingest: runFailureSignalIngest,
   implicit_failure_signal_ingest: runFailureSignalIngest,
+  incident_escalation_signal: runIncidentEscalationSignal,
+  incident_escalation_ingest: runIncidentEscalationSignal,
+  escalation_signal_ingest: runIncidentEscalationSignal,
   curriculum_plan_update: runCurriculumPlanUpdate,
   curriculum_recommendation: runCurriculumRecommendation,
   curriculum_recommend: runCurriculumRecommendation,
@@ -6720,6 +7075,10 @@ export function snapshotProfile(profile = INTERNAL_PROFILE_ID, storeId = DEFAULT
       ...signal,
       metadata: cloneStable(signal.metadata ?? {}, {}),
     })),
+    incidentEscalations: state.incidentEscalations.map((escalation) => ({
+      ...escalation,
+      metadata: cloneStable(escalation.metadata ?? {}, {}),
+    })),
     schedulerClocks: cloneStable(state.schedulerClocks ?? {}, {}),
     reviewArchivalTiers: cloneStable(state.reviewArchivalTiers ?? {}, {}),
     recallAllowlistPolicy: cloneStable(state.recallAllowlistPolicy ?? {}, {}),
@@ -6768,6 +7127,10 @@ function serializeState(state) {
       ...signal,
       metadata: cloneStable(signal.metadata ?? {}, {}),
     })),
+    incidentEscalations: state.incidentEscalations.map((escalation) => ({
+      ...escalation,
+      metadata: cloneStable(escalation.metadata ?? {}, {}),
+    })),
     schedulerClocks: cloneStable(state.schedulerClocks ?? {}, {}),
     reviewArchivalTiers: cloneStable(state.reviewArchivalTiers ?? {}, {}),
     recallAllowlistPolicy: cloneStable(state.recallAllowlistPolicy ?? {}, {}),
@@ -6814,6 +7177,7 @@ function normalizeState(rawState) {
   const reviewScheduleEntries = Array.isArray(state.reviewScheduleEntries) ? state.reviewScheduleEntries : [];
   const painSignals = Array.isArray(state.painSignals) ? state.painSignals : [];
   const failureSignals = Array.isArray(state.failureSignals) ? state.failureSignals : [];
+  const incidentEscalations = Array.isArray(state.incidentEscalations) ? state.incidentEscalations : [];
   const degradedTutorSessions = Array.isArray(state.degradedTutorSessions) ? state.degradedTutorSessions : [];
   const policyDecisions = Array.isArray(state.policyDecisions) ? state.policyDecisions : [];
   const policyAuditTrail = Array.isArray(state.policyAuditTrail) ? state.policyAuditTrail : [];
@@ -6960,6 +7324,23 @@ function normalizeState(rawState) {
       })),
       "recordedAt",
       "failureSignalId",
+    ),
+    incidentEscalations: sortByTimestampAndId(
+      incidentEscalations.map((escalation) => ({
+        ...escalation,
+        escalationSignalId:
+          normalizeBoundedString(escalation?.escalationSignalId, "incidentEscalations.escalationSignalId", 64) ??
+          makeId("esc", hash(stableStringify(escalation))),
+        recordedAt: normalizeIsoTimestampOrFallback(escalation?.recordedAt, DEFAULT_VERSION_TIMESTAMP),
+        reasonCodes: normalizeBoundedStringArrayLenient(escalation?.reasonCodes),
+        targetCandidateIds: normalizeBoundedStringArrayLenient(escalation?.targetCandidateIds),
+        targetRuleIds: normalizeBoundedStringArrayLenient(escalation?.targetRuleIds),
+        evidenceEventIds: normalizeBoundedStringArrayLenient(escalation?.evidenceEventIds),
+        sourceEventIds: normalizeBoundedStringArrayLenient(escalation?.sourceEventIds),
+        metadata: isPlainObject(escalation?.metadata) ? { ...escalation.metadata } : {},
+      })),
+      "recordedAt",
+      "escalationSignalId",
     ),
     shadowCandidates: sortByTimestampAndId(
       shadowCandidates.map((candidate) => {
