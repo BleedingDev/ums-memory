@@ -194,6 +194,78 @@ test("ums-memory-hpl.2 replay_eval thresholds produce critical safety severity a
   );
 });
 
+test("ums-memory-hpl.3 promote succeeds only with passing replay gate and fresh evidence links", () => {
+  const storeId = "tenant-hpl3-promote-fresh";
+  const profile = "hpl3-promote-fresh";
+  const shadow = executeOperation("shadow_write", {
+    storeId,
+    profile,
+    statement: "Promote with fresh evidence links.",
+    sourceEventIds: ["evt-hpl3-fresh-1"],
+    evidenceEventIds: ["evt-hpl3-fresh-1"],
+    createdAt: "2026-03-01T12:00:00.000Z",
+    expiresAt: "2026-04-01T12:00:00.000Z",
+  });
+  const candidateId = shadow.applied[0].candidateId;
+  const replay = executeOperation("replay_eval", {
+    storeId,
+    profile,
+    candidateId,
+    successRateDelta: 0.8,
+    evaluatedAt: "2026-03-01T12:30:00.000Z",
+  });
+  const promoted = executeOperation("promote", {
+    storeId,
+    profile,
+    candidateId,
+    promotedAt: "2026-03-02T13:00:00.000Z",
+    freshEvidenceThresholdDays: 14,
+  });
+
+  assert.equal(replay.gate.pass, true);
+  assert.equal(promoted.action, "promoted");
+  assert.equal(promoted.replayEvalId, replay.replayEvalId);
+  assert.equal(promoted.observability.replayGatePass, true);
+  assert.equal(promoted.observability.freshEvidencePass, true);
+  assert.equal(promoted.observability.evidenceNotExpired, true);
+  assert.equal(promoted.observability.hasEvidenceLinks, true);
+  assert.equal(promoted.observability.freshEvidenceWindowDays, 14);
+});
+
+test("ums-memory-hpl.3 promote rejects candidates with expired evidence even after passing replay", () => {
+  const storeId = "tenant-hpl3-promote-expired";
+  const profile = "hpl3-promote-expired";
+  const shadow = executeOperation("shadow_write", {
+    storeId,
+    profile,
+    statement: "Expired evidence should block promotion.",
+    sourceEventIds: ["evt-hpl3-expired-1"],
+    evidenceEventIds: ["evt-hpl3-expired-1"],
+    createdAt: "2026-01-01T12:00:00.000Z",
+    expiresAt: "2026-02-01T12:00:00.000Z",
+  });
+  const candidateId = shadow.applied[0].candidateId;
+  executeOperation("replay_eval", {
+    storeId,
+    profile,
+    candidateId,
+    successRateDelta: 0.8,
+    evaluatedAt: "2026-03-01T12:30:00.000Z",
+  });
+
+  assert.throws(
+    () =>
+      executeOperation("promote", {
+        storeId,
+        profile,
+        candidateId,
+        promotedAt: "2026-03-02T13:00:00.000Z",
+        freshEvidenceThresholdDays: 14,
+      }),
+    /promote requires fresh non-expired evidence links/,
+  );
+});
+
 test("shadow_write returns canonical candidate metadata and preserves it on deterministic noop replay", () => {
   const request = {
     storeId: "tenant-shadow-contract",

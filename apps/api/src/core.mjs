@@ -81,6 +81,8 @@ const REPLAY_EVAL_CANDIDATE_CONTRACT_ERROR =
   "VALIDATION_CONTRACT_VIOLATION: replay_eval requires an existing shadow candidate.";
 const PROMOTE_GATE_CONTRACT_ERROR =
   "VALIDATION_CONTRACT_VIOLATION: promote requires latest replay_eval status pass and no safety regressions.";
+const PROMOTE_FRESH_EVIDENCE_CONTRACT_ERROR =
+  "VALIDATION_CONTRACT_VIOLATION: promote requires fresh non-expired evidence links.";
 const ADDWEIGHT_CANDIDATE_CONTRACT_ERROR =
   "VALIDATION_CONTRACT_VIOLATION: addweight requires an existing shadow candidate.";
 const ADDWEIGHT_REASON_CONTRACT_ERROR =
@@ -3396,6 +3398,34 @@ function runPromote(request) {
     "promote.timestamp",
     DEFAULT_VERSION_TIMESTAMP,
   );
+  const freshEvidenceWindowDays = Math.min(
+    Math.max(
+      toPositiveInteger(
+        request.freshEvidenceThresholdDays ?? request.freshEvidenceWindowDays,
+        DEFAULT_FRESHNESS_WARNING_DAYS,
+      ),
+      1,
+    ),
+    3650,
+  );
+  const evidenceReferencePoint = normalizeIsoTimestampOrFallback(
+    resolved.candidate.updatedAt ?? resolved.candidate.createdAt,
+    DEFAULT_VERSION_TIMESTAMP,
+  );
+  const freshEvidenceAgeDays = isoAgeDays(promotedAt, evidenceReferencePoint);
+  const evidenceNotExpired =
+    normalizeIsoTimestampOrFallback(resolved.candidate.expiresAt, DEFAULT_VERSION_TIMESTAMP).localeCompare(promotedAt) >= 0;
+  const hasEvidenceLinks = Array.isArray(resolved.candidate.evidenceEventIds) && resolved.candidate.evidenceEventIds.length > 0;
+  const freshEvidencePass = hasEvidenceLinks && evidenceNotExpired && freshEvidenceAgeDays <= freshEvidenceWindowDays;
+  if (!freshEvidencePass) {
+    const error = new Error(PROMOTE_FRESH_EVIDENCE_CONTRACT_ERROR);
+    error.code = "PROMOTE_FRESH_EVIDENCE_STALE";
+    error.freshEvidenceWindowDays = freshEvidenceWindowDays;
+    error.freshEvidenceAgeDays = freshEvidenceAgeDays;
+    error.evidenceNotExpired = evidenceNotExpired;
+    error.hasEvidenceLinks = hasEvidenceLinks;
+    throw error;
+  }
   const nextCandidate = {
     ...resolved.candidate,
     status: "promoted",
@@ -3449,6 +3479,11 @@ function runPromote(request) {
     observability: {
       replayGatePass: true,
       safetyRegressionCount: latestEvaluation.safetyRegressionCount,
+      freshEvidencePass,
+      freshEvidenceWindowDays,
+      freshEvidenceAgeDays,
+      evidenceNotExpired,
+      hasEvidenceLinks,
       replaySafe: true,
       slo: buildSloObservability(meta.requestDigest, "promote", 45),
     },
