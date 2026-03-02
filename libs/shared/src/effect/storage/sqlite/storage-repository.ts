@@ -1225,16 +1225,16 @@ const parsePersistedMemoryPayloadEncryptionEnvelope = (
     return null;
   }
   const envelope = parsedPayload as Record<string, unknown>;
-  if (envelope.format !== sqlitePayloadEncryptionEnvelopeFormat) {
+  if (envelope["format"] !== sqlitePayloadEncryptionEnvelopeFormat) {
     return null;
   }
 
-  const version = envelope.version;
-  const algorithm = envelope.algorithm;
-  const keyId = envelope.keyId;
-  const ivBase64 = envelope.ivBase64;
-  const authTagBase64 = envelope.authTagBase64;
-  const ciphertextBase64 = envelope.ciphertextBase64;
+  const version = envelope["version"];
+  const algorithm = envelope["algorithm"];
+  const keyId = envelope["keyId"];
+  const ivBase64 = envelope["ivBase64"];
+  const authTagBase64 = envelope["authTagBase64"];
+  const ciphertextBase64 = envelope["ciphertextBase64"];
 
   if (version !== sqlitePayloadEncryptionEnvelopeVersion) {
     throw new Error(
@@ -1247,10 +1247,14 @@ const parsePersistedMemoryPayloadEncryptionEnvelope = (
     );
   }
   if (typeof keyId !== "string" || keyId.trim().length === 0) {
-    throw new Error("Persisted encrypted memory payload_json keyId is invalid.");
+    throw new Error(
+      "Persisted encrypted memory payload_json keyId is invalid."
+    );
   }
   if (typeof ivBase64 !== "string" || ivBase64.trim().length === 0) {
-    throw new Error("Persisted encrypted memory payload_json ivBase64 is invalid.");
+    throw new Error(
+      "Persisted encrypted memory payload_json ivBase64 is invalid."
+    );
   }
   if (typeof authTagBase64 !== "string" || authTagBase64.trim().length === 0) {
     throw new Error(
@@ -1295,7 +1299,9 @@ const toStoredMemoryPayloadJson = (
     );
   }
 
-  const initializationVector = randomBytes(sqlitePayloadEncryptionIvLengthBytes);
+  const initializationVector = randomBytes(
+    sqlitePayloadEncryptionIvLengthBytes
+  );
   const cipher = createCipheriv(
     sqlitePayloadEncryptionEnvelopeAlgorithm,
     payloadEncryptionConfig.activeKey,
@@ -2879,6 +2885,39 @@ const mapSnapshotImportFailure = (cause: unknown): StorageServiceError => {
   });
 };
 
+const hasSqliteTable = (database: DatabaseSync, tableName: string): boolean =>
+  database
+    .prepare(
+      [
+        "SELECT 1",
+        "FROM sqlite_master",
+        "WHERE type = 'table' AND name = ?",
+        "LIMIT 1;",
+      ].join("\n")
+    )
+    .get(tableName) !== undefined;
+
+const scrubEncryptedPayloadTextFromFts = (
+  database: DatabaseSync,
+  payloadEncryptionConfig: SqlitePayloadEncryptionConfig,
+  memoryItemsFtsAvailable: boolean
+): void => {
+  if (!payloadEncryptionConfig.enabled || !memoryItemsFtsAvailable) {
+    return;
+  }
+  try {
+    database.exec(
+      "UPDATE memory_items_fts SET payload_text = '' WHERE payload_text <> '';"
+    );
+  } catch (cause) {
+    throw toSqlitePayloadEncryptionContractError(
+      ".enabled",
+      "Encryption-at-rest requires deterministic FTS payload scrubbing.",
+      `Failed to scrub encrypted payload text from memory_items_fts: ${toErrorMessage(cause)}`
+    );
+  }
+};
+
 export const makeSqliteStorageRepository = (
   database: DatabaseSync,
   options: SqliteStorageRepositoryOptions = {}
@@ -2893,6 +2932,12 @@ export const makeSqliteStorageRepository = (
   if (runMigrations) {
     applyEnterpriseSqliteMigrations(database);
   }
+  const memoryItemsFtsAvailable = hasSqliteTable(database, "memory_items_fts");
+  scrubEncryptedPayloadTextFromFts(
+    database,
+    payloadEncryptionConfig,
+    memoryItemsFtsAvailable
+  );
   if (options.backupReplication !== undefined) {
     createSqliteBackupReplicator(database, options.backupReplication);
   }
@@ -2992,6 +3037,19 @@ export const makeSqliteStorageRepository = (
   const selectPersistedMemoryStatement = database.prepare(
     "SELECT updated_at_ms FROM memory_items WHERE tenant_id = ? AND memory_id = ?;"
   );
+  const scrubEncryptedMemoryFtsPayloadStatement = memoryItemsFtsAvailable
+    ? database.prepare(
+        [
+          "UPDATE memory_items_fts",
+          "SET payload_text = ''",
+          "WHERE rowid = (",
+          "  SELECT rowid FROM memory_items",
+          "  WHERE tenant_id = ? AND memory_id = ?",
+          "  LIMIT 1",
+          ");",
+        ].join("\n")
+      )
+    : null;
   const selectExistingMemoryLayerAndPayloadStatement = database.prepare(
     "SELECT memory_layer, payload_json FROM memory_items WHERE tenant_id = ? AND memory_id = ? LIMIT 1;"
   );
@@ -3885,6 +3943,16 @@ export const makeSqliteStorageRepository = (
               "memory_items.upsert.changes"
             );
             if (upsertChanges > 0) {
+              if (
+                payloadEncryptionConfig.enabled &&
+                scrubEncryptedMemoryFtsPayloadStatement !== null
+              ) {
+                // Prevent FTS payload indexing from ingesting ciphertext envelopes.
+                scrubEncryptedMemoryFtsPayloadStatement.run(
+                  request.spaceId,
+                  request.memoryId
+                );
+              }
               deleteMemoryEvidenceLinksStatement.run(
                 request.spaceId,
                 request.memoryId
@@ -4237,6 +4305,11 @@ export const makeSqliteStorageRepository = (
             }
 
             applySqliteStorageSnapshotData(database, snapshotData);
+            scrubEncryptedPayloadTextFromFts(
+              database,
+              payloadEncryptionConfig,
+              memoryItemsFtsAvailable
+            );
             return {
               ...responseBase,
               replayed: false,

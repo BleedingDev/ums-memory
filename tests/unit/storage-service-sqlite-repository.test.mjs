@@ -2969,6 +2969,19 @@ test("ums-memory-a9v.4: sqlite storage encrypts memory payload_json at rest and 
     assert.ok(!persistedRow.payload_json.includes("atrest@example.com"));
     const envelope = readEncryptedPayloadEnvelope(persistedRow.payload_json);
     assert.equal(envelope.keyId, "key-v1");
+    const persistedFtsRow = db
+      .prepare(
+        [
+          "SELECT payload_text FROM memory_items_fts",
+          "WHERE rowid = (",
+          "  SELECT rowid FROM memory_items WHERE tenant_id = ? AND memory_id = ?",
+          "  LIMIT 1",
+          ");",
+        ].join("\n"),
+      )
+      .get(request.spaceId, request.memoryId);
+    assert.ok(persistedFtsRow);
+    assert.equal(persistedFtsRow.payload_text, "");
 
     const idempotencyRow = db
       .prepare(
@@ -2982,6 +2995,100 @@ test("ums-memory-a9v.4: sqlite storage encrypts memory payload_json at rest and 
     assert.ok(idempotencyRow);
     assert.match(String(idempotencyRow.request_hash_sha256), /^[0-9a-f]{64}$/);
     assert.deepEqual(JSON.parse(idempotencyRow.response_json), firstResponse);
+  } finally {
+    db.close();
+  }
+});
+
+test("ums-memory-a9v.4: sqlite storage scrubs legacy FTS payload text when encryption-at-rest is enabled", async () => {
+  const storageServiceModule = await loadStorageServiceModule();
+  const db = new DatabaseSync(":memory:");
+
+  try {
+    const baselineService = storageServiceModule.makeSqliteStorageService(db);
+    Effect.runSync(
+      baselineService.upsertMemory({
+        spaceId: "tenant-a9v4-fts-scrub",
+        memoryId: "memory-a9v4-fts-scrub",
+        layer: "working",
+        payload: {
+          title: "FTS scrub baseline",
+          notes: "legacy plaintext payload term",
+          updatedAtMillis: 1_700_000_130_050,
+        },
+      }),
+    );
+
+    const ftsBefore = db
+      .prepare(
+        [
+          "SELECT payload_text FROM memory_items_fts",
+          "WHERE rowid = (",
+          "  SELECT rowid FROM memory_items WHERE tenant_id = ? AND memory_id = ?",
+          "  LIMIT 1",
+          ");",
+        ].join("\n"),
+      )
+      .get("tenant-a9v4-fts-scrub", "memory-a9v4-fts-scrub");
+    assert.ok(ftsBefore);
+    assert.match(ftsBefore.payload_text, /legacy plaintext payload term/i);
+
+    storageServiceModule.makeSqliteStorageService(db, {
+      applyMigrations: false,
+      encryptionAtRest: {
+        enabled: true,
+        activeKeyId: "key-v1",
+        keyRing: {
+          "key-v1": toBase64EncryptionKey(55),
+        },
+      },
+    });
+
+    const ftsAfter = db
+      .prepare(
+        [
+          "SELECT payload_text FROM memory_items_fts",
+          "WHERE rowid = (",
+          "  SELECT rowid FROM memory_items WHERE tenant_id = ? AND memory_id = ?",
+          "  LIMIT 1",
+          ");",
+        ].join("\n"),
+      )
+      .get("tenant-a9v4-fts-scrub", "memory-a9v4-fts-scrub");
+    assert.ok(ftsAfter);
+    assert.equal(ftsAfter.payload_text, "");
+  } finally {
+    db.close();
+  }
+});
+
+test("ums-memory-a9v.4: sqlite storage encryption startup tolerates missing FTS table when applyMigrations is false", async () => {
+  const storageServiceModule = await loadStorageServiceModule();
+  const db = new DatabaseSync(":memory:");
+
+  try {
+    storageServiceModule.makeSqliteStorageService(db);
+    db.exec(
+      [
+        "DROP TRIGGER IF EXISTS trg_memory_items_fts_insert;",
+        "DROP TRIGGER IF EXISTS trg_memory_items_fts_delete;",
+        "DROP TRIGGER IF EXISTS trg_memory_items_fts_update;",
+        "DROP TABLE IF EXISTS memory_items_fts;",
+      ].join("\n"),
+    );
+
+    assert.doesNotThrow(() => {
+      storageServiceModule.makeSqliteStorageService(db, {
+        applyMigrations: false,
+        encryptionAtRest: {
+          enabled: true,
+          activeKeyId: "key-v1",
+          keyRing: {
+            "key-v1": toBase64EncryptionKey(77),
+          },
+        },
+      });
+    });
   } finally {
     db.close();
   }
@@ -3143,6 +3250,71 @@ test("ums-memory-a9v.4: sqlite storage encryption config misconfiguration fails 
     "SqliteStorageRepositoryOptions.encryptionAtRest.enabled",
     /enabled/i,
   );
+});
+
+test("ums-memory-a9v.4: sqlite storage snapshot import scrubs FTS payload text when encryption-at-rest is enabled", async () => {
+  const storageServiceModule = await loadStorageServiceModule();
+  const sourceDb = new DatabaseSync(":memory:");
+  const targetDb = new DatabaseSync(":memory:");
+
+  try {
+    const sourceStorageService = storageServiceModule.makeSqliteStorageService(sourceDb);
+    Effect.runSync(
+      sourceStorageService.upsertMemory({
+        spaceId: "tenant-a9v4-snapshot-fts",
+        memoryId: "memory-a9v4-snapshot-fts",
+        layer: "working",
+        payload: {
+          title: "Snapshot FTS encryption scrub baseline",
+          notes: "snapshot plaintext payload token",
+          updatedAtMillis: 1_700_000_130_200,
+        },
+      }),
+    );
+
+    const exportedSnapshot = Effect.runSync(
+      sourceStorageService.exportSnapshot({
+        signatureSecret: "snapshot-secret-a9v4-fts",
+      }),
+    );
+
+    const targetStorageService = storageServiceModule.makeSqliteStorageService(targetDb, {
+      encryptionAtRest: {
+        enabled: true,
+        activeKeyId: "key-v1",
+        keyRing: {
+          "key-v1": toBase64EncryptionKey(66),
+        },
+      },
+    });
+    const importResponse = Effect.runSync(
+      targetStorageService.importSnapshot({
+        signatureSecret: "snapshot-secret-a9v4-fts",
+        signatureAlgorithm: exportedSnapshot.signatureAlgorithm,
+        payload: exportedSnapshot.payload,
+        signature: exportedSnapshot.signature,
+      }),
+    );
+    assert.equal(importResponse.imported, true);
+    assert.equal(importResponse.replayed, false);
+
+    const importedFtsRow = targetDb
+      .prepare(
+        [
+          "SELECT payload_text FROM memory_items_fts",
+          "WHERE rowid = (",
+          "  SELECT rowid FROM memory_items WHERE tenant_id = ? AND memory_id = ?",
+          "  LIMIT 1",
+          ");",
+        ].join("\n"),
+      )
+      .get("tenant-a9v4-snapshot-fts", "memory-a9v4-snapshot-fts");
+    assert.ok(importedFtsRow);
+    assert.equal(importedFtsRow.payload_text, "");
+  } finally {
+    sourceDb.close();
+    targetDb.close();
+  }
 });
 
 test("ums-memory-5cb.10: sqlite storage service replays upsert responses deterministically for matching idempotency keys", async () => {
