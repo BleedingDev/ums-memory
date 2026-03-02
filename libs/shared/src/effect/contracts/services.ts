@@ -132,6 +132,15 @@ export const RetrievalHitSchema = Schema.Struct({
   layer: MemoryLayerSchema,
   score: RetrievalScoreSchema,
   excerpt: Schema.String,
+  metadata: Schema.optional(
+    Schema.Struct({
+      chronology: Schema.Struct({
+        contradictsMemoryIds: Schema.Array(MemoryIdSchema),
+        supersedesMemoryIds: Schema.Array(MemoryIdSchema),
+        reconciledMemoryIds: Schema.Array(MemoryIdSchema),
+      }),
+    }),
+  ),
 });
 
 const ActionableRetrievalLineSchema = Schema.NonEmptyTrimmedString;

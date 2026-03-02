@@ -84,6 +84,11 @@ interface ParsedMemoryRow {
   readonly tombstonedAtMillis: number | null;
 }
 
+interface HitChronology {
+  readonly contradictsMemoryIds: readonly RetrievalHit["memoryId"][];
+  readonly supersedesMemoryIds: readonly RetrievalHit["memoryId"][];
+}
+
 interface PlannedHit {
   readonly memoryId: RetrievalHit["memoryId"];
   readonly layer: RetrievalHit["layer"];
@@ -93,6 +98,8 @@ interface PlannedHit {
   readonly scopeLevel: ScopeLevel;
   readonly scopeRank: number;
   readonly updatedAtMillis: number;
+  readonly chronology: HitChronology;
+  readonly reconciledMemoryIds: readonly RetrievalHit["memoryId"][];
 }
 
 interface NormalizedScopeSelectors {
@@ -135,6 +142,7 @@ interface PlannedHitCandidate {
   readonly updatedAtMillis: number;
   readonly expiresAtMillis: number | null;
   readonly rankingSignals: Omit<RankingSignals, "decay">;
+  readonly chronology: HitChronology;
 }
 
 interface CursorPayload {
@@ -410,6 +418,245 @@ const parsePayloadRecord = (payloadJson: string): Record<string, unknown> | null
   } catch {
     return null;
   }
+};
+
+const contradictionLinkKeys = Object.freeze([
+  "contradicts",
+  "contradictsMemoryId",
+  "contradicts_memory_id",
+  "contradictsMemoryIds",
+  "contradicts_memory_ids",
+  "contradictionMemoryId",
+  "contradiction_memory_id",
+  "contradictionMemoryIds",
+  "contradiction_memory_ids",
+]);
+
+const supersedesLinkKeys = Object.freeze([
+  "supersedes",
+  "supersedesMemoryId",
+  "supersedes_memory_id",
+  "supersedesMemoryIds",
+  "supersedes_memory_ids",
+]);
+
+const relationCollectionKeys = Object.freeze([
+  "relations",
+  "relationLinks",
+  "relation_links",
+  "memoryRelations",
+  "memory_relations",
+  "memoryLinks",
+  "memory_links",
+  "links",
+]);
+
+const relationKindKeys = Object.freeze([
+  "relationKind",
+  "relation_kind",
+  "kind",
+  "type",
+  "linkType",
+  "link_type",
+]);
+
+const relationTargetKeys = Object.freeze([
+  "memoryId",
+  "memory_id",
+  "targetMemoryId",
+  "target_memory_id",
+  "targetId",
+  "target_id",
+  "memoryIds",
+  "memory_ids",
+  "targetMemoryIds",
+  "target_memory_ids",
+  "memory",
+  "target",
+  "targets",
+]);
+
+const emptyHitChronology: HitChronology = Object.freeze({
+  contradictsMemoryIds: Object.freeze([]),
+  supersedesMemoryIds: Object.freeze([]),
+});
+
+const toOptionalTrimmedString = (value: unknown): string | null => {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+};
+
+const toOptionalMemoryId = (value: unknown): RetrievalHit["memoryId"] | null => {
+  const trimmed = toOptionalTrimmedString(value);
+  return trimmed === null ? null : toMemoryId(trimmed);
+};
+
+const toSortedMemoryIds = (
+  memoryIds: Iterable<RetrievalHit["memoryId"]>,
+): readonly RetrievalHit["memoryId"][] =>
+  Object.freeze([...new Set(memoryIds)].sort((left, right) => left.localeCompare(right)));
+
+const collectMemoryIdsFromLinkedValue = (
+  value: unknown,
+  accumulator: Set<RetrievalHit["memoryId"]>,
+): void => {
+  const memoryId = toOptionalMemoryId(value);
+  if (memoryId !== null) {
+    accumulator.add(memoryId);
+    return;
+  }
+
+  if (Array.isArray(value)) {
+    for (const entry of value) {
+      collectMemoryIdsFromLinkedValue(entry, accumulator);
+    }
+    return;
+  }
+
+  const record = toOptionalRecord(value);
+  if (record === null) {
+    return;
+  }
+
+  for (const key of relationTargetKeys) {
+    if (!Object.hasOwn(record, key)) {
+      continue;
+    }
+    collectMemoryIdsFromLinkedValue(record[key], accumulator);
+  }
+};
+
+type RelationKind = "contradicts" | "supersedes";
+
+const toRelationKind = (value: unknown): RelationKind | null => {
+  const normalizedValue = toOptionalTrimmedString(value);
+  if (normalizedValue === null) {
+    return null;
+  }
+  const normalized = normalizedValue.toLowerCase();
+  if (normalized.includes("contradict")) {
+    return "contradicts";
+  }
+  if (normalized.includes("supersede")) {
+    return "supersedes";
+  }
+  return null;
+};
+
+const collectExplicitLinkedMemoryIds = (
+  container: Record<string, unknown> | null,
+  keys: readonly string[],
+  accumulator: Set<RetrievalHit["memoryId"]>,
+): void => {
+  if (container === null) {
+    return;
+  }
+
+  for (const key of keys) {
+    if (!Object.hasOwn(container, key)) {
+      continue;
+    }
+    collectMemoryIdsFromLinkedValue(container[key], accumulator);
+  }
+};
+
+const toRelationRecords = (value: unknown): readonly Record<string, unknown>[] => {
+  if (Array.isArray(value)) {
+    return Object.freeze(
+      value
+        .map((entry) => toOptionalRecord(entry))
+        .filter((entry): entry is Record<string, unknown> => entry !== null),
+    );
+  }
+  const record = toOptionalRecord(value);
+  return record === null ? Object.freeze([]) : Object.freeze([record]);
+};
+
+const appendRelationTargets = (
+  relationRecord: Record<string, unknown>,
+  contradictsMemoryIds: Set<RetrievalHit["memoryId"]>,
+  supersedesMemoryIds: Set<RetrievalHit["memoryId"]>,
+): void => {
+  collectExplicitLinkedMemoryIds(relationRecord, contradictionLinkKeys, contradictsMemoryIds);
+  collectExplicitLinkedMemoryIds(relationRecord, supersedesLinkKeys, supersedesMemoryIds);
+
+  const relationKind = toRelationKind(readRecordValue(relationRecord, relationKindKeys));
+  if (relationKind === null) {
+    return;
+  }
+
+  const relationTargetIds = new Set<RetrievalHit["memoryId"]>();
+  collectExplicitLinkedMemoryIds(relationRecord, relationTargetKeys, relationTargetIds);
+  if (relationTargetIds.size === 0) {
+    return;
+  }
+
+  const relationAccumulator =
+    relationKind === "contradicts" ? contradictsMemoryIds : supersedesMemoryIds;
+  for (const relationTargetId of relationTargetIds) {
+    relationAccumulator.add(relationTargetId);
+  }
+};
+
+const toHitChronology = (
+  payloadRecord: Record<string, unknown> | null,
+  memoryId: RetrievalHit["memoryId"],
+): HitChronology => {
+  if (payloadRecord === null) {
+    return emptyHitChronology;
+  }
+
+  const metadataRecord = toOptionalRecord(readRecordValue(payloadRecord, ["metadata"]));
+  const chronologyRecord = toOptionalRecord(readRecordValue(payloadRecord, ["chronology"]));
+  const lineageRecord = toOptionalRecord(readRecordValue(payloadRecord, ["lineage"]));
+  const metadataChronologyRecord = toOptionalRecord(
+    readRecordValue(metadataRecord, ["chronology"]),
+  );
+  const metadataLineageRecord = toOptionalRecord(readRecordValue(metadataRecord, ["lineage"]));
+  const containers = Object.freeze([
+    payloadRecord,
+    metadataRecord,
+    chronologyRecord,
+    lineageRecord,
+    metadataChronologyRecord,
+    metadataLineageRecord,
+  ]);
+
+  const contradictsMemoryIds = new Set<RetrievalHit["memoryId"]>();
+  const supersedesMemoryIds = new Set<RetrievalHit["memoryId"]>();
+
+  for (const container of containers) {
+    collectExplicitLinkedMemoryIds(container, contradictionLinkKeys, contradictsMemoryIds);
+    collectExplicitLinkedMemoryIds(container, supersedesLinkKeys, supersedesMemoryIds);
+
+    if (container === null) {
+      continue;
+    }
+    for (const relationKey of relationCollectionKeys) {
+      if (!Object.hasOwn(container, relationKey)) {
+        continue;
+      }
+      const relationRecords = toRelationRecords(container[relationKey]);
+      for (const relationRecord of relationRecords) {
+        appendRelationTargets(relationRecord, contradictsMemoryIds, supersedesMemoryIds);
+      }
+    }
+  }
+
+  contradictsMemoryIds.delete(memoryId);
+  supersedesMemoryIds.delete(memoryId);
+
+  if (contradictsMemoryIds.size === 0 && supersedesMemoryIds.size === 0) {
+    return emptyHitChronology;
+  }
+
+  return Object.freeze({
+    contradictsMemoryIds: toSortedMemoryIds(contradictsMemoryIds),
+    supersedesMemoryIds: toSortedMemoryIds(supersedesMemoryIds),
+  });
 };
 
 const toExcerpt = (title: string, payloadRecord: Record<string, unknown> | null): string => {
@@ -713,6 +960,8 @@ const createPlannedHit = (
     scopeLevel: candidate.scopeLevel,
     scopeRank: candidate.scopeRank,
     updatedAtMillis: candidate.updatedAtMillis,
+    chronology: candidate.chronology,
+    reconciledMemoryIds: Object.freeze([]),
   };
 };
 
@@ -1014,6 +1263,7 @@ const buildPlannedHits = (
       continue;
     }
     const rankingSignals = toRankingSignals(payloadRecord, relevanceSignal);
+    const chronology = toHitChronology(payloadRecord, memoryRow.memoryId);
 
     candidateHits.push({
       memoryId: memoryRow.memoryId,
@@ -1025,6 +1275,7 @@ const buildPlannedHits = (
       updatedAtMillis: memoryRow.updatedAtMillis,
       expiresAtMillis: memoryRow.expiresAtMillis,
       rankingSignals,
+      chronology,
     });
   }
 
@@ -1082,6 +1333,139 @@ const filterDeniedHits = (
     { concurrency: 1 },
   ).pipe(Effect.map((maybeHits) => maybeHits.filter((hit): hit is PlannedHit => hit !== null)));
 
+const compareTimelineTruthPriority = (left: PlannedHit, right: PlannedHit): number => {
+  if (left.updatedAtMillis !== right.updatedAtMillis) {
+    return right.updatedAtMillis - left.updatedAtMillis;
+  }
+  return comparePlannedHits(left, right);
+};
+
+const reconcileContradictoryHits = (hits: readonly PlannedHit[]): readonly PlannedHit[] => {
+  if (hits.length < 2) {
+    return hits;
+  }
+
+  const hitById = new Map(hits.map((hit) => [hit.memoryId, hit] as const));
+  const conflictNeighborsByMemoryId = new Map<
+    RetrievalHit["memoryId"],
+    Set<RetrievalHit["memoryId"]>
+  >();
+  for (const hit of hits) {
+    conflictNeighborsByMemoryId.set(hit.memoryId, new Set());
+  }
+
+  for (const hit of hits) {
+    const sourceNeighbors = conflictNeighborsByMemoryId.get(hit.memoryId);
+    if (sourceNeighbors === undefined) {
+      continue;
+    }
+
+    const conflictMemoryIds = [
+      ...hit.chronology.contradictsMemoryIds,
+      ...hit.chronology.supersedesMemoryIds,
+    ];
+    for (const conflictMemoryId of conflictMemoryIds) {
+      if (conflictMemoryId === hit.memoryId || !hitById.has(conflictMemoryId)) {
+        continue;
+      }
+      sourceNeighbors.add(conflictMemoryId);
+      conflictNeighborsByMemoryId.get(conflictMemoryId)?.add(hit.memoryId);
+    }
+  }
+
+  const visited = new Set<RetrievalHit["memoryId"]>();
+  const reconciledHits: PlannedHit[] = [];
+
+  for (const hit of hits) {
+    if (visited.has(hit.memoryId)) {
+      continue;
+    }
+
+    const componentMemoryIds: RetrievalHit["memoryId"][] = [];
+    const queue: RetrievalHit["memoryId"][] = [hit.memoryId];
+    visited.add(hit.memoryId);
+
+    while (queue.length > 0) {
+      const currentMemoryId = queue.pop();
+      if (currentMemoryId === undefined) {
+        continue;
+      }
+      componentMemoryIds.push(currentMemoryId);
+      const neighbors = conflictNeighborsByMemoryId.get(currentMemoryId);
+      if (neighbors === undefined) {
+        continue;
+      }
+      for (const neighborMemoryId of neighbors) {
+        if (visited.has(neighborMemoryId)) {
+          continue;
+        }
+        visited.add(neighborMemoryId);
+        queue.push(neighborMemoryId);
+      }
+    }
+
+    const componentHits = componentMemoryIds
+      .map((memoryId) => hitById.get(memoryId))
+      .filter((candidate): candidate is PlannedHit => candidate !== undefined);
+    const firstComponentHit = componentHits[0];
+    if (firstComponentHit === undefined) {
+      continue;
+    }
+    if (componentHits.length === 1) {
+      reconciledHits.push(firstComponentHit);
+      continue;
+    }
+
+    componentHits.sort(compareTimelineTruthPriority);
+    const winner = componentHits[0];
+    if (winner === undefined) {
+      continue;
+    }
+    const reconciledMemoryIds = toSortedMemoryIds([
+      ...winner.reconciledMemoryIds,
+      ...componentHits.slice(1).map((candidate) => candidate.memoryId),
+    ]);
+    reconciledHits.push({
+      ...winner,
+      reconciledMemoryIds,
+    });
+  }
+
+  reconciledHits.sort(comparePlannedHits);
+  return Object.freeze(reconciledHits);
+};
+
+const toRetrievalHit = (hit: PlannedHit): RetrievalHit => {
+  const chronologyMetadata = {
+    contradictsMemoryIds: hit.chronology.contradictsMemoryIds,
+    supersedesMemoryIds: hit.chronology.supersedesMemoryIds,
+    reconciledMemoryIds: hit.reconciledMemoryIds,
+  };
+
+  if (
+    chronologyMetadata.contradictsMemoryIds.length === 0 &&
+    chronologyMetadata.supersedesMemoryIds.length === 0 &&
+    chronologyMetadata.reconciledMemoryIds.length === 0
+  ) {
+    return {
+      memoryId: hit.memoryId,
+      layer: hit.layer,
+      score: hit.score,
+      excerpt: hit.excerpt,
+    };
+  }
+
+  return {
+    memoryId: hit.memoryId,
+    layer: hit.layer,
+    score: hit.score,
+    excerpt: hit.excerpt,
+    metadata: {
+      chronology: chronologyMetadata,
+    },
+  };
+};
+
 const paginateHits = (
   normalized: NormalizedRetrievalRequest,
   hits: readonly PlannedHit[],
@@ -1100,12 +1484,7 @@ const paginateHits = (
   const pageHits =
     limit === 0
       ? []
-      : hits.slice(boundedOffset, Math.min(totalHits, boundedOffset + limit)).map((hit) => ({
-          memoryId: hit.memoryId,
-          layer: hit.layer,
-          score: hit.score,
-          excerpt: hit.excerpt,
-        }));
+      : hits.slice(boundedOffset, Math.min(totalHits, boundedOffset + limit)).map(toRetrievalHit);
 
   const nextOffset = boundedOffset + pageHits.length;
   const nextCursor =
@@ -1151,9 +1530,10 @@ const planRetrieval = (
       }),
     ),
     Effect.flatMap((plannedHits) => filterDeniedHits(normalized, policyService, plannedHits)),
-    Effect.flatMap((policyFilteredHits) =>
+    Effect.map((policyFilteredHits) => reconcileContradictoryHits(policyFilteredHits)),
+    Effect.flatMap((reconciledHits) =>
       Effect.try({
-        try: () => paginateHits(normalized, policyFilteredHits),
+        try: () => paginateHits(normalized, reconciledHits),
         catch: (cause) =>
           toRetrievalQueryError(
             normalized.request,

@@ -681,6 +681,197 @@ test("ums-memory-8as.3: ranking combines evidence, decay, human weight, and util
   }
 });
 
+test("ums-memory-8as.4: retrieval reconciles contradictory memories to the newest truth and keeps lineage metadata", async () => {
+  const { retrievalServiceModule, storageServiceModule } = await loadModules();
+  const db = new DatabaseSync(":memory:");
+
+  try {
+    const tenantId = "tenant-contradiction-reconcile";
+    const storageService = storageServiceModule.makeSqliteStorageService(db);
+
+    upsertMemorySync(storageService, {
+      spaceId: tenantId,
+      memoryId: "memory-old-truth",
+      layer: "working",
+      payload: {
+        title: "timeline truth token old release guidance",
+        updatedAtMillis: 100,
+      },
+    });
+    upsertMemorySync(storageService, {
+      spaceId: tenantId,
+      memoryId: "memory-new-truth",
+      layer: "working",
+      payload: {
+        title: "timeline truth token new release guidance",
+        updatedAtMillis: 300,
+        supersedesMemoryId: "memory-old-truth",
+        contradictsMemoryIds: ["memory-old-truth"],
+      },
+    });
+    upsertMemorySync(storageService, {
+      spaceId: tenantId,
+      memoryId: "memory-neutral-fact",
+      layer: "working",
+      payload: {
+        title: "timeline truth token deployment window unchanged",
+        updatedAtMillis: 200,
+      },
+    });
+
+    const retrievalService = retrievalServiceModule.makeRetrievalService(
+      storageService,
+      makePolicyService(),
+    );
+
+    const response = await Effect.runPromise(
+      retrievalService.retrieve({
+        spaceId: tenantId,
+        query: "timeline truth token",
+        limit: 10,
+      }),
+    );
+
+    assert.equal(response.totalHits, 2);
+    assert.deepEqual(
+      response.hits.map((hit) => hit.memoryId),
+      ["memory-new-truth", "memory-neutral-fact"],
+    );
+    assert.deepEqual(response.hits[0]?.metadata?.chronology?.supersedesMemoryIds, [
+      "memory-old-truth",
+    ]);
+    assert.deepEqual(response.hits[0]?.metadata?.chronology?.contradictsMemoryIds, [
+      "memory-old-truth",
+    ]);
+    assert.deepEqual(response.hits[0]?.metadata?.chronology?.reconciledMemoryIds, [
+      "memory-old-truth",
+    ]);
+    assert.equal(response.hits[1]?.metadata, undefined);
+  } finally {
+    db.close();
+  }
+});
+
+test("ums-memory-8as.4: reconciliation honors contradiction links in metadata lineage payloads", async () => {
+  const { retrievalServiceModule, storageServiceModule } = await loadModules();
+  const db = new DatabaseSync(":memory:");
+
+  try {
+    const tenantId = "tenant-contradiction-metadata-lineage";
+    const storageService = storageServiceModule.makeSqliteStorageService(db);
+
+    upsertMemorySync(storageService, {
+      spaceId: tenantId,
+      memoryId: "memory-lineage-old",
+      layer: "working",
+      payload: {
+        title: "metadata lineage contradiction token old",
+        updatedAtMillis: 100,
+      },
+    });
+    upsertMemorySync(storageService, {
+      spaceId: tenantId,
+      memoryId: "memory-lineage-new",
+      layer: "working",
+      payload: {
+        title: "metadata lineage contradiction token new",
+        updatedAtMillis: 200,
+        metadata: {
+          lineage: {
+            contradictsMemoryId: "memory-lineage-old",
+          },
+        },
+      },
+    });
+
+    const retrievalService = retrievalServiceModule.makeRetrievalService(
+      storageService,
+      makePolicyService(),
+    );
+
+    const response = await Effect.runPromise(
+      retrievalService.retrieve({
+        spaceId: tenantId,
+        query: "metadata lineage contradiction token",
+        limit: 10,
+      }),
+    );
+
+    assert.equal(response.totalHits, 1);
+    assert.deepEqual(
+      response.hits.map((hit) => hit.memoryId),
+      ["memory-lineage-new"],
+    );
+    assert.deepEqual(response.hits[0]?.metadata?.chronology?.contradictsMemoryIds, [
+      "memory-lineage-old",
+    ]);
+    assert.deepEqual(response.hits[0]?.metadata?.chronology?.reconciledMemoryIds, [
+      "memory-lineage-old",
+    ]);
+  } finally {
+    db.close();
+  }
+});
+
+test("ums-memory-8as.4: contradiction reconciliation tie-breaking is deterministic for equal timestamps", async () => {
+  const { retrievalServiceModule, storageServiceModule } = await loadModules();
+  const db = new DatabaseSync(":memory:");
+
+  try {
+    const tenantId = "tenant-contradiction-tie";
+    const storageService = storageServiceModule.makeSqliteStorageService(db);
+
+    upsertMemorySync(storageService, {
+      spaceId: tenantId,
+      memoryId: "memory-alpha",
+      layer: "working",
+      payload: {
+        title: "tie contradiction token alpha",
+        updatedAtMillis: 500,
+        contradictsMemoryId: "memory-beta",
+      },
+    });
+    upsertMemorySync(storageService, {
+      spaceId: tenantId,
+      memoryId: "memory-beta",
+      layer: "working",
+      payload: {
+        title: "tie contradiction token beta",
+        updatedAtMillis: 500,
+        contradictsMemoryId: "memory-alpha",
+      },
+    });
+
+    const retrievalService = retrievalServiceModule.makeRetrievalService(
+      storageService,
+      makePolicyService(),
+    );
+
+    const request = {
+      spaceId: tenantId,
+      query: "tie contradiction token",
+      limit: 10,
+    };
+    const firstResponse = await Effect.runPromise(retrievalService.retrieve(request));
+    const secondResponse = await Effect.runPromise(retrievalService.retrieve(request));
+
+    assert.deepEqual(firstResponse.hits, secondResponse.hits);
+    assert.equal(firstResponse.totalHits, 1);
+    assert.deepEqual(
+      firstResponse.hits.map((hit) => hit.memoryId),
+      ["memory-alpha"],
+    );
+    assert.deepEqual(firstResponse.hits[0]?.metadata?.chronology?.contradictsMemoryIds, [
+      "memory-beta",
+    ]);
+    assert.deepEqual(firstResponse.hits[0]?.metadata?.chronology?.reconciledMemoryIds, [
+      "memory-beta",
+    ]);
+  } finally {
+    db.close();
+  }
+});
+
 test("ums-memory-8as.2: retrieval planner enforces tenant isolation", async () => {
   const { retrievalServiceModule, storageServiceModule } = await loadModules();
   const db = new DatabaseSync(":memory:");
