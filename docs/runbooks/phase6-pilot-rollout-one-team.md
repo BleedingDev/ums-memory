@@ -21,6 +21,7 @@ Create these artifacts exactly once per pilot day:
 - Daily summary report: `docs/reports/pilot-rollout/<pilot-id>-day-<NN>-summary.json`
 - Final summary report: `docs/reports/pilot-rollout/<pilot-id>-final-summary.json`
 - KPI dashboard report: `docs/reports/pilot-rollout/<pilot-id>-kpi-dashboard.json`
+- Ranking/decay tuning report: `docs/reports/pilot-rollout/<pilot-id>-ranking-decay-tuning.json`
 - Rollout decision log: `docs/reports/pilot-rollout/<pilot-id>-decision-log.md`
 
 All artifacts are append-only, committed to git, and sorted/normalized before aggregation.
@@ -185,6 +186,15 @@ npm run pilot:dashboard -- \
   --output docs/reports/pilot-rollout/<pilot-id>-kpi-dashboard.json
 ```
 
+Ranking/decay tuning:
+```bash
+npm run pilot:tune -- \
+  --input docs/reports/pilot-rollout/<pilot-id>-final-summary.json \
+  --dashboard docs/reports/pilot-rollout/<pilot-id>-kpi-dashboard.json \
+  --feedback ops/pilot-rollout/<pilot-id>/feedback.ndjson \
+  --output docs/reports/pilot-rollout/<pilot-id>-ranking-decay-tuning.json
+```
+
 Report generator guarantees:
 1. Fails fast by default when required telemetry fields are missing (`timestamp`, `team`, `project`, `operation`, outcome indicator, latency).
 2. Supports legacy compatibility mode with `--allow-invalid` and reports skipped entries via `invalidEventCount`.
@@ -197,5 +207,6 @@ Report generator guarantees:
   - Generate and publish `docs/reports/pilot-rollout/<pilot-id>-kpi-dashboard.json` using `npm run pilot:dashboard` and the phase 6 KPI runbook (`docs/runbooks/phase6-kpi-dashboard-operations.md`).
 - For `n4m.3` tuning:
   - Use per-operation failure and latency distributions plus anomaly/policy slices and linked feedback categories.
+  - Generate and publish `docs/reports/pilot-rollout/<pilot-id>-ranking-decay-tuning.json` with `npm run pilot:tune` and the tuning runbook (`docs/runbooks/phase6-ranking-decay-tuning.md`).
 
 Attach final summary + decision log links when closing `ums-memory-n4m.1`.
