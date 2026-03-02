@@ -103,6 +103,97 @@ test("shadow candidates and replay evaluations survive export/import round-trips
   assert.equal(replayFromRestoredStore.action, "noop");
 });
 
+test("ums-memory-hpl.2 replay_eval computes score breakdown and canary safety deltas deterministically", () => {
+  const storeId = "tenant-hpl2-breakdown";
+  const profile = "hpl2-breakdown";
+  const shadow = executeOperation("shadow_write", {
+    storeId,
+    profile,
+    statement: "Replay score engine should expose deterministic breakdown and canary signals.",
+    sourceEventIds: ["evt-hpl2-breakdown-1"],
+    evidenceEventIds: ["evt-hpl2-breakdown-1"],
+  });
+  const candidateId = shadow.applied[0].candidateId;
+  const request = {
+    storeId,
+    profile,
+    candidateId,
+    successRateDelta: 0.4,
+    reopenRateDelta: 0.05,
+    latencyP95DeltaMs: 50,
+    tokenCostDelta: 8,
+    policyViolationsDelta: 0,
+    hallucinationFlagDelta: 0,
+    canarySuccessRateDelta: 0.1,
+    canaryErrorRateDelta: 0.02,
+    canaryLatencyP95DeltaMs: 20,
+    canaryPolicyViolationsDelta: 0.01,
+    canaryHallucinationFlagDelta: 0,
+    gateThreshold: 0,
+    evaluatedAt: "2026-03-02T16:00:00.000Z",
+  };
+
+  const evaluated = executeOperation("replay_eval", request);
+  const replay = executeOperation("replay_eval", {
+    ...request,
+    replayEvalId: evaluated.replayEvalId,
+  });
+
+  assert.equal(evaluated.action, "created");
+  assert.equal(replay.action, "noop");
+  assert.equal(evaluated.evaluation.scoreBreakdown.total, evaluated.evaluation.netValueScore);
+  assert.equal(evaluated.gate.replayRegressionCount, 0);
+  assert.equal(evaluated.gate.canaryRegressionCount, 2);
+  assert.equal(evaluated.gate.safetyRegressionCount, 2);
+  assert.equal(evaluated.gate.severity, "high");
+  assert.equal(evaluated.gate.pass, false);
+  assert.equal(evaluated.evaluation.safetyDeltas.severity, "high");
+});
+
+test("ums-memory-hpl.2 replay_eval thresholds produce critical safety severity and block promote", () => {
+  const storeId = "tenant-hpl2-thresholds";
+  const profile = "hpl2-thresholds";
+  const shadow = executeOperation("shadow_write", {
+    storeId,
+    profile,
+    statement: "Safety threshold regressions must block promotion.",
+    sourceEventIds: ["evt-hpl2-thresholds-1"],
+    evidenceEventIds: ["evt-hpl2-thresholds-1"],
+  });
+  const candidateId = shadow.applied[0].candidateId;
+
+  const evaluated = executeOperation("replay_eval", {
+    storeId,
+    profile,
+    candidateId,
+    successRateDelta: 0.3,
+    policyViolationsDelta: 0.3,
+    hallucinationFlagDelta: 0.2,
+    canaryPolicyViolationsDelta: 0.4,
+    canaryHallucinationFlagDelta: 0.1,
+    safetyDeltaThreshold: 0.15,
+    canaryDeltaThreshold: 0.05,
+    gateThreshold: -100,
+    evaluatedAt: "2026-03-02T16:30:00.000Z",
+  });
+
+  assert.equal(evaluated.gate.replayRegressionCount, 2);
+  assert.equal(evaluated.gate.canaryRegressionCount, 2);
+  assert.equal(evaluated.gate.safetyRegressionCount, 4);
+  assert.equal(evaluated.gate.severity, "critical");
+  assert.equal(evaluated.gate.pass, false);
+
+  assert.throws(
+    () =>
+      executeOperation("promote", {
+        storeId,
+        profile,
+        candidateId,
+      }),
+    /promote requires latest replay_eval status pass and no safety regressions/,
+  );
+});
+
 test("shadow_write returns canonical candidate metadata and preserves it on deterministic noop replay", () => {
   const request = {
     storeId: "tenant-shadow-contract",

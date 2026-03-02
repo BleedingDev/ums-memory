@@ -133,6 +133,8 @@ const OUTCOME_UTILITY_SIGNAL_DELTA = Object.freeze({
   success: 0.08,
   failure: -0.2,
 });
+const DEFAULT_REPLAY_SAFETY_DELTA_THRESHOLD = 0;
+const DEFAULT_CANARY_SAFETY_DELTA_THRESHOLD = 0;
 const DEFAULT_STORE_ID = "coding-agent";
 const INTERNAL_PROFILE_ID = "__store_default__";
 
@@ -1941,15 +1943,87 @@ function normalizeReplayEvalMetrics(request) {
   };
 }
 
-function computeNetValueScore(metrics) {
-  const score =
-    metrics.successRateDelta * 100 -
-    metrics.reopenRateDelta * 80 -
-    metrics.latencyP95DeltaMs * 0.05 -
-    metrics.tokenCostDelta * 0.1 -
-    metrics.policyViolationsDelta * 200 -
-    metrics.hallucinationFlagDelta * 120;
-  return roundNumber(score, 6);
+function normalizeReplayEvalCanaryMetrics(request) {
+  return {
+    successRateDelta: stableScore(request.canarySuccessRateDelta ?? request.canary_success_rate_delta, 0),
+    errorRateDelta: stableScore(request.canaryErrorRateDelta ?? request.canary_error_rate_delta, 0),
+    latencyP95DeltaMs: stableScore(request.canaryLatencyP95DeltaMs ?? request.canary_latency_p95_delta_ms, 0),
+    policyViolationsDelta: stableScore(
+      request.canaryPolicyViolationsDelta ?? request.canary_policy_violations_delta,
+      0,
+    ),
+    hallucinationFlagDelta: stableScore(
+      request.canaryHallucinationFlagDelta ?? request.canary_hallucination_flag_delta,
+      0,
+    ),
+  };
+}
+
+function computeReplayEvalScoreBreakdown(metrics, canaryMetrics) {
+  const components = {
+    replaySuccessReward: roundNumber(metrics.successRateDelta * 100, 6),
+    replayReopenPenalty: roundNumber(metrics.reopenRateDelta * -80, 6),
+    replayLatencyPenalty: roundNumber(metrics.latencyP95DeltaMs * -0.05, 6),
+    replayTokenPenalty: roundNumber(metrics.tokenCostDelta * -0.1, 6),
+    replayPolicyPenalty: roundNumber(metrics.policyViolationsDelta * -200, 6),
+    replayHallucinationPenalty: roundNumber(metrics.hallucinationFlagDelta * -120, 6),
+    canarySuccessReward: roundNumber(canaryMetrics.successRateDelta * 60, 6),
+    canaryErrorPenalty: roundNumber(canaryMetrics.errorRateDelta * -90, 6),
+    canaryLatencyPenalty: roundNumber(canaryMetrics.latencyP95DeltaMs * -0.04, 6),
+    canaryPolicyPenalty: roundNumber(canaryMetrics.policyViolationsDelta * -220, 6),
+    canaryHallucinationPenalty: roundNumber(canaryMetrics.hallucinationFlagDelta * -140, 6),
+  };
+  const total = roundNumber(
+    Object.values(components).reduce((accumulator, value) => accumulator + stableScore(value, 0), 0),
+    6,
+  );
+  return {
+    components: stableSortObject(components),
+    total,
+  };
+}
+
+function computeReplayEvalSafetyDeltas(metrics, canaryMetrics, replayThreshold, canaryThreshold) {
+  const replaySafetyDeltas = {
+    policyViolationsDelta: roundNumber(metrics.policyViolationsDelta, 6),
+    hallucinationFlagDelta: roundNumber(metrics.hallucinationFlagDelta, 6),
+  };
+  const canarySafetyDeltas = {
+    policyViolationsDelta: roundNumber(canaryMetrics.policyViolationsDelta, 6),
+    hallucinationFlagDelta: roundNumber(canaryMetrics.hallucinationFlagDelta, 6),
+    errorRateDelta: roundNumber(canaryMetrics.errorRateDelta, 6),
+  };
+  const replayRegressionCount = Object.values(replaySafetyDeltas).filter(
+    (delta) => stableScore(delta, 0) > replayThreshold,
+  ).length;
+  const canaryRegressionCount = Object.values(canarySafetyDeltas).filter(
+    (delta) => stableScore(delta, 0) > canaryThreshold,
+  ).length;
+  const safetyDeltaScore = roundNumber(
+    Object.values(replaySafetyDeltas).reduce(
+      (accumulator, delta) => accumulator + Math.max(0, stableScore(delta, 0) - replayThreshold),
+      0,
+    ) +
+      Object.values(canarySafetyDeltas).reduce(
+        (accumulator, delta) => accumulator + Math.max(0, stableScore(delta, 0) - canaryThreshold),
+        0,
+      ),
+    6,
+  );
+  const totalRegressionCount = replayRegressionCount + canaryRegressionCount;
+  const severity = totalRegressionCount >= 3 ? "critical" : totalRegressionCount > 0 ? "high" : "none";
+
+  return {
+    replay: replaySafetyDeltas,
+    canary: canarySafetyDeltas,
+    replayThreshold: roundNumber(replayThreshold, 6),
+    canaryThreshold: roundNumber(canaryThreshold, 6),
+    replayRegressionCount,
+    canaryRegressionCount,
+    totalRegressionCount,
+    safetyDeltaScore,
+    severity,
+  };
 }
 
 function normalizeRequest(operation, request) {
@@ -3183,11 +3257,28 @@ function runReplayEval(request) {
     DEFAULT_VERSION_TIMESTAMP,
   );
   const metrics = normalizeReplayEvalMetrics(request);
-  const netValueScore = computeNetValueScore(metrics);
+  const canaryMetrics = normalizeReplayEvalCanaryMetrics(request);
+  const scoreBreakdown = computeReplayEvalScoreBreakdown(metrics, canaryMetrics);
+  const netValueScore = scoreBreakdown.total;
   const gateThreshold = stableScore(request.gateThreshold, 0);
-  const safetyRegressionCount = [metrics.policyViolationsDelta, metrics.hallucinationFlagDelta].filter(
-    (delta) => delta > 0,
-  ).length;
+  const replaySafetyDeltaThreshold = Math.max(
+    stableScore(request.safetyDeltaThreshold ?? request.safety_delta_threshold, DEFAULT_REPLAY_SAFETY_DELTA_THRESHOLD),
+    0,
+  );
+  const canarySafetyDeltaThreshold = Math.max(
+    stableScore(
+      request.canaryDeltaThreshold ?? request.canary_delta_threshold,
+      DEFAULT_CANARY_SAFETY_DELTA_THRESHOLD,
+    ),
+    0,
+  );
+  const safetyDeltas = computeReplayEvalSafetyDeltas(
+    metrics,
+    canaryMetrics,
+    replaySafetyDeltaThreshold,
+    canarySafetyDeltaThreshold,
+  );
+  const safetyRegressionCount = safetyDeltas.totalRegressionCount;
   const pass = safetyRegressionCount === 0 && netValueScore >= gateThreshold;
   const evaluationPackId =
     normalizeBoundedString(request.evaluationPackId, "replay_eval.evaluationPackId", 64) ??
@@ -3199,7 +3290,17 @@ function runReplayEval(request) {
     normalizeBoundedString(request.replayEvalId, "replay_eval.replayEvalId", 64) ??
     makeId(
       "reval",
-      hash(stableStringify({ candidateId, evaluationPackId, metrics, gateThreshold })),
+      hash(
+        stableStringify({
+          candidateId,
+          evaluationPackId,
+          metrics,
+          canaryMetrics,
+          gateThreshold,
+          replaySafetyDeltaThreshold,
+          canarySafetyDeltaThreshold,
+        }),
+      ),
     );
 
   const evaluation = {
@@ -3207,6 +3308,9 @@ function runReplayEval(request) {
     candidateId,
     evaluationPackId,
     metrics: stableSortObject(metrics),
+    canaryMetrics: stableSortObject(canaryMetrics),
+    scoreBreakdown: stableSortObject(scoreBreakdown),
+    safetyDeltas: stableSortObject(safetyDeltas),
     netValueScore,
     gateThreshold,
     safetyRegressionCount,
@@ -3249,10 +3353,17 @@ function runReplayEval(request) {
       pass,
       gateThreshold,
       safetyRegressionCount,
+      replayRegressionCount: safetyDeltas.replayRegressionCount,
+      canaryRegressionCount: safetyDeltas.canaryRegressionCount,
+      safetyDeltaScore: safetyDeltas.safetyDeltaScore,
+      severity: safetyDeltas.severity,
+      replayThreshold: safetyDeltas.replayThreshold,
+      canaryThreshold: safetyDeltas.canaryThreshold,
     },
     observability: {
       replaySafe: true,
       hasSafetyRegression: safetyRegressionCount > 0,
+      safetySeverity: safetyDeltas.severity,
       slo: buildSloObservability(meta.requestDigest, "replay_eval", 45),
     },
   };
@@ -6206,6 +6317,9 @@ function normalizeState(rawState) {
           makeId("reval", hash(stableStringify(evaluation))),
         evaluatedAt: normalizeIsoTimestampOrFallback(evaluation?.evaluatedAt, DEFAULT_VERSION_TIMESTAMP),
         metrics: isPlainObject(evaluation?.metrics) ? stableSortObject(evaluation.metrics) : {},
+        canaryMetrics: isPlainObject(evaluation?.canaryMetrics) ? stableSortObject(evaluation.canaryMetrics) : {},
+        scoreBreakdown: isPlainObject(evaluation?.scoreBreakdown) ? stableSortObject(evaluation.scoreBreakdown) : {},
+        safetyDeltas: isPlainObject(evaluation?.safetyDeltas) ? stableSortObject(evaluation.safetyDeltas) : {},
         metadata: isPlainObject(evaluation?.metadata) ? { ...evaluation.metadata } : {},
       })),
       "evaluatedAt",
