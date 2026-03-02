@@ -214,8 +214,14 @@ export function startApiServer({
   stateFile = DEFAULT_RUNTIME_STATE_FILE,
 } = {}) {
   const server = createApiServer({ stateFile });
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
+    const onError = (error) => {
+      server.off("error", onError);
+      reject(error);
+    };
+    server.once("error", onError);
     server.listen(port, host, () => {
+      server.off("error", onError);
       const address = server.address();
       const resolvedPort =
         address && typeof address === "object" && typeof address.port === "number"
@@ -239,10 +245,31 @@ const isMainModule =
 let activeServerHandle = null;
 
 if (isMainModule) {
-  startApiServer()
-    .then(({ server, host, port }) => {
-      activeServerHandle = server;
+  import("./service-runtime.mjs")
+    .then(({ startSupervisedApiService }) =>
+      startSupervisedApiService({
+        host: HOST,
+        port: PORT,
+        stateFile: DEFAULT_RUNTIME_STATE_FILE,
+      }))
+    .then(({ service, host, port }) => {
+      activeServerHandle = service;
       process.stdout.write(`UMS API listening on http://${host}:${port}\n`);
+      const supervisionWatcher = setInterval(() => {
+        const snapshot = service.status();
+        if (snapshot.phase === "failed") {
+          clearInterval(supervisionWatcher);
+          process.stderr.write(`UMS API supervision failed: ${snapshot.lastError ?? "unknown failure"}\n`);
+          process.exit(1);
+          return;
+        }
+        if (snapshot.phase === "stopped") {
+          clearInterval(supervisionWatcher);
+        }
+      }, 250);
+      if (typeof supervisionWatcher.unref === "function") {
+        supervisionWatcher.unref();
+      }
     })
     .catch((error) => {
       process.stderr.write(`Failed to start API: ${error.message}\n`);

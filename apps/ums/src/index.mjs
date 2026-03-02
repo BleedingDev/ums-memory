@@ -1,6 +1,6 @@
 import { main as runCliMain } from "../../cli/src/index.mjs";
-import { startApiServer } from "../../api/src/server.mjs";
 import { DEFAULT_RUNTIME_STATE_FILE } from "../../api/src/runtime-adapter.mjs";
+import { startSupervisedApiService } from "../../api/src/service-runtime.mjs";
 
 const DEFAULT_API_HOST = process.env.UMS_API_HOST ?? "127.0.0.1";
 const DEFAULT_API_PORT = Number.parseInt(process.env.UMS_API_PORT ?? "8787", 10);
@@ -67,9 +67,24 @@ let activeServerHandle = null;
 
 async function runServe(argv) {
   const config = parseServeArgs(argv);
-  const { server, host, port } = await startApiServer(config);
-  activeServerHandle = server;
+  const { service, host, port } = await startSupervisedApiService(config);
+  activeServerHandle = service;
   process.stdout.write(`UMS API listening on http://${host}:${port}\n`);
+  const supervisionWatcher = setInterval(() => {
+    const snapshot = service.status();
+    if (snapshot.phase === "failed") {
+      clearInterval(supervisionWatcher);
+      process.stderr.write(`UMS serve supervision failed: ${snapshot.lastError ?? "unknown failure"}\n`);
+      process.exit(1);
+      return;
+    }
+    if (snapshot.phase === "stopped") {
+      clearInterval(supervisionWatcher);
+    }
+  }, 250);
+  if (typeof supervisionWatcher.unref === "function") {
+    supervisionWatcher.unref();
+  }
   return 0;
 }
 
