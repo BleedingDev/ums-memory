@@ -33,6 +33,14 @@ function runCli(args, stdin = "") {
   });
 }
 
+function assertConsoleSecurityHeaders(response) {
+  const csp = response.headers.get("content-security-policy") ?? "";
+  assert.match(csp, /default-src 'none'/);
+  assert.match(csp, /frame-ancestors 'none'/);
+  assert.equal(response.headers.get("x-frame-options"), "DENY");
+  assert.equal(response.headers.get("x-content-type-options"), "nosniff");
+}
+
 test("http server exposes prometheus metrics and deterministic structured telemetry events", async () => {
   resetStore();
   const events = [];
@@ -260,7 +268,7 @@ test("http server exposes deterministic JSON operation routes", async () => {
   }
 });
 
-test("ums-memory-yji.7 serves deterministic memory console UI and static assets", async () => {
+test("ums-memory-yji.7 keeps console UI routes disabled by default", async () => {
   resetStore();
   const { server, host, port } = await startApiServer({
     host: "127.0.0.1",
@@ -270,13 +278,46 @@ test("ums-memory-yji.7 serves deterministic memory console UI and static assets"
   const base = `http://${host}:${port}`;
 
   try {
+    for (const route of ["/console", "/console.js", "/console.css"]) {
+      const getRes = await fetch(`${base}${route}`);
+      assert.equal(getRes.status, 404);
+      const getBody = await getRes.json();
+      assert.equal(getBody.ok, false);
+      assert.equal(getBody.error.code, "NOT_FOUND");
+
+      const postRes = await fetch(`${base}${route}`, { method: "POST" });
+      assert.equal(postRes.status, 404);
+      const postBody = await postRes.json();
+      assert.equal(postBody.ok, false);
+      assert.equal(postBody.error.code, "NOT_FOUND");
+    }
+  } finally {
+    await new Promise((resolvePromise, rejectPromise) => {
+      server.close((error) => (error ? rejectPromise(error) : resolvePromise()));
+    });
+  }
+});
+
+test("ums-memory-yji.7 serves deterministic memory console UI and static assets when enabled", async () => {
+  resetStore();
+  const { server, host, port } = await startApiServer({
+    host: "127.0.0.1",
+    port: 0,
+    stateFile: null,
+    enableConsoleUi: true,
+  });
+  const base = `http://${host}:${port}`;
+
+  try {
     const consoleRes = await fetch(`${base}/console`);
     assert.equal(consoleRes.status, 200);
     assert.match(consoleRes.headers.get("content-type") ?? "", /^text\/html/i);
+    assertConsoleSecurityHeaders(consoleRes);
     const consoleHtml = await consoleRes.text();
     assert.match(consoleHtml, /<title>UMS Memory Console<\/title>/);
     assert.match(consoleHtml, /href="\/console\.css"/);
     assert.match(consoleHtml, /src="\/console\.js"/);
+    assert.match(consoleHtml, /Profile \(fixed\)/);
     assert.match(consoleHtml, /data-operation="memory_console_search"/);
     assert.match(consoleHtml, /data-operation="memory_console_timeline"/);
     assert.match(consoleHtml, /data-operation="memory_console_provenance"/);
@@ -287,6 +328,7 @@ test("ums-memory-yji.7 serves deterministic memory console UI and static assets"
     const scriptRes = await fetch(`${base}/console.js`);
     assert.equal(scriptRes.status, 200);
     assert.match(scriptRes.headers.get("content-type") ?? "", /javascript/i);
+    assertConsoleSecurityHeaders(scriptRes);
     const scriptBody = await scriptRes.text();
     assert.match(scriptBody, /memory_console_search/);
     assert.match(scriptBody, /memory_console_timeline/);
@@ -294,19 +336,23 @@ test("ums-memory-yji.7 serves deterministic memory console UI and static assets"
     assert.match(scriptBody, /memory_console_policy_audit/);
     assert.match(scriptBody, /memory_console_anomaly_alerts/);
     assert.match(scriptBody, /manual_quarantine_override/);
+    assert.doesNotMatch(scriptBody, /Number\\.parseInt/);
 
     const styleRes = await fetch(`${base}/console.css`);
     assert.equal(styleRes.status, 200);
     assert.match(styleRes.headers.get("content-type") ?? "", /^text\/css/i);
+    assertConsoleSecurityHeaders(styleRes);
     const styleBody = await styleRes.text();
     assert.match(styleBody, /\.console-app/);
     assert.match(styleBody, /\.operation-card/);
 
-    const wrongMethodRes = await fetch(`${base}/console`, { method: "POST" });
-    assert.equal(wrongMethodRes.status, 405);
-    const wrongMethodBody = await wrongMethodRes.json();
-    assert.equal(wrongMethodBody.ok, false);
-    assert.equal(wrongMethodBody.error.code, "METHOD_NOT_ALLOWED");
+    for (const route of ["/console", "/console.js", "/console.css"]) {
+      const wrongMethodRes = await fetch(`${base}${route}`, { method: "POST" });
+      assert.equal(wrongMethodRes.status, 405);
+      const wrongMethodBody = await wrongMethodRes.json();
+      assert.equal(wrongMethodBody.ok, false);
+      assert.equal(wrongMethodBody.error.code, "METHOD_NOT_ALLOWED");
+    }
   } finally {
     await new Promise((resolvePromise, rejectPromise) => {
       server.close((error) => (error ? rejectPromise(error) : resolvePromise()));

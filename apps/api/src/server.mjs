@@ -9,7 +9,39 @@ import { CONSOLE_CSS, CONSOLE_HTML, CONSOLE_JS } from "./console-ui.mjs";
 
 const HOST = process.env.UMS_API_HOST ?? "127.0.0.1";
 const PORT = Number.parseInt(process.env.UMS_API_PORT ?? "8787", 10);
+const ENABLE_CONSOLE_UI = parseBooleanFlag(process.env.UMS_API_ENABLE_CONSOLE_UI);
 const API_PREFIX = "/v1";
+const CONSOLE_SECURITY_HEADERS = Object.freeze({
+  "content-security-policy":
+    "default-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self'",
+  "x-frame-options": "DENY",
+  "x-content-type-options": "nosniff",
+});
+const CONSOLE_ROUTES = Object.freeze({
+  "/console": {
+    body: CONSOLE_HTML,
+    contentType: "text/html; charset=utf-8",
+    methodError: "Only GET is supported for /console.",
+  },
+  "/console.js": {
+    body: CONSOLE_JS,
+    contentType: "text/javascript; charset=utf-8",
+    methodError: "Only GET is supported for /console.js.",
+  },
+  "/console.css": {
+    body: CONSOLE_CSS,
+    contentType: "text/css; charset=utf-8",
+    methodError: "Only GET is supported for /console.css.",
+  },
+});
+
+function parseBooleanFlag(value) {
+  if (typeof value !== "string") {
+    return false;
+  }
+  const normalized = value.trim().toLowerCase();
+  return normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "on";
+}
 
 function json(res, statusCode, body) {
   const payload = JSON.stringify(body);
@@ -20,11 +52,18 @@ function json(res, statusCode, body) {
   res.end(payload);
 }
 
-function text(res, statusCode, body, contentType = PROMETHEUS_CONTENT_TYPE) {
+function text(
+  res,
+  statusCode,
+  body,
+  contentType = PROMETHEUS_CONTENT_TYPE,
+  additionalHeaders = undefined,
+) {
   const payload = String(body ?? "");
   res.writeHead(statusCode, {
     "content-type": contentType,
     "content-length": Buffer.byteLength(payload),
+    ...(additionalHeaders ?? {}),
   });
   res.end(payload);
 }
@@ -185,6 +224,7 @@ function resolveTelemetry(telemetry) {
 export function createApiServer({
   stateFile = DEFAULT_RUNTIME_STATE_FILE,
   telemetry = createInMemoryApiTelemetry(),
+  enableConsoleUi = ENABLE_CONSOLE_UI,
 } = {}) {
   const activeTelemetry = resolveTelemetry(telemetry);
   return createServer(async (req, res) => {
@@ -217,25 +257,15 @@ export function createApiServer({
       return text(res, 200, activeTelemetry.renderPrometheusMetrics());
     }
 
-    if (url.pathname === "/console") {
-      if (req.method !== "GET") {
-        return methodNotAllowed(res, "Only GET is supported for /console.");
+    const consoleRoute = CONSOLE_ROUTES[url.pathname];
+    if (consoleRoute) {
+      if (!enableConsoleUi) {
+        return notFound(res);
       }
-      return text(res, 200, CONSOLE_HTML, "text/html; charset=utf-8");
-    }
-
-    if (url.pathname === "/console.js") {
       if (req.method !== "GET") {
-        return methodNotAllowed(res, "Only GET is supported for /console.js.");
+        return methodNotAllowed(res, consoleRoute.methodError);
       }
-      return text(res, 200, CONSOLE_JS, "text/javascript; charset=utf-8");
-    }
-
-    if (url.pathname === "/console.css") {
-      if (req.method !== "GET") {
-        return methodNotAllowed(res, "Only GET is supported for /console.css.");
-      }
-      return text(res, 200, CONSOLE_CSS, "text/css; charset=utf-8");
+      return text(res, 200, consoleRoute.body, consoleRoute.contentType, CONSOLE_SECURITY_HEADERS);
     }
 
     const operation = parseOperation(url.pathname);
@@ -324,9 +354,10 @@ export function startApiServer({
   port = PORT,
   stateFile = DEFAULT_RUNTIME_STATE_FILE,
   telemetry = createInMemoryApiTelemetry(),
+  enableConsoleUi = ENABLE_CONSOLE_UI,
 } = {}) {
   const activeTelemetry = resolveTelemetry(telemetry);
-  const server = createApiServer({ stateFile, telemetry: activeTelemetry });
+  const server = createApiServer({ stateFile, telemetry: activeTelemetry, enableConsoleUi });
   return new Promise((resolve, reject) => {
     const onError = (error) => {
       server.off("error", onError);

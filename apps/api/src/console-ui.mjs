@@ -21,10 +21,21 @@ export const CONSOLE_HTML = `<!doctype html>
             <input id="console-store" name="storeId" type="text" value="coding-agent" autocomplete="off">
           </label>
           <label>
-            Profile
-            <input id="console-profile" name="profile" type="text" value="operator-console" autocomplete="off">
+            Profile (fixed)
+            <input
+              id="console-profile"
+              name="profile"
+              type="text"
+              value="operator-console"
+              autocomplete="off"
+              readonly
+              disabled
+            >
           </label>
         </div>
+        <p class="field-note">
+          Profile is fixed to <code>operator-console</code>; the current runtime adapter ignores profile overrides.
+        </p>
       </section>
 
       <section class="panel">
@@ -326,6 +337,12 @@ body {
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
 }
 
+.field-note {
+  margin: 10px 0 0;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
 label {
   display: grid;
   gap: 4px;
@@ -349,6 +366,12 @@ textarea {
   background: #fff;
   color: var(--text);
   padding: 6px 8px;
+}
+
+input[disabled] {
+  background: #edf3e8;
+  color: var(--muted);
+  cursor: not-allowed;
 }
 
 textarea {
@@ -426,7 +449,6 @@ export const CONSOLE_JS = `const API_PREFIX = "/v1";
 const DEFAULT_PROFILE = "operator-console";
 
 const storeInput = document.querySelector("#console-store");
-const profileInput = document.querySelector("#console-profile");
 const forms = Array.from(document.querySelectorAll("form.operation-form"));
 
 function getFieldValue(form, name) {
@@ -457,8 +479,11 @@ function parsePositiveInteger(raw, label) {
   if (!value) {
     return null;
   }
-  const parsed = Number.parseInt(value, 10);
-  if (!Number.isFinite(parsed) || parsed < 1) {
+  if (!/^[0-9]+$/.test(value)) {
+    throw new Error(label + " must be a positive integer.");
+  }
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed < 1) {
     throw new Error(label + " must be a positive integer.");
   }
   return parsed;
@@ -513,8 +538,7 @@ function addInteger(payload, key, raw, label) {
 }
 
 function buildBasePayload() {
-  const profile = profileInput && typeof profileInput.value === "string" ? profileInput.value.trim() : "";
-  return { profile: profile || DEFAULT_PROFILE };
+  return { profile: DEFAULT_PROFILE };
 }
 
 function buildSearchPayload(form) {
