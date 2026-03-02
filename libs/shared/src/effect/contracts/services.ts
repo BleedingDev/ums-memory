@@ -48,7 +48,8 @@ export const StorageDeleteResponseSchema = Schema.Struct({
   deleted: Schema.Boolean,
 });
 
-export const StorageSnapshotSignatureAlgorithmSchema = Schema.Literal("hmac-sha256");
+export const StorageSnapshotSignatureAlgorithmSchema =
+  Schema.Literal("hmac-sha256");
 
 export const StorageSnapshotExportRequestSchema = Schema.Struct({
   signatureSecret: Schema.String,
@@ -79,7 +80,12 @@ export const StorageSnapshotImportResponseSchema = Schema.Struct({
 });
 
 const RetrievalScoreSchema = Schema.Number.pipe(Schema.between(0, 1));
-const RetrievalScopeLevelSchema = Schema.Literal("common", "project", "job_role", "user");
+const RetrievalScopeLevelSchema = Schema.Literal(
+  "common",
+  "project",
+  "job_role",
+  "user"
+);
 
 export const RetrievalScopeSelectorsSchema = Schema.Struct({
   projectId: Schema.optional(ProjectIdSchema),
@@ -140,7 +146,7 @@ export const RetrievalHitSchema = Schema.Struct({
         supersedesMemoryIds: Schema.Array(MemoryIdSchema),
         reconciledMemoryIds: Schema.Array(MemoryIdSchema),
       }),
-    }),
+    })
   ),
 });
 
@@ -155,7 +161,7 @@ export const RetrievalExplainabilityReasonCodeSchema = Schema.Literal(
   "SCOPE_LEVEL_USER",
   "POLICY_ALLOW",
   "RANKING_WEIGHTED_SIGNALS",
-  "CHRONOLOGY_RECONCILED",
+  "CHRONOLOGY_RECONCILED"
 );
 
 export const RetrievalExplainabilityRankingSignalSchema = Schema.Literal(
@@ -163,7 +169,7 @@ export const RetrievalExplainabilityRankingSignalSchema = Schema.Literal(
   "evidenceStrength",
   "decay",
   "humanWeight",
-  "utility",
+  "utility"
 );
 
 export const RetrievalExplainabilityRankingSignalsSchema = Schema.Struct({
@@ -191,7 +197,9 @@ export const RetrievalExplainabilityHitSchema = Schema.Struct({
   scopeLevel: RetrievalScopeLevelSchema,
   reasonCodes: Schema.Array(RetrievalExplainabilityReasonCodeSchema),
   rankingSignals: RetrievalExplainabilityRankingSignalsSchema,
-  weightedContributions: Schema.Array(RetrievalExplainabilityWeightedContributionSchema),
+  weightedContributions: Schema.Array(
+    RetrievalExplainabilityWeightedContributionSchema
+  ),
 });
 
 const ActionableRetrievalLineSchema = Schema.NonEmptyTrimmedString;
@@ -262,6 +270,44 @@ export const PolicyResponseSchema = Schema.Struct({
   evaluatedAtMillis: NonNegativeIntSchema,
 });
 
+export const AuthorizationRoleSchema = Schema.Literal(
+  "admin",
+  "lead",
+  "dev",
+  "auditor"
+);
+
+export const AuthorizationActionSchema = Schema.Literal(
+  "memory.read",
+  "memory.write",
+  "memory.promote",
+  "memory.demote",
+  "memory.replay_eval",
+  "policy.read",
+  "policy.write",
+  "policy.override",
+  "compliance.read",
+  "compliance.export"
+);
+
+export const AuthorizationDecisionReasonCodeSchema = Schema.Literal(
+  "RBAC_ALLOW",
+  "RBAC_DENY_ROLE_ACTION"
+);
+
+export const AuthorizationRequestSchema = Schema.Struct({
+  role: AuthorizationRoleSchema,
+  action: AuthorizationActionSchema,
+});
+
+export const AuthorizationResponseSchema = Schema.Struct({
+  role: AuthorizationRoleSchema,
+  action: AuthorizationActionSchema,
+  allowed: Schema.Boolean,
+  reasonCode: AuthorizationDecisionReasonCodeSchema,
+  evaluatedAtMillis: NonNegativeIntSchema,
+});
+
 export const IngestionRecordSchema = Schema.Struct({
   recordId: EvidenceIdSchema,
   content: Schema.String,
@@ -281,10 +327,18 @@ export const IngestionResponseSchema = Schema.Struct({
   ingestedAtMillis: NonNegativeIntSchema,
 });
 
-export type StorageUpsertRequest = Schema.Schema.Type<typeof StorageUpsertRequestSchema>;
-export type StorageUpsertResponse = Schema.Schema.Type<typeof StorageUpsertResponseSchema>;
-export type StorageDeleteRequest = Schema.Schema.Type<typeof StorageDeleteRequestSchema>;
-export type StorageDeleteResponse = Schema.Schema.Type<typeof StorageDeleteResponseSchema>;
+export type StorageUpsertRequest = Schema.Schema.Type<
+  typeof StorageUpsertRequestSchema
+>;
+export type StorageUpsertResponse = Schema.Schema.Type<
+  typeof StorageUpsertResponseSchema
+>;
+export type StorageDeleteRequest = Schema.Schema.Type<
+  typeof StorageDeleteRequestSchema
+>;
+export type StorageDeleteResponse = Schema.Schema.Type<
+  typeof StorageDeleteResponseSchema
+>;
 export type StorageSnapshotSignatureAlgorithm = Schema.Schema.Type<
   typeof StorageSnapshotSignatureAlgorithmSchema
 >;
@@ -300,11 +354,21 @@ export type StorageSnapshotImportRequest = Schema.Schema.Type<
 export type StorageSnapshotImportResponse = Schema.Schema.Type<
   typeof StorageSnapshotImportResponseSchema
 >;
-export type RetrievalScopeSelectors = Schema.Schema.Type<typeof RetrievalScopeSelectorsSchema>;
-export type RetrievalPolicyInput = Schema.Schema.Type<typeof RetrievalPolicyInputSchema>;
-export type RetrievalRankingWeights = Schema.Schema.Type<typeof RetrievalRankingWeightsSchema>;
-export type RetrievalRequest = Schema.Schema.Type<typeof RetrievalRequestSchema>;
-export type RetrievalScopeLevel = Schema.Schema.Type<typeof RetrievalScopeLevelSchema>;
+export type RetrievalScopeSelectors = Schema.Schema.Type<
+  typeof RetrievalScopeSelectorsSchema
+>;
+export type RetrievalPolicyInput = Schema.Schema.Type<
+  typeof RetrievalPolicyInputSchema
+>;
+export type RetrievalRankingWeights = Schema.Schema.Type<
+  typeof RetrievalRankingWeightsSchema
+>;
+export type RetrievalRequest = Schema.Schema.Type<
+  typeof RetrievalRequestSchema
+>;
+export type RetrievalScopeLevel = Schema.Schema.Type<
+  typeof RetrievalScopeLevelSchema
+>;
 export type RetrievalHit = Schema.Schema.Type<typeof RetrievalHitSchema>;
 export type RetrievalExplainabilityReasonCode = Schema.Schema.Type<
   typeof RetrievalExplainabilityReasonCodeSchema
@@ -327,16 +391,45 @@ export type ActionableRetrievalPackSourceMetadata = Schema.Schema.Type<
 export type ActionableRetrievalPackSource = Schema.Schema.Type<
   typeof ActionableRetrievalPackSourceSchema
 >;
-export type ActionableRetrievalPack = Schema.Schema.Type<typeof ActionableRetrievalPackSchema>;
-export type RetrievalResponse = Schema.Schema.Type<typeof RetrievalResponseSchema>;
+export type ActionableRetrievalPack = Schema.Schema.Type<
+  typeof ActionableRetrievalPackSchema
+>;
+export type RetrievalResponse = Schema.Schema.Type<
+  typeof RetrievalResponseSchema
+>;
 export type RetrievalExplainabilityResponse = Schema.Schema.Type<
   typeof RetrievalExplainabilityResponseSchema
 >;
-export type EvaluationRequest = Schema.Schema.Type<typeof EvaluationRequestSchema>;
-export type EvaluationResult = Schema.Schema.Type<typeof EvaluationResultSchema>;
-export type EvaluationResponse = Schema.Schema.Type<typeof EvaluationResponseSchema>;
+export type EvaluationRequest = Schema.Schema.Type<
+  typeof EvaluationRequestSchema
+>;
+export type EvaluationResult = Schema.Schema.Type<
+  typeof EvaluationResultSchema
+>;
+export type EvaluationResponse = Schema.Schema.Type<
+  typeof EvaluationResponseSchema
+>;
 export type PolicyRequest = Schema.Schema.Type<typeof PolicyRequestSchema>;
 export type PolicyResponse = Schema.Schema.Type<typeof PolicyResponseSchema>;
+export type AuthorizationRole = Schema.Schema.Type<
+  typeof AuthorizationRoleSchema
+>;
+export type AuthorizationAction = Schema.Schema.Type<
+  typeof AuthorizationActionSchema
+>;
+export type AuthorizationDecisionReasonCode = Schema.Schema.Type<
+  typeof AuthorizationDecisionReasonCodeSchema
+>;
+export type AuthorizationRequest = Schema.Schema.Type<
+  typeof AuthorizationRequestSchema
+>;
+export type AuthorizationResponse = Schema.Schema.Type<
+  typeof AuthorizationResponseSchema
+>;
 export type IngestionRecord = Schema.Schema.Type<typeof IngestionRecordSchema>;
-export type IngestionRequest = Schema.Schema.Type<typeof IngestionRequestSchema>;
-export type IngestionResponse = Schema.Schema.Type<typeof IngestionResponseSchema>;
+export type IngestionRequest = Schema.Schema.Type<
+  typeof IngestionRequestSchema
+>;
+export type IngestionResponse = Schema.Schema.Type<
+  typeof IngestionResponseSchema
+>;

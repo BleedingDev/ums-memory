@@ -40,13 +40,22 @@ interface SqliteSchemaDefinition {
 }
 
 export interface SqliteMigrationValidationOptions {
-  readonly validateBeforeCommit?: (database: DatabaseSync, targetVersion: number) => void;
+  readonly validateBeforeCommit?: (
+    database: DatabaseSync,
+    targetVersion: number
+  ) => void;
 }
 
 const toNonNegativeSafeInteger = (value: unknown, label: string): number => {
   if (typeof value === "number") {
-    if (!Number.isSafeInteger(value) || value < 0 || value > SQLITE_USER_VERSION_MAX) {
-      throw new RangeError(`${label} must be a non-negative safe integer. Received: ${value}.`);
+    if (
+      !Number.isSafeInteger(value) ||
+      value < 0 ||
+      value > SQLITE_USER_VERSION_MAX
+    ) {
+      throw new RangeError(
+        `${label} must be a non-negative safe integer. Received: ${value}.`
+      );
     }
 
     return value;
@@ -55,7 +64,7 @@ const toNonNegativeSafeInteger = (value: unknown, label: string): number => {
   if (typeof value === "bigint") {
     if (value < 0n || value > BigInt(SQLITE_USER_VERSION_MAX)) {
       throw new RangeError(
-        `${label} must be a non-negative safe integer. Received: ${value.toString()}.`,
+        `${label} must be a non-negative safe integer. Received: ${value.toString()}.`
       );
     }
 
@@ -68,7 +77,9 @@ const toNonNegativeSafeInteger = (value: unknown, label: string): number => {
 const normalizeSqlDefinition = (sql: string): string =>
   sql.replace(/\s+/g, " ").replace(/;+$/g, "").trim();
 
-const parseSqliteSchemaDefinition = (statement: string): SqliteSchemaDefinition | null => {
+const parseSqliteSchemaDefinition = (
+  statement: string
+): SqliteSchemaDefinition | null => {
   const match = SQLITE_SCHEMA_OBJECT_PATTERN.exec(statement.trim());
   if (!match) {
     return null;
@@ -87,35 +98,39 @@ const parseSqliteSchemaDefinition = (statement: string): SqliteSchemaDefinition 
   });
 };
 
-const assertDeterministicMigrations = <Migration extends SqliteMigrationDefinition>(
-  migrations: readonly Migration[],
+const assertDeterministicMigrations = <
+  Migration extends SqliteMigrationDefinition,
+>(
+  migrations: readonly Migration[]
 ): readonly Migration[] => {
   let previousVersion = -1;
 
   for (const migration of migrations) {
     const migrationVersion = toNonNegativeSafeInteger(
       migration.version,
-      `migration version for ${migration.name}`,
+      `migration version for ${migration.name}`
     );
     if (migrationVersion < 1) {
       throw new RangeError(
-        `Migration ${migration.name} must use a version >= 1. Received: ${migrationVersion}.`,
+        `Migration ${migration.name} must use a version >= 1. Received: ${migrationVersion}.`
       );
     }
     if (migrationVersion <= previousVersion) {
       throw new RangeError(
-        `Migrations must be strictly ordered by ascending version. Found ${migrationVersion} after ${previousVersion}.`,
+        `Migrations must be strictly ordered by ascending version. Found ${migrationVersion} after ${previousVersion}.`
       );
     }
 
     if (migration.statements.length === 0) {
-      throw new TypeError(`Migration ${migration.name} must define at least one SQL statement.`);
+      throw new TypeError(
+        `Migration ${migration.name} must define at least one SQL statement.`
+      );
     }
 
     const expectedSql = `${migration.statements.join("\n\n")}\n`;
     if (migration.sql !== expectedSql) {
       throw new TypeError(
-        `Migration ${migration.name} sql must equal statements joined with deterministic separators.`,
+        `Migration ${migration.name} sql must equal statements joined with deterministic separators.`
       );
     }
 
@@ -128,7 +143,7 @@ const assertDeterministicMigrations = <Migration extends SqliteMigrationDefiniti
 const resolveMigrationBounds = <Migration extends SqliteMigrationDefinition>(
   migrations: readonly Migration[],
   currentVersion: number,
-  targetVersion?: number,
+  targetVersion?: number
 ): {
   readonly orderedMigrations: readonly Migration[];
   readonly normalizedCurrentVersion: number;
@@ -137,8 +152,12 @@ const resolveMigrationBounds = <Migration extends SqliteMigrationDefinition>(
 } => {
   const orderedMigrations = assertDeterministicMigrations(migrations);
   const latestMigration = orderedMigrations.at(-1);
-  const latestVersion = latestMigration === undefined ? 0 : latestMigration.version;
-  const normalizedCurrentVersion = toNonNegativeSafeInteger(currentVersion, "currentVersion");
+  const latestVersion =
+    latestMigration === undefined ? 0 : latestMigration.version;
+  const normalizedCurrentVersion = toNonNegativeSafeInteger(
+    currentVersion,
+    "currentVersion"
+  );
   const normalizedTargetVersion =
     targetVersion === undefined
       ? latestVersion
@@ -146,13 +165,13 @@ const resolveMigrationBounds = <Migration extends SqliteMigrationDefinition>(
 
   if (normalizedTargetVersion > latestVersion) {
     throw new RangeError(
-      `targetVersion ${normalizedTargetVersion} is greater than latest migration version ${latestVersion}.`,
+      `targetVersion ${normalizedTargetVersion} is greater than latest migration version ${latestVersion}.`
     );
   }
 
   if (normalizedCurrentVersion > latestVersion) {
     throw new RangeError(
-      `currentVersion ${normalizedCurrentVersion} is ahead of latest migration version ${latestVersion}.`,
+      `currentVersion ${normalizedCurrentVersion} is ahead of latest migration version ${latestVersion}.`
     );
   }
 
@@ -161,7 +180,7 @@ const resolveMigrationBounds = <Migration extends SqliteMigrationDefinition>(
     !boundsHasVersion(orderedMigrations, normalizedCurrentVersion)
   ) {
     throw new RangeError(
-      `currentVersion ${normalizedCurrentVersion} must match an existing migration version.`,
+      `currentVersion ${normalizedCurrentVersion} must match an existing migration version.`
     );
   }
 
@@ -170,13 +189,13 @@ const resolveMigrationBounds = <Migration extends SqliteMigrationDefinition>(
     !boundsHasVersion(orderedMigrations, normalizedTargetVersion)
   ) {
     throw new RangeError(
-      `targetVersion ${normalizedTargetVersion} must match an existing migration version.`,
+      `targetVersion ${normalizedTargetVersion} must match an existing migration version.`
     );
   }
 
   if (normalizedCurrentVersion > normalizedTargetVersion) {
     throw new RangeError(
-      `targetVersion ${normalizedTargetVersion} is behind currentVersion ${normalizedCurrentVersion}.`,
+      `targetVersion ${normalizedTargetVersion} is behind currentVersion ${normalizedCurrentVersion}.`
     );
   }
 
@@ -190,10 +209,12 @@ const resolveMigrationBounds = <Migration extends SqliteMigrationDefinition>(
 
 const boundsHasVersion = <Migration extends SqliteMigrationDefinition>(
   migrations: readonly Migration[],
-  version: number,
+  version: number
 ): boolean => migrations.some((migration) => migration.version === version);
 
-const readPragmaUserVersionRow = (database: DatabaseSync): Record<string, unknown> => {
+const readPragmaUserVersionRow = (
+  database: DatabaseSync
+): Record<string, unknown> => {
   const row = database.prepare("PRAGMA user_version;").get();
   if (typeof row !== "object" || row === null) {
     throw new TypeError("PRAGMA user_version did not return an object row.");
@@ -205,53 +226,75 @@ const readPragmaUserVersionRow = (database: DatabaseSync): Record<string, unknow
 export const readSqliteUserVersion = (database: DatabaseSync): number => {
   const pragmaRow = readPragmaUserVersionRow(database);
   if (!Object.hasOwn(pragmaRow, "user_version")) {
-    throw new TypeError("PRAGMA user_version row did not contain user_version.");
+    throw new TypeError(
+      "PRAGMA user_version row did not contain user_version."
+    );
   }
 
-  return toNonNegativeSafeInteger(pragmaRow["user_version"], "PRAGMA user_version");
+  return toNonNegativeSafeInteger(
+    pragmaRow["user_version"],
+    "PRAGMA user_version"
+  );
 };
 
-export const writeSqliteUserVersion = (database: DatabaseSync, version: number): number => {
+export const writeSqliteUserVersion = (
+  database: DatabaseSync,
+  version: number
+): number => {
   const normalizedVersion = toNonNegativeSafeInteger(version, "user_version");
   database.exec(`PRAGMA user_version = ${normalizedVersion};`);
   return normalizedVersion;
 };
 
-export const getLatestSqliteMigrationVersion = <Migration extends SqliteMigrationDefinition>(
-  migrations: readonly Migration[],
+export const getLatestSqliteMigrationVersion = <
+  Migration extends SqliteMigrationDefinition,
+>(
+  migrations: readonly Migration[]
 ): number => {
   const orderedMigrations = assertDeterministicMigrations(migrations);
   const latestMigration = orderedMigrations.at(-1);
   return latestMigration === undefined ? 0 : latestMigration.version;
 };
 
-export const listPendingSqliteMigrations = <Migration extends SqliteMigrationDefinition>(
+export const listPendingSqliteMigrations = <
+  Migration extends SqliteMigrationDefinition,
+>(
   migrations: readonly Migration[],
   currentVersion: number,
-  targetVersion?: number,
+  targetVersion?: number
 ): readonly Migration[] => {
-  const bounds = resolveMigrationBounds(migrations, currentVersion, targetVersion);
+  const bounds = resolveMigrationBounds(
+    migrations,
+    currentVersion,
+    targetVersion
+  );
   return Object.freeze(
     bounds.orderedMigrations.filter(
       (migration) =>
         migration.version > bounds.normalizedCurrentVersion &&
-        migration.version <= bounds.normalizedTargetVersion,
-    ),
+        migration.version <= bounds.normalizedTargetVersion
+    )
   );
 };
 
-export const planSqliteMigrations = <Migration extends SqliteMigrationDefinition>(
+export const planSqliteMigrations = <
+  Migration extends SqliteMigrationDefinition,
+>(
   migrations: readonly Migration[],
   currentVersion: number,
-  targetVersion?: number,
+  targetVersion?: number
 ): SqliteMigrationPlan<Migration> => {
-  const bounds = resolveMigrationBounds(migrations, currentVersion, targetVersion);
+  const bounds = resolveMigrationBounds(
+    migrations,
+    currentVersion,
+    targetVersion
+  );
   const pendingMigrations = Object.freeze(
     bounds.orderedMigrations.filter(
       (migration) =>
         migration.version > bounds.normalizedCurrentVersion &&
-        migration.version <= bounds.normalizedTargetVersion,
-    ),
+        migration.version <= bounds.normalizedTargetVersion
+    )
   );
 
   return Object.freeze({
@@ -263,17 +306,23 @@ export const planSqliteMigrations = <Migration extends SqliteMigrationDefinition
   });
 };
 
-export const applySqliteMigrations = <Migration extends SqliteMigrationDefinition>(
+export const applySqliteMigrations = <
+  Migration extends SqliteMigrationDefinition,
+>(
   database: DatabaseSync,
   migrations: readonly Migration[],
   targetVersion?: number,
-  options?: SqliteMigrationValidationOptions,
+  options?: SqliteMigrationValidationOptions
 ): SqliteMigrationApplyResult<Migration> => {
   let didCommit = false;
   database.exec("BEGIN IMMEDIATE;");
   try {
     const currentVersion = readSqliteUserVersion(database);
-    const plan = planSqliteMigrations(migrations, currentVersion, targetVersion);
+    const plan = planSqliteMigrations(
+      migrations,
+      currentVersion,
+      targetVersion
+    );
     const validateBeforeCommit = options?.validateBeforeCommit;
 
     if (plan.pendingMigrations.length === 0) {
@@ -296,7 +345,7 @@ export const applySqliteMigrations = <Migration extends SqliteMigrationDefinitio
     const appliedVersion = readSqliteUserVersion(database);
     if (appliedVersion !== plan.targetVersion) {
       throw new RangeError(
-        `Applied user_version ${appliedVersion} does not match targetVersion ${plan.targetVersion}.`,
+        `Applied user_version ${appliedVersion} does not match targetVersion ${plan.targetVersion}.`
       );
     }
 
@@ -318,9 +367,13 @@ export const applySqliteMigrations = <Migration extends SqliteMigrationDefinitio
   }
 };
 
-const toDeterministicMigrationStatements = (statements: readonly string[]): readonly string[] =>
+const toDeterministicMigrationStatements = (
+  statements: readonly string[]
+): readonly string[] =>
   Object.freeze(
-    statements.map((statement) => statement.replace(SQLITE_CREATE_IF_NOT_EXISTS_PATTERN, "")),
+    statements.map((statement) =>
+      statement.replace(SQLITE_CREATE_IF_NOT_EXISTS_PATTERN, "")
+    )
   );
 
 const hasMemoryItemsFtsSchemaObject = (statement: string): boolean =>
@@ -330,22 +383,21 @@ const hasAuditEventsSchemaObject = (statement: string): boolean =>
 const hasStorageIdempotencyLedgerSchemaObject = (statement: string): boolean =>
   statement.includes("storage_idempotency_ledger");
 
-const enterpriseSqliteSchemaObjectStatements = toDeterministicMigrationStatements(
-  enterpriseSqliteSchemaStatements,
-);
+const enterpriseSqliteSchemaObjectStatements =
+  toDeterministicMigrationStatements(enterpriseSqliteSchemaStatements);
 
 const enterpriseSqliteV1Statements = Object.freeze(
   enterpriseSqliteSchemaObjectStatements.filter(
     (statement) =>
       !hasMemoryItemsFtsSchemaObject(statement) &&
       !hasAuditEventsSchemaObject(statement) &&
-      !hasStorageIdempotencyLedgerSchemaObject(statement),
-  ),
+      !hasStorageIdempotencyLedgerSchemaObject(statement)
+  )
 );
 
 const enterpriseSqliteV2Statements = Object.freeze([
   ...enterpriseSqliteSchemaObjectStatements.filter((statement) =>
-    hasMemoryItemsFtsSchemaObject(statement),
+    hasMemoryItemsFtsSchemaObject(statement)
   ),
   [
     "INSERT INTO memory_items_fts (rowid, tenant_id, memory_id, title, payload_text)",
@@ -357,14 +409,14 @@ const enterpriseSqliteV2Statements = Object.freeze([
 
 const enterpriseSqliteV3Statements = Object.freeze(
   enterpriseSqliteSchemaObjectStatements.filter((statement) =>
-    hasAuditEventsSchemaObject(statement),
-  ),
+    hasAuditEventsSchemaObject(statement)
+  )
 );
 
 const enterpriseSqliteV4Statements = Object.freeze(
   enterpriseSqliteSchemaObjectStatements.filter((statement) =>
-    hasStorageIdempotencyLedgerSchemaObject(statement),
-  ),
+    hasStorageIdempotencyLedgerSchemaObject(statement)
+  )
 );
 
 const enterpriseInitialMigration = Object.freeze({
@@ -430,45 +482,56 @@ export const enterpriseSqliteMigrations = Object.freeze([
   enterpriseStorageIdempotencyLedgerMigrationWithSql,
 ] as const satisfies readonly SqliteMigrationDefinition[]);
 
-export type EnterpriseSqliteMigration = (typeof enterpriseSqliteMigrations)[number];
+export type EnterpriseSqliteMigration =
+  (typeof enterpriseSqliteMigrations)[number];
 
-export const enterpriseSqliteLatestMigrationVersion = getLatestSqliteMigrationVersion(
-  enterpriseSqliteMigrations,
-);
+export const enterpriseSqliteLatestMigrationVersion =
+  getLatestSqliteMigrationVersion(enterpriseSqliteMigrations);
 
 export const planEnterpriseSqliteMigrations = (
   database: DatabaseSync,
-  targetVersion?: number,
+  targetVersion?: number
 ): SqliteMigrationPlan<EnterpriseSqliteMigration> =>
-  planSqliteMigrations(enterpriseSqliteMigrations, readSqliteUserVersion(database), targetVersion);
+  planSqliteMigrations(
+    enterpriseSqliteMigrations,
+    readSqliteUserVersion(database),
+    targetVersion
+  );
 
 export const listPendingEnterpriseSqliteMigrations = (
   database: DatabaseSync,
-  targetVersion?: number,
+  targetVersion?: number
 ): readonly EnterpriseSqliteMigration[] =>
   listPendingSqliteMigrations(
     enterpriseSqliteMigrations,
     readSqliteUserVersion(database),
-    targetVersion,
+    targetVersion
   );
 
 export const applyEnterpriseSqliteMigrations = (
   database: DatabaseSync,
-  targetVersion?: number,
+  targetVersion?: number
 ): SqliteMigrationApplyResult<EnterpriseSqliteMigration> => {
-  return applySqliteMigrations(database, enterpriseSqliteMigrations, targetVersion, {
-    validateBeforeCommit: (candidateDatabase, candidateTargetVersion) => {
-      if (candidateTargetVersion === enterpriseSqliteLatestMigrationVersion) {
-        assertEnterpriseSqliteSchemaIntegrity(candidateDatabase);
-      }
-    },
-  });
+  return applySqliteMigrations(
+    database,
+    enterpriseSqliteMigrations,
+    targetVersion,
+    {
+      validateBeforeCommit: (candidateDatabase, candidateTargetVersion) => {
+        if (candidateTargetVersion === enterpriseSqliteLatestMigrationVersion) {
+          assertEnterpriseSqliteSchemaIntegrity(candidateDatabase);
+        }
+      },
+    }
+  );
 };
 
-const listSqliteSchemaDefinitions = (database: DatabaseSync): readonly SqliteSchemaDefinition[] => {
+const listSqliteSchemaDefinitions = (
+  database: DatabaseSync
+): readonly SqliteSchemaDefinition[] => {
   const rows = database
     .prepare(
-      "SELECT type, name, sql FROM sqlite_schema WHERE type IN ('table', 'index', 'trigger', 'view') AND name NOT LIKE 'sqlite_%';",
+      "SELECT type, name, sql FROM sqlite_schema WHERE type IN ('table', 'index', 'trigger', 'view') AND name NOT LIKE 'sqlite_%';"
     )
     .all() as ReadonlyArray<{
     readonly type?: unknown;
@@ -495,14 +558,19 @@ const listSqliteSchemaDefinitions = (database: DatabaseSync): readonly SqliteSch
         }
         return null;
       })
-      .filter((definition): definition is SqliteSchemaDefinition => definition !== null),
+      .filter(
+        (definition): definition is SqliteSchemaDefinition =>
+          definition !== null
+      )
   );
 };
 
 const enterpriseExpectedSchemaDefinitions = Object.freeze(
   enterpriseSqliteSchemaObjectStatements
     .map((statement) => parseSqliteSchemaDefinition(statement))
-    .filter((definition): definition is SqliteSchemaDefinition => definition !== null),
+    .filter(
+      (definition): definition is SqliteSchemaDefinition => definition !== null
+    )
 );
 
 const SQLITE_ALLOWED_IMPLICIT_SCHEMA_OBJECT_PATTERNS = Object.freeze([
@@ -510,19 +578,27 @@ const SQLITE_ALLOWED_IMPLICIT_SCHEMA_OBJECT_PATTERNS = Object.freeze([
 ]);
 
 const isAllowedImplicitSchemaObject = (key: string): boolean =>
-  SQLITE_ALLOWED_IMPLICIT_SCHEMA_OBJECT_PATTERNS.some((pattern) => pattern.test(key));
+  SQLITE_ALLOWED_IMPLICIT_SCHEMA_OBJECT_PATTERNS.some((pattern) =>
+    pattern.test(key)
+  );
 
-export const assertEnterpriseSqliteSchemaIntegrity = (database: DatabaseSync): void => {
+export const assertEnterpriseSqliteSchemaIntegrity = (
+  database: DatabaseSync
+): void => {
   const definitions = listSqliteSchemaDefinitions(database);
   const definitionsByKey = new Map<string, string>(
     definitions.map(
-      (definition) => [`${definition.type}:${definition.name}`, definition.normalizedSql] as const,
-    ),
+      (definition) =>
+        [
+          `${definition.type}:${definition.name}`,
+          definition.normalizedSql,
+        ] as const
+    )
   );
   const expectedKeys = new Set(
     enterpriseExpectedSchemaDefinitions.map(
-      (definition) => `${definition.type}:${definition.name}`,
-    ),
+      (definition) => `${definition.type}:${definition.name}`
+    )
   );
 
   const missingObjects: string[] = [];
@@ -542,7 +618,9 @@ export const assertEnterpriseSqliteSchemaIntegrity = (database: DatabaseSync): v
 
   const unexpectedObjects = definitions
     .map((definition) => `${definition.type}:${definition.name}`)
-    .filter((key) => !expectedKeys.has(key) && !isAllowedImplicitSchemaObject(key));
+    .filter(
+      (key) => !expectedKeys.has(key) && !isAllowedImplicitSchemaObject(key)
+    );
 
   if (
     missingObjects.length === 0 &&
@@ -554,11 +632,15 @@ export const assertEnterpriseSqliteSchemaIntegrity = (database: DatabaseSync): v
 
   const segments = [
     missingObjects.length > 0 ? `missing=[${missingObjects.join(",")}]` : null,
-    mismatchedObjects.length > 0 ? `mismatched=[${mismatchedObjects.join(",")}]` : null,
-    unexpectedObjects.length > 0 ? `unexpected=[${unexpectedObjects.join(",")}]` : null,
+    mismatchedObjects.length > 0
+      ? `mismatched=[${mismatchedObjects.join(",")}]`
+      : null,
+    unexpectedObjects.length > 0
+      ? `unexpected=[${unexpectedObjects.join(",")}]`
+      : null,
   ].filter((segment): segment is string => segment !== null);
 
   throw new Error(
-    `Enterprise SQLite schema drift detected for version ${enterpriseSqliteLatestMigrationVersion}: ${segments.join("; ")}`,
+    `Enterprise SQLite schema drift detected for version ${enterpriseSqliteLatestMigrationVersion}: ${segments.join("; ")}`
   );
 };

@@ -2,7 +2,12 @@ import { Schema } from "effect";
 
 import { ProjectIdSchema, RoleIdSchema, UserIdSchema } from "./ids.js";
 
-export const ScopeLevelSchema = Schema.Literal("common", "project", "job_role", "user");
+export const ScopeLevelSchema = Schema.Literal(
+  "common",
+  "project",
+  "job_role",
+  "user"
+);
 
 export const CommonScopeSchema = Schema.Struct({
   level: Schema.Literal("common"),
@@ -27,10 +32,14 @@ export const ScopeSchema = Schema.Union(
   CommonScopeSchema,
   ProjectScopeSchema,
   JobRoleScopeSchema,
-  UserScopeSchema,
+  UserScopeSchema
 );
 
-export const MemoryLayerSchema = Schema.Literal("episodic", "working", "procedural");
+export const MemoryLayerSchema = Schema.Literal(
+  "episodic",
+  "working",
+  "procedural"
+);
 
 export const PolicyOutcomeSchema = Schema.Literal("allow", "review", "deny");
 
@@ -40,20 +49,27 @@ export interface DomainRecord {
   readonly [key: string]: DomainValue;
 }
 
-export type DomainValue = string | number | boolean | null | DomainArray | DomainRecord;
+export type DomainValue =
+  | string
+  | number
+  | boolean
+  | null
+  | DomainArray
+  | DomainRecord;
 
-export const DomainValueSchema: Schema.Schema<DomainValue> = Schema.suspend(() =>
-  Schema.Union(
-    Schema.String,
-    Schema.Number,
-    Schema.Boolean,
-    Schema.Null,
-    Schema.Array(DomainValueSchema),
-    Schema.Record({
-      key: Schema.String,
-      value: DomainValueSchema,
-    }),
-  ),
+export const DomainValueSchema: Schema.Schema<DomainValue> = Schema.suspend(
+  () =>
+    Schema.Union(
+      Schema.String,
+      Schema.Number,
+      Schema.Boolean,
+      Schema.Null,
+      Schema.Array(DomainValueSchema),
+      Schema.Record({
+        key: Schema.String,
+        value: DomainValueSchema,
+      })
+    )
 );
 
 export const DomainRecordSchema: Schema.Schema<DomainRecord> = Schema.Record({
@@ -74,7 +90,13 @@ export type UserScope = Schema.Schema.Type<typeof UserScopeSchema>;
 export type Scope = Schema.Schema.Type<typeof ScopeSchema>;
 export type MemoryLayer = Schema.Schema.Type<typeof MemoryLayerSchema>;
 export type PolicyOutcome = Schema.Schema.Type<typeof PolicyOutcomeSchema>;
-export type PolicyContextValue = Schema.Schema.Type<typeof PolicyContextValueSchema>;
+export type PolicyContextValue = Schema.Schema.Type<
+  typeof PolicyContextValueSchema
+>;
 export type PolicyContext = Schema.Schema.Type<typeof PolicyContextSchema>;
-export type IngestionRecordValue = Schema.Schema.Type<typeof IngestionRecordValueSchema>;
-export type IngestionMetadata = Schema.Schema.Type<typeof IngestionMetadataSchema>;
+export type IngestionRecordValue = Schema.Schema.Type<
+  typeof IngestionRecordValueSchema
+>;
+export type IngestionMetadata = Schema.Schema.Type<
+  typeof IngestionMetadataSchema
+>;

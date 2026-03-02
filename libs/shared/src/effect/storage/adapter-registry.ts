@@ -1,7 +1,11 @@
 import type { DatabaseSync } from "node:sqlite";
+
 import { Effect, Schema } from "effect";
 
-import { ContractValidationError, type StorageServiceError } from "../errors.js";
+import {
+  ContractValidationError,
+  type StorageServiceError,
+} from "../errors.js";
 import {
   makeSqliteStorageServiceEffect,
   type StorageService,
@@ -43,7 +47,9 @@ const isDatabaseSync = (value: unknown): value is DatabaseSync =>
 
 const sqliteAdapterConfigurationContract = "SqliteStorageAdapterConfiguration";
 
-const sqliteAdapterConfigurationError = (details: string): ContractValidationError =>
+const sqliteAdapterConfigurationError = (
+  details: string
+): ContractValidationError =>
   new ContractValidationError({
     contract: sqliteAdapterConfigurationContract,
     message: "Invalid sqlite storage adapter configuration.",
@@ -51,13 +57,16 @@ const sqliteAdapterConfigurationError = (details: string): ContractValidationErr
   });
 
 const decodeSqliteStorageAdapterConfiguration = (
-  configuration: unknown,
-): Effect.Effect<SqliteStorageAdapterConfiguration, ContractValidationError> => {
+  configuration: unknown
+): Effect.Effect<
+  SqliteStorageAdapterConfiguration,
+  ContractValidationError
+> => {
   if (!isRecord(configuration)) {
     return Effect.fail(
       sqliteAdapterConfigurationError(
-        "Expected a configuration object with a 'database' property.",
-      ),
+        "Expected a configuration object with a 'database' property."
+      )
     );
   }
 
@@ -65,15 +74,17 @@ const decodeSqliteStorageAdapterConfiguration = (
   if (!isDatabaseSync(database)) {
     return Effect.fail(
       sqliteAdapterConfigurationError(
-        "configuration.database must be a DatabaseSync-compatible object.",
-      ),
+        "configuration.database must be a DatabaseSync-compatible object."
+      )
     );
   }
 
   const options = configuration["options"];
   if (options !== undefined && !isRecord(options)) {
     return Effect.fail(
-      sqliteAdapterConfigurationError("configuration.options must be an object when provided."),
+      sqliteAdapterConfigurationError(
+        "configuration.options must be an object when provided."
+      )
     );
   }
 
@@ -95,7 +106,7 @@ export class StorageAdapterIdValidationError extends Schema.TaggedError<StorageA
   {
     adapterId: Schema.String,
     message: Schema.String,
-  },
+  }
 ) {}
 
 export class StorageAdapterDuplicateIdError extends Schema.TaggedError<StorageAdapterDuplicateIdError>()(
@@ -103,7 +114,7 @@ export class StorageAdapterDuplicateIdError extends Schema.TaggedError<StorageAd
   {
     adapterId: Schema.String,
     message: Schema.String,
-  },
+  }
 ) {}
 
 export class StorageAdapterUnknownIdError extends Schema.TaggedError<StorageAdapterUnknownIdError>()(
@@ -112,7 +123,7 @@ export class StorageAdapterUnknownIdError extends Schema.TaggedError<StorageAdap
     adapterId: Schema.String,
     availableAdapterIds: Schema.Array(Schema.String),
     message: Schema.String,
-  },
+  }
 ) {}
 
 export type StorageAdapterRegistryConstructionError =
@@ -123,11 +134,15 @@ export type StorageAdapterResolveError =
   | StorageAdapterIdValidationError
   | StorageAdapterUnknownIdError;
 
-export type StorageAdapterCreateError = StorageAdapterResolveError | StorageServiceError;
+export type StorageAdapterCreateError =
+  | StorageAdapterResolveError
+  | StorageServiceError;
 
 export interface StorageAdapterRegistration {
   readonly id: string;
-  readonly create: (configuration: unknown) => Effect.Effect<StorageService, StorageServiceError>;
+  readonly create: (
+    configuration: unknown
+  ) => Effect.Effect<StorageService, StorageServiceError>;
 }
 
 export interface StorageAdapterRegistry {
@@ -148,7 +163,7 @@ export interface SqliteStorageAdapterConfiguration {
 export const sqliteStorageAdapterId = "sqlite";
 
 export const validateStorageAdapterId = (
-  adapterId: string,
+  adapterId: string
 ): Effect.Effect<string, StorageAdapterIdValidationError> => {
   const trimmedAdapterId = adapterId.trim();
 
@@ -157,7 +172,7 @@ export const validateStorageAdapterId = (
       new StorageAdapterIdValidationError({
         adapterId,
         message: `Storage adapter ID cannot be empty. ${storageAdapterIdValidationHint}`,
-      }),
+      })
     );
   }
 
@@ -166,7 +181,7 @@ export const validateStorageAdapterId = (
       new StorageAdapterIdValidationError({
         adapterId,
         message: `Storage adapter ID cannot include leading or trailing whitespace. ${storageAdapterIdValidationHint}`,
-      }),
+      })
     );
   }
 
@@ -175,7 +190,7 @@ export const validateStorageAdapterId = (
       new StorageAdapterIdValidationError({
         adapterId,
         message: `Storage adapter ID '${adapterId}' is invalid. ${storageAdapterIdValidationHint}`,
-      }),
+      })
     );
   }
 
@@ -183,20 +198,25 @@ export const validateStorageAdapterId = (
 };
 
 export const makeStorageAdapterRegistry = (
-  registrations: Iterable<StorageAdapterRegistration>,
-): Effect.Effect<StorageAdapterRegistry, StorageAdapterRegistryConstructionError> =>
+  registrations: Iterable<StorageAdapterRegistration>
+): Effect.Effect<
+  StorageAdapterRegistry,
+  StorageAdapterRegistryConstructionError
+> =>
   Effect.gen(function* () {
     const registrationsById = new Map<string, StorageAdapterRegistration>();
 
     for (const registration of registrations) {
-      const validatedAdapterId = yield* validateStorageAdapterId(registration.id);
+      const validatedAdapterId = yield* validateStorageAdapterId(
+        registration.id
+      );
 
       if (registrationsById.has(validatedAdapterId)) {
         return yield* Effect.fail(
           new StorageAdapterDuplicateIdError({
             adapterId: validatedAdapterId,
             message: `Storage adapter ID '${validatedAdapterId}' is already registered.`,
-          }),
+          })
         );
       }
 
@@ -208,16 +228,19 @@ export const makeStorageAdapterRegistry = (
 
     return {
       registrations: registrationsById,
-      adapterIds: freezeAdapterIds([...registrationsById.keys()].sort(compareStorageAdapterIds)),
+      adapterIds: freezeAdapterIds(
+        [...registrationsById.keys()].sort(compareStorageAdapterIds)
+      ),
     };
   });
 
-export const listStorageAdapterIds = (registry: StorageAdapterRegistry): readonly string[] =>
-  freezeAdapterIds(registry.adapterIds);
+export const listStorageAdapterIds = (
+  registry: StorageAdapterRegistry
+): readonly string[] => freezeAdapterIds(registry.adapterIds);
 
 export const resolveStorageAdapterRegistration = (
   registry: StorageAdapterRegistry,
-  adapterId: string,
+  adapterId: string
 ): Effect.Effect<StorageAdapterRegistration, StorageAdapterResolveError> =>
   Effect.gen(function* () {
     const validatedAdapterId = yield* validateStorageAdapterId(adapterId);
@@ -229,7 +252,7 @@ export const resolveStorageAdapterRegistration = (
           adapterId: validatedAdapterId,
           availableAdapterIds: [...registry.adapterIds],
           message: `Storage adapter '${validatedAdapterId}' is not registered.`,
-        }),
+        })
       );
     }
 
@@ -238,22 +261,23 @@ export const resolveStorageAdapterRegistration = (
 
 export const createStorageServiceFromAdapterRegistry = (
   registry: StorageAdapterRegistry,
-  request: StorageAdapterCreateRequest,
+  request: StorageAdapterCreateRequest
 ): Effect.Effect<StorageService, StorageAdapterCreateError> =>
   resolveStorageAdapterRegistration(registry, request.adapterId).pipe(
-    Effect.flatMap((registration) => registration.create(request.configuration)),
+    Effect.flatMap((registration) => registration.create(request.configuration))
   );
 
 export const makeSqliteStorageAdapterRegistration = (
-  adapterId: string = sqliteStorageAdapterId,
+  adapterId: string = sqliteStorageAdapterId
 ): StorageAdapterRegistration => ({
   id: adapterId,
   create: (configuration) =>
     Effect.gen(function* () {
-      const sqliteConfiguration = yield* decodeSqliteStorageAdapterConfiguration(configuration);
+      const sqliteConfiguration =
+        yield* decodeSqliteStorageAdapterConfiguration(configuration);
       return yield* makeSqliteStorageServiceEffect(
         sqliteConfiguration.database,
-        sqliteConfiguration.options,
+        sqliteConfiguration.options
       );
     }),
 });

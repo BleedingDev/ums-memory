@@ -1,6 +1,16 @@
 import { Schema } from "effect";
 
-import { EvidenceIdSchema, MemoryIdSchema, SpaceIdSchema, UserIdSchema } from "./contracts/ids.js";
+import {
+  EvidenceIdSchema,
+  MemoryIdSchema,
+  SpaceIdSchema,
+  UserIdSchema,
+} from "./contracts/ids.js";
+import {
+  AuthorizationActionSchema,
+  AuthorizationDecisionReasonCodeSchema,
+  AuthorizationRoleSchema,
+} from "./contracts/services.js";
 
 const RetrievalScoreSchema = Schema.Number.pipe(Schema.between(0, 1));
 
@@ -10,7 +20,7 @@ export class ContractValidationError extends Schema.TaggedError<ContractValidati
     contract: Schema.String,
     message: Schema.String,
     details: Schema.String,
-  },
+  }
 ) {}
 
 export class StorageConflictError extends Schema.TaggedError<StorageConflictError>()(
@@ -19,7 +29,7 @@ export class StorageConflictError extends Schema.TaggedError<StorageConflictErro
     spaceId: SpaceIdSchema,
     memoryId: MemoryIdSchema,
     message: Schema.String,
-  },
+  }
 ) {}
 
 export class StorageNotFoundError extends Schema.TaggedError<StorageNotFoundError>()(
@@ -28,7 +38,7 @@ export class StorageNotFoundError extends Schema.TaggedError<StorageNotFoundErro
     spaceId: SpaceIdSchema,
     memoryId: MemoryIdSchema,
     message: Schema.String,
-  },
+  }
 ) {}
 
 export class RetrievalQueryError extends Schema.TaggedError<RetrievalQueryError>()(
@@ -37,7 +47,7 @@ export class RetrievalQueryError extends Schema.TaggedError<RetrievalQueryError>
     spaceId: SpaceIdSchema,
     query: Schema.String,
     message: Schema.String,
-  },
+  }
 ) {}
 
 export class EvaluationThresholdError extends Schema.TaggedError<EvaluationThresholdError>()(
@@ -46,7 +56,7 @@ export class EvaluationThresholdError extends Schema.TaggedError<EvaluationThres
     objective: Schema.String,
     minimumScore: RetrievalScoreSchema,
     message: Schema.String,
-  },
+  }
 ) {}
 
 export class PolicyDeniedError extends Schema.TaggedError<PolicyDeniedError>()(
@@ -56,7 +66,18 @@ export class PolicyDeniedError extends Schema.TaggedError<PolicyDeniedError>()(
     action: Schema.String,
     resourceId: MemoryIdSchema,
     message: Schema.String,
-  },
+  }
+) {}
+
+export class AuthorizationDeniedError extends Schema.TaggedError<AuthorizationDeniedError>()(
+  "AuthorizationDeniedError",
+  {
+    role: AuthorizationRoleSchema,
+    action: AuthorizationActionSchema,
+    reasonCode: AuthorizationDecisionReasonCodeSchema,
+    evaluatedAtMillis: Schema.NonNegativeInt,
+    message: Schema.String,
+  }
 ) {}
 
 export class IngestionDuplicateError extends Schema.TaggedError<IngestionDuplicateError>()(
@@ -65,7 +86,7 @@ export class IngestionDuplicateError extends Schema.TaggedError<IngestionDuplica
     idempotencyKey: Schema.String,
     duplicateRecordIds: Schema.Array(EvidenceIdSchema),
     message: Schema.String,
-  },
+  }
 ) {}
 
 export type StorageServiceError =
@@ -73,10 +94,20 @@ export type StorageServiceError =
   | StorageConflictError
   | StorageNotFoundError;
 
-export type RetrievalServiceError = ContractValidationError | RetrievalQueryError;
+export type RetrievalServiceError =
+  | ContractValidationError
+  | RetrievalQueryError;
 
-export type EvaluationServiceError = ContractValidationError | EvaluationThresholdError;
+export type EvaluationServiceError =
+  | ContractValidationError
+  | EvaluationThresholdError;
 
 export type PolicyServiceError = ContractValidationError | PolicyDeniedError;
 
-export type IngestionServiceError = ContractValidationError | IngestionDuplicateError;
+export type AuthorizationServiceError =
+  | ContractValidationError
+  | AuthorizationDeniedError;
+
+export type IngestionServiceError =
+  | ContractValidationError
+  | IngestionDuplicateError;

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
+
 import { Cause, Effect, Option } from "effect";
 
 import { makeNoopStorageService } from "../services/storage-service.js";
@@ -16,7 +17,9 @@ import {
   StorageAdapterUnknownIdError,
 } from "./adapter-registry.js";
 
-const makeNoopAdapterRegistration = (id: string): StorageAdapterRegistration => ({
+const makeNoopAdapterRegistration = (
+  id: string
+): StorageAdapterRegistration => ({
   id,
   create: () => Effect.succeed(makeNoopStorageService()),
 });
@@ -40,7 +43,7 @@ void test("makeStorageAdapterRegistry rejects duplicate adapter IDs", async () =
     makeStorageAdapterRegistry([
       makeNoopAdapterRegistration("sqlite"),
       makeNoopAdapterRegistration("sqlite"),
-    ]),
+    ])
   );
 
   assert.ok(duplicateError instanceof StorageAdapterDuplicateIdError);
@@ -49,10 +52,12 @@ void test("makeStorageAdapterRegistry rejects duplicate adapter IDs", async () =
 
 void test("resolveStorageAdapterRegistration fails for unknown adapter IDs", async () => {
   const registry = await Effect.runPromise(
-    makeStorageAdapterRegistry([makeNoopAdapterRegistration("sqlite")]),
+    makeStorageAdapterRegistry([makeNoopAdapterRegistration("sqlite")])
   );
 
-  const unknownError = await expectFailure(resolveStorageAdapterRegistration(registry, "postgres"));
+  const unknownError = await expectFailure(
+    resolveStorageAdapterRegistration(registry, "postgres")
+  );
   assert.ok(unknownError instanceof StorageAdapterUnknownIdError);
   assert.equal(unknownError.adapterId, "postgres");
   assert.deepEqual(unknownError.availableAdapterIds, ["sqlite"]);
@@ -64,7 +69,7 @@ void test("listStorageAdapterIds returns deterministic sorted IDs", async () => 
       makeNoopAdapterRegistration("zeta"),
       makeNoopAdapterRegistration("alpha"),
       makeNoopAdapterRegistration("beta"),
-    ]),
+    ])
   );
 
   assert.deepEqual(listStorageAdapterIds(registry), ["alpha", "beta", "zeta"]);
@@ -76,24 +81,26 @@ void test("sqlite adapter registration can create a working storage service", as
 
   try {
     const registry = await Effect.runPromise(
-      makeStorageAdapterRegistry([makeSqliteStorageAdapterRegistration()]),
+      makeStorageAdapterRegistry([makeSqliteStorageAdapterRegistration()])
     );
 
     const storageService = await Effect.runPromise(
       createStorageServiceFromAdapterRegistry(registry, {
         adapterId: "sqlite",
         configuration: { database },
-      }),
+      })
     );
 
     const snapshot = await Effect.runPromise(
       storageService.exportSnapshot({
         signatureSecret: "sqlite-test-secret",
-      }),
+      })
     );
 
     assert.equal(snapshot.signatureAlgorithm, "hmac-sha256");
-    assert.ok(snapshot.payload.includes("ums-memory/sqlite-storage-snapshot/v1"));
+    assert.ok(
+      snapshot.payload.includes("ums-memory/sqlite-storage-snapshot/v1")
+    );
     assert.ok(snapshot.tableCount > 0);
   } finally {
     database.close();
@@ -102,11 +109,11 @@ void test("sqlite adapter registration can create a working storage service", as
 
 void test("resolveStorageAdapterRegistration rejects invalid adapter ID format", async () => {
   const registry = await Effect.runPromise(
-    makeStorageAdapterRegistry([makeNoopAdapterRegistration("sqlite")]),
+    makeStorageAdapterRegistry([makeNoopAdapterRegistration("sqlite")])
   );
 
   const validationError = await expectFailure(
-    resolveStorageAdapterRegistration(registry, " SQLite "),
+    resolveStorageAdapterRegistration(registry, " SQLite ")
   );
 
   assert.ok(validationError instanceof StorageAdapterIdValidationError);
@@ -115,16 +122,19 @@ void test("resolveStorageAdapterRegistration rejects invalid adapter ID format",
 
 void test("sqlite adapter registration rejects missing database configuration", async () => {
   const registry = await Effect.runPromise(
-    makeStorageAdapterRegistry([makeSqliteStorageAdapterRegistration()]),
+    makeStorageAdapterRegistry([makeSqliteStorageAdapterRegistration()])
   );
 
   const configurationError = await expectFailure(
     createStorageServiceFromAdapterRegistry(registry, {
       adapterId: "sqlite",
       configuration: {},
-    }),
+    })
   );
 
   assert.equal(configurationError._tag, "ContractValidationError");
-  assert.equal(configurationError.contract, "SqliteStorageAdapterConfiguration");
+  assert.equal(
+    configurationError.contract,
+    "SqliteStorageAdapterConfiguration"
+  );
 });

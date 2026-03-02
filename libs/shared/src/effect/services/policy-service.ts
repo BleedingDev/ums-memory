@@ -18,10 +18,14 @@ export type {
 export type PolicyDecision = PolicyOutcome;
 
 export interface PolicyService {
-  readonly evaluate: (request: PolicyRequest) => Effect.Effect<PolicyResponse, PolicyServiceError>;
+  readonly evaluate: (
+    request: PolicyRequest
+  ) => Effect.Effect<PolicyResponse, PolicyServiceError>;
 }
 
-export const PolicyServiceTag = Context.GenericTag<PolicyService>("@ums/effect/PolicyService");
+export const PolicyServiceTag = Context.GenericTag<PolicyService>(
+  "@ums/effect/PolicyService"
+);
 
 export const makeNoopPolicyService = (): PolicyService => ({
   evaluate: () =>
@@ -34,7 +38,8 @@ export const makeNoopPolicyService = (): PolicyService => ({
 
 export const noopPolicyLayer: Layer.Layer<PolicyService> = Layer.succeed(
   PolicyServiceTag,
-  makeNoopPolicyService(),
+  makeNoopPolicyService()
 );
 
-export const deterministicTestPolicyLayer: Layer.Layer<PolicyService> = noopPolicyLayer;
+export const deterministicTestPolicyLayer: Layer.Layer<PolicyService> =
+  noopPolicyLayer;

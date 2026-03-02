@@ -17,12 +17,12 @@ export type {
 
 export interface IngestionService {
   readonly ingest: (
-    request: IngestionRequest,
+    request: IngestionRequest
   ) => Effect.Effect<IngestionResponse, IngestionServiceError>;
 }
 
 export const IngestionServiceTag = Context.GenericTag<IngestionService>(
-  "@ums/effect/IngestionService",
+  "@ums/effect/IngestionService"
 );
 
 export const makeNoopIngestionService = (): IngestionService => ({
@@ -36,7 +36,8 @@ export const makeNoopIngestionService = (): IngestionService => ({
 
 export const noopIngestionLayer: Layer.Layer<IngestionService> = Layer.succeed(
   IngestionServiceTag,
-  makeNoopIngestionService(),
+  makeNoopIngestionService()
 );
 
-export const deterministicTestIngestionLayer: Layer.Layer<IngestionService> = noopIngestionLayer;
+export const deterministicTestIngestionLayer: Layer.Layer<IngestionService> =
+  noopIngestionLayer;

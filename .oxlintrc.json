@@ -1,0 +1,59 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "extends": [
+    "./node_modules/ultracite/config/oxlint/core/.oxlintrc.json"
+  ],
+  "rules": {
+    "import/no-relative-parent-imports": "off",
+    "import/consistent-type-specifier-style": "off",
+    "sort-keys": "off",
+    "no-void": "off",
+    "func-names": "off",
+    "complexity": "off",
+    "no-negated-condition": "off",
+    "no-nested-ternary": "off",
+    "arrow-body-style": "off",
+    "max-classes-per-file": "off",
+    "max-statements": "off",
+    "no-use-before-define": "off",
+    "prefer-destructuring": "off",
+    "preserve-caught-error": "off",
+    "promise/prefer-await-to-callbacks": "off",
+    "oxc/no-barrel-file": "off",
+    "typescript/array-type": "off",
+    "typescript/consistent-indexed-object-style": "off",
+    "typescript/no-empty-interface": "off",
+    "typescript/no-empty-object-type": "off",
+    "typescript-eslint/array-type": "off",
+    "typescript-eslint/consistent-indexed-object-style": "off",
+    "typescript-eslint/no-empty-interface": "off",
+    "typescript-eslint/no-empty-object-type": "off",
+    "unicorn/consistent-function-scoping": "off",
+    "unicorn/catch-error-name": "off",
+    "unicorn/no-array-sort": "off",
+    "unicorn/no-array-reverse": "off",
+    "unicorn/no-array-reduce": "off",
+    "unicorn/no-immediate-mutation": "off",
+    "unicorn/no-lonely-if": "off",
+    "unicorn/no-nested-ternary": "off",
+    "unicorn/numeric-separators-style": "off",
+    "unicorn/prefer-code-point": "off",
+    "unicorn/prefer-type-error": "off",
+    "unicorn/prefer-string-replace-all": "off",
+    "unicorn/switch-case-braces": "off",
+    "eslint-plugin-vitest/no-import-node-test": "off",
+    "vitest/no-import-node-test": "off"
+  },
+  "overrides": [
+    {
+      "files": [
+        "**/*.{test,spec}.{ts,tsx,js,jsx}",
+        "**/__tests__/**/*.{ts,tsx,js,jsx}"
+      ],
+      "rules": {
+        "eslint-plugin-vitest/no-import-node-test": "off",
+        "vitest/no-import-node-test": "off"
+      }
+    }
+  ]
+}

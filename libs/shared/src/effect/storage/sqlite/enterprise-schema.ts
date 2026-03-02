@@ -7,7 +7,10 @@ import type {
 const toSqlStringLiteralList = (values: ReadonlyArray<string>): string =>
   values.map((value) => `'${value.replaceAll("'", "''")}'`).join(", ");
 
-const createStrictTableDdl = (tableName: string, definitions: ReadonlyArray<string>): string =>
+const createStrictTableDdl = (
+  tableName: string,
+  definitions: ReadonlyArray<string>
+): string =>
   `CREATE TABLE IF NOT EXISTS ${tableName} (\n${definitions.map((definition) => `  ${definition}`).join(",\n")}\n) STRICT;`;
 
 export const enterpriseScopeLevels = Object.freeze([
@@ -16,10 +19,25 @@ export const enterpriseScopeLevels = Object.freeze([
   "job_role",
   "user",
 ] as const);
-export const enterpriseUserStatuses = Object.freeze(["active", "disabled", "pending"] as const);
-export const enterpriseProjectStatuses = Object.freeze(["active", "archived"] as const);
-export const enterpriseRoleTypes = Object.freeze(["system", "project", "custom"] as const);
-export const enterpriseMemoryLayers = Object.freeze(["episodic", "working", "procedural"] as const);
+export const enterpriseUserStatuses = Object.freeze([
+  "active",
+  "disabled",
+  "pending",
+] as const);
+export const enterpriseProjectStatuses = Object.freeze([
+  "active",
+  "archived",
+] as const);
+export const enterpriseRoleTypes = Object.freeze([
+  "system",
+  "project",
+  "custom",
+] as const);
+export const enterpriseMemoryLayers = Object.freeze([
+  "episodic",
+  "working",
+  "procedural",
+] as const);
 export const enterpriseMemoryKinds = Object.freeze([
   "note",
   "decision",
@@ -51,8 +69,15 @@ export const enterpriseFeedbackKinds = Object.freeze([
   "question",
   "policy_flag",
 ] as const);
-export const enterpriseFeedbackStatuses = Object.freeze(["open", "resolved", "dismissed"] as const);
-export const enterpriseAuditEventOperations = Object.freeze(["upsert", "delete"] as const);
+export const enterpriseFeedbackStatuses = Object.freeze([
+  "open",
+  "resolved",
+  "dismissed",
+] as const);
+export const enterpriseAuditEventOperations = Object.freeze([
+  "upsert",
+  "delete",
+] as const);
 export const enterpriseAuditEventOutcomes = Object.freeze([
   "accepted",
   "denied",
@@ -79,19 +104,27 @@ export const enterpriseAuditEventReferenceKinds = Object.freeze([
 
 export type EnterpriseScopeLevel = (typeof enterpriseScopeLevels)[number];
 export type EnterpriseUserStatus = (typeof enterpriseUserStatuses)[number];
-export type EnterpriseProjectStatus = (typeof enterpriseProjectStatuses)[number];
+export type EnterpriseProjectStatus =
+  (typeof enterpriseProjectStatuses)[number];
 export type EnterpriseRoleType = (typeof enterpriseRoleTypes)[number];
 export type EnterpriseMemoryLayer = (typeof enterpriseMemoryLayers)[number];
 export type EnterpriseMemoryKind = (typeof enterpriseMemoryKinds)[number];
 export type EnterpriseMemoryStatus = (typeof enterpriseMemoryStatuses)[number];
-export type EnterpriseEvidenceSourceKind = (typeof enterpriseEvidenceSourceKinds)[number];
-export type EnterpriseEvidenceRelationKind = (typeof enterpriseEvidenceRelationKinds)[number];
+export type EnterpriseEvidenceSourceKind =
+  (typeof enterpriseEvidenceSourceKinds)[number];
+export type EnterpriseEvidenceRelationKind =
+  (typeof enterpriseEvidenceRelationKinds)[number];
 export type EnterpriseFeedbackKind = (typeof enterpriseFeedbackKinds)[number];
-export type EnterpriseFeedbackStatus = (typeof enterpriseFeedbackStatuses)[number];
-export type EnterpriseAuditEventOperation = (typeof enterpriseAuditEventOperations)[number];
-export type EnterpriseAuditEventOutcome = (typeof enterpriseAuditEventOutcomes)[number];
-export type EnterpriseAuditEventReason = (typeof enterpriseAuditEventReasons)[number];
-export type EnterpriseAuditEventReferenceKind = (typeof enterpriseAuditEventReferenceKinds)[number];
+export type EnterpriseFeedbackStatus =
+  (typeof enterpriseFeedbackStatuses)[number];
+export type EnterpriseAuditEventOperation =
+  (typeof enterpriseAuditEventOperations)[number];
+export type EnterpriseAuditEventOutcome =
+  (typeof enterpriseAuditEventOutcomes)[number];
+export type EnterpriseAuditEventReason =
+  (typeof enterpriseAuditEventReasons)[number];
+export type EnterpriseAuditEventReferenceKind =
+  (typeof enterpriseAuditEventReferenceKinds)[number];
 
 export const enterpriseSqliteTableNames = Object.freeze([
   "tenants",
@@ -110,7 +143,8 @@ export const enterpriseSqliteTableNames = Object.freeze([
   "storage_idempotency_ledger",
 ] as const);
 
-export type EnterpriseSqliteTableName = (typeof enterpriseSqliteTableNames)[number];
+export type EnterpriseSqliteTableName =
+  (typeof enterpriseSqliteTableNames)[number];
 
 const tenantsTableDdl = createStrictTableDdl("tenants", [
   "tenant_id TEXT NOT NULL",
@@ -201,19 +235,22 @@ const projectMembershipsTableDdl = createStrictTableDdl("project_memberships", [
   "CHECK (assigned_at_ms >= 0)",
 ]);
 
-const userRoleAssignmentsTableDdl = createStrictTableDdl("user_role_assignments", [
-  "tenant_id TEXT NOT NULL",
-  "user_id TEXT NOT NULL",
-  "role_id TEXT NOT NULL",
-  "assigned_at_ms INTEGER NOT NULL",
-  "assigned_by_user_id TEXT",
-  "PRIMARY KEY (tenant_id, user_id, role_id)",
-  "FOREIGN KEY (tenant_id) REFERENCES tenants (tenant_id) ON DELETE CASCADE ON UPDATE CASCADE",
-  "FOREIGN KEY (tenant_id, user_id) REFERENCES users (tenant_id, user_id) ON DELETE CASCADE ON UPDATE CASCADE",
-  "FOREIGN KEY (tenant_id, role_id) REFERENCES roles (tenant_id, role_id) ON DELETE CASCADE ON UPDATE CASCADE",
-  "FOREIGN KEY (tenant_id, assigned_by_user_id) REFERENCES users (tenant_id, user_id) ON DELETE CASCADE ON UPDATE CASCADE",
-  "CHECK (assigned_at_ms >= 0)",
-]);
+const userRoleAssignmentsTableDdl = createStrictTableDdl(
+  "user_role_assignments",
+  [
+    "tenant_id TEXT NOT NULL",
+    "user_id TEXT NOT NULL",
+    "role_id TEXT NOT NULL",
+    "assigned_at_ms INTEGER NOT NULL",
+    "assigned_by_user_id TEXT",
+    "PRIMARY KEY (tenant_id, user_id, role_id)",
+    "FOREIGN KEY (tenant_id) REFERENCES tenants (tenant_id) ON DELETE CASCADE ON UPDATE CASCADE",
+    "FOREIGN KEY (tenant_id, user_id) REFERENCES users (tenant_id, user_id) ON DELETE CASCADE ON UPDATE CASCADE",
+    "FOREIGN KEY (tenant_id, role_id) REFERENCES roles (tenant_id, role_id) ON DELETE CASCADE ON UPDATE CASCADE",
+    "FOREIGN KEY (tenant_id, assigned_by_user_id) REFERENCES users (tenant_id, user_id) ON DELETE CASCADE ON UPDATE CASCADE",
+    "CHECK (assigned_at_ms >= 0)",
+  ]
+);
 
 const scopesTableDdl = createStrictTableDdl("scopes", [
   "tenant_id TEXT NOT NULL",
@@ -312,19 +349,22 @@ const evidenceTableDdl = createStrictTableDdl("evidence", [
   "CHECK (created_at_ms >= observed_at_ms)",
 ]);
 
-const memoryEvidenceLinksTableDdl = createStrictTableDdl("memory_evidence_links", [
-  "tenant_id TEXT NOT NULL",
-  "memory_id TEXT NOT NULL",
-  "evidence_id TEXT NOT NULL",
-  "relation_kind TEXT NOT NULL",
-  "created_at_ms INTEGER NOT NULL",
-  "PRIMARY KEY (tenant_id, memory_id, evidence_id)",
-  "FOREIGN KEY (tenant_id) REFERENCES tenants (tenant_id) ON DELETE CASCADE ON UPDATE CASCADE",
-  "FOREIGN KEY (tenant_id, memory_id) REFERENCES memory_items (tenant_id, memory_id) ON DELETE CASCADE ON UPDATE CASCADE",
-  "FOREIGN KEY (tenant_id, evidence_id) REFERENCES evidence (tenant_id, evidence_id) ON DELETE CASCADE ON UPDATE CASCADE",
-  `CHECK (relation_kind IN (${toSqlStringLiteralList(enterpriseEvidenceRelationKinds)}))`,
-  "CHECK (created_at_ms >= 0)",
-]);
+const memoryEvidenceLinksTableDdl = createStrictTableDdl(
+  "memory_evidence_links",
+  [
+    "tenant_id TEXT NOT NULL",
+    "memory_id TEXT NOT NULL",
+    "evidence_id TEXT NOT NULL",
+    "relation_kind TEXT NOT NULL",
+    "created_at_ms INTEGER NOT NULL",
+    "PRIMARY KEY (tenant_id, memory_id, evidence_id)",
+    "FOREIGN KEY (tenant_id) REFERENCES tenants (tenant_id) ON DELETE CASCADE ON UPDATE CASCADE",
+    "FOREIGN KEY (tenant_id, memory_id) REFERENCES memory_items (tenant_id, memory_id) ON DELETE CASCADE ON UPDATE CASCADE",
+    "FOREIGN KEY (tenant_id, evidence_id) REFERENCES evidence (tenant_id, evidence_id) ON DELETE CASCADE ON UPDATE CASCADE",
+    `CHECK (relation_kind IN (${toSqlStringLiteralList(enterpriseEvidenceRelationKinds)}))`,
+    "CHECK (created_at_ms >= 0)",
+  ]
+);
 
 const feedbackTableDdl = createStrictTableDdl("feedback", [
   "tenant_id TEXT NOT NULL",
@@ -389,22 +429,25 @@ const auditEventsTableDdl = createStrictTableDdl("audit_events", [
   )`,
 ]);
 
-const storageIdempotencyLedgerTableDdl = createStrictTableDdl("storage_idempotency_ledger", [
-  "tenant_id TEXT NOT NULL",
-  "operation TEXT NOT NULL",
-  "idempotency_key TEXT NOT NULL",
-  "request_hash_sha256 TEXT NOT NULL",
-  "response_json TEXT NOT NULL",
-  "created_at_ms INTEGER NOT NULL",
-  "PRIMARY KEY (tenant_id, operation, idempotency_key)",
-  "CHECK (length(trim(tenant_id)) > 0)",
-  `CHECK (operation IN (${toSqlStringLiteralList(enterpriseAuditEventOperations)}))`,
-  "CHECK (length(trim(idempotency_key)) > 0)",
-  "CHECK (length(request_hash_sha256) = 64)",
-  "CHECK (request_hash_sha256 NOT GLOB '*[^0-9A-Fa-f]*')",
-  "CHECK (json_valid(response_json))",
-  "CHECK (created_at_ms >= 0)",
-]);
+const storageIdempotencyLedgerTableDdl = createStrictTableDdl(
+  "storage_idempotency_ledger",
+  [
+    "tenant_id TEXT NOT NULL",
+    "operation TEXT NOT NULL",
+    "idempotency_key TEXT NOT NULL",
+    "request_hash_sha256 TEXT NOT NULL",
+    "response_json TEXT NOT NULL",
+    "created_at_ms INTEGER NOT NULL",
+    "PRIMARY KEY (tenant_id, operation, idempotency_key)",
+    "CHECK (length(trim(tenant_id)) > 0)",
+    `CHECK (operation IN (${toSqlStringLiteralList(enterpriseAuditEventOperations)}))`,
+    "CHECK (length(trim(idempotency_key)) > 0)",
+    "CHECK (length(request_hash_sha256) = 64)",
+    "CHECK (request_hash_sha256 NOT GLOB '*[^0-9A-Fa-f]*')",
+    "CHECK (json_valid(response_json))",
+    "CHECK (created_at_ms >= 0)",
+  ]
+);
 
 export const enterpriseSqliteTables = Object.freeze([
   {
@@ -718,7 +761,8 @@ export const enterpriseSqliteTriggerNames = Object.freeze([
   "trg_audit_events_append_only_delete",
 ] as const);
 
-export type EnterpriseSqliteTriggerName = (typeof enterpriseSqliteTriggerNames)[number];
+export type EnterpriseSqliteTriggerName =
+  (typeof enterpriseSqliteTriggerNames)[number];
 
 export const enterpriseSqliteTriggers = Object.freeze([
   {
@@ -881,7 +925,8 @@ export const enterpriseSqliteIndexNames = Object.freeze([
   "idx_storage_idempotency_ledger_request_hash",
 ] as const);
 
-export type EnterpriseSqliteIndexName = (typeof enterpriseSqliteIndexNames)[number];
+export type EnterpriseSqliteIndexName =
+  (typeof enterpriseSqliteIndexNames)[number];
 
 export const enterpriseSqliteIndexes = Object.freeze([
   {

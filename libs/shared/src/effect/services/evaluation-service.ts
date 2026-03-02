@@ -1,6 +1,9 @@
 import { Context, Effect, Layer } from "effect";
 
-import type { EvaluationRequest, EvaluationResponse } from "../contracts/index.js";
+import type {
+  EvaluationRequest,
+  EvaluationResponse,
+} from "../contracts/index.js";
 import type { EvaluationServiceError } from "../errors.js";
 
 export type {
@@ -11,12 +14,12 @@ export type {
 
 export interface EvaluationService {
   readonly evaluate: (
-    request: EvaluationRequest,
+    request: EvaluationRequest
   ) => Effect.Effect<EvaluationResponse, EvaluationServiceError>;
 }
 
 export const EvaluationServiceTag = Context.GenericTag<EvaluationService>(
-  "@ums/effect/EvaluationService",
+  "@ums/effect/EvaluationService"
 );
 
 const deterministicCandidateScore = (memoryId: string): number => {
@@ -41,14 +44,15 @@ export const makeNoopEvaluationService = (): EvaluationService => ({
     return Effect.succeed({
       objective: request.objective,
       results,
-      selectedMemoryIds: results.filter((result) => result.passed).map((result) => result.memoryId),
+      selectedMemoryIds: results
+        .filter((result) => result.passed)
+        .map((result) => result.memoryId),
     });
   },
 });
 
-export const noopEvaluationLayer: Layer.Layer<EvaluationService> = Layer.succeed(
-  EvaluationServiceTag,
-  makeNoopEvaluationService(),
-);
+export const noopEvaluationLayer: Layer.Layer<EvaluationService> =
+  Layer.succeed(EvaluationServiceTag, makeNoopEvaluationService());
 
-export const deterministicTestEvaluationLayer: Layer.Layer<EvaluationService> = noopEvaluationLayer;
+export const deterministicTestEvaluationLayer: Layer.Layer<EvaluationService> =
+  noopEvaluationLayer;

@@ -4,7 +4,8 @@ import type { DatabaseSync } from "node:sqlite";
 
 import { ContractValidationError } from "../../errors.js";
 
-const backupOptionContractPrefix = "SqliteStorageRepositoryOptions.backupReplication";
+const backupOptionContractPrefix =
+  "SqliteStorageRepositoryOptions.backupReplication";
 const defaultSnapshotFilePrefix = "sqlite-backup";
 
 export type SqliteBackupReplicationTrigger = "manual" | "interval";
@@ -28,7 +29,7 @@ export interface SqliteBackupReplicationController {
   readonly stop: () => void;
   readonly isRunning: () => boolean;
   readonly replicateNow: (
-    trigger?: SqliteBackupReplicationTrigger,
+    trigger?: SqliteBackupReplicationTrigger
   ) => SqliteBackupReplicationMetadata;
 }
 
@@ -48,9 +49,11 @@ export interface SqliteBackupReplicationOptions {
   readonly onReplicated?: (metadata: SqliteBackupReplicationMetadata) => void;
   readonly onReplicationError?: (
     error: ContractValidationError,
-    context: SqliteBackupReplicationErrorContext,
+    context: SqliteBackupReplicationErrorContext
   ) => void;
-  readonly onControllerReady?: (controller: SqliteBackupReplicationController) => void;
+  readonly onControllerReady?: (
+    controller: SqliteBackupReplicationController
+  ) => void;
 }
 
 interface BackupSnapshotRecord {
@@ -62,13 +65,18 @@ interface BackupSnapshotRecord {
 
 const defaultBackupReplicationScheduler: SqliteBackupReplicationScheduler = {
   setInterval: (task, intervalMillis) => setInterval(task, intervalMillis),
-  clearInterval: (handle) => clearInterval(handle as ReturnType<typeof setInterval>),
+  clearInterval: (handle) =>
+    clearInterval(handle as ReturnType<typeof setInterval>),
 };
 
 const toErrorMessage = (cause: unknown): string =>
   cause instanceof Error ? cause.message : String(cause);
 
-const normalizeTrimmedString = (value: unknown, contract: string, details: string): string => {
+const normalizeTrimmedString = (
+  value: unknown,
+  contract: string,
+  details: string
+): string => {
   if (typeof value !== "string") {
     throw new ContractValidationError({
       contract,
@@ -89,11 +97,15 @@ const normalizeTrimmedString = (value: unknown, contract: string, details: strin
   return trimmed;
 };
 
-const normalizeSnapshotFilePrefix = (value: string, contract: string): string => {
+const normalizeSnapshotFilePrefix = (
+  value: string,
+  contract: string
+): string => {
   if (!/^[A-Za-z0-9_-]+$/u.test(value)) {
     throw new ContractValidationError({
       contract,
-      message: "SQLite backup replication filePrefix must contain only [A-Za-z0-9_-].",
+      message:
+        "SQLite backup replication filePrefix must contain only [A-Za-z0-9_-].",
       details:
         "filePrefix must not contain path separators, dots, or whitespace to prevent path traversal.",
     });
@@ -105,7 +117,7 @@ const normalizeSnapshotFilePrefix = (value: string, contract: string): string =>
 const normalizeOptionalPositiveSafeInteger = (
   value: unknown,
   contract: string,
-  details: string,
+  details: string
 ): number | null => {
   if (value === undefined) {
     return null;
@@ -113,7 +125,8 @@ const normalizeOptionalPositiveSafeInteger = (
   if (typeof value !== "number" || !Number.isSafeInteger(value) || value <= 0) {
     throw new ContractValidationError({
       contract,
-      message: "SQLite backup replication option must be a positive safe integer.",
+      message:
+        "SQLite backup replication option must be a positive safe integer.",
       details,
     });
   }
@@ -121,9 +134,11 @@ const normalizeOptionalPositiveSafeInteger = (
   return value;
 };
 
-const toSqliteStringLiteral = (value: string): string => `'${value.replace(/'/g, "''")}'`;
+const toSqliteStringLiteral = (value: string): string =>
+  `'${value.replace(/'/g, "''")}'`;
 
-const formatSnapshotSequence = (sequence: number): string => sequence.toString().padStart(6, "0");
+const formatSnapshotSequence = (sequence: number): string =>
+  sequence.toString().padStart(6, "0");
 
 const formatSnapshotTimestamp = (createdAtMillis: number): string =>
   createdAtMillis.toString().padStart(13, "0");
@@ -134,7 +149,7 @@ const escapeRegularExpression = (value: string): string =>
 const parseSnapshotRecord = (
   filename: string,
   directoryPath: string,
-  snapshotPattern: RegExp,
+  snapshotPattern: RegExp
 ): BackupSnapshotRecord | null => {
   const match = snapshotPattern.exec(filename);
   if (match === null) {
@@ -160,7 +175,10 @@ const parseSnapshotRecord = (
   };
 };
 
-const sortSnapshotRecords = (left: BackupSnapshotRecord, right: BackupSnapshotRecord): number => {
+const sortSnapshotRecords = (
+  left: BackupSnapshotRecord,
+  right: BackupSnapshotRecord
+): number => {
   if (left.createdAtMillis !== right.createdAtMillis) {
     return left.createdAtMillis - right.createdAtMillis;
   }
@@ -174,7 +192,8 @@ const normalizeCreatedAtMillis = (createdAtMillis: number): number => {
   if (!Number.isSafeInteger(createdAtMillis) || createdAtMillis < 0) {
     throw new ContractValidationError({
       contract: `${backupOptionContractPrefix}.clock`,
-      message: "SQLite backup replication clock must return non-negative safe integer millis.",
+      message:
+        "SQLite backup replication clock must return non-negative safe integer millis.",
       details: `Received clock value: ${createdAtMillis}.`,
     });
   }
@@ -187,12 +206,12 @@ const isClosedDatabaseError = (error: ContractValidationError): boolean =>
 
 export const createSqliteBackupReplicator = (
   database: DatabaseSync,
-  options: SqliteBackupReplicationOptions,
+  options: SqliteBackupReplicationOptions
 ): SqliteBackupReplicationController => {
   const directoryPath = normalizeTrimmedString(
     options.directoryPath,
     `${backupOptionContractPrefix}.directoryPath`,
-    "directoryPath must be a non-empty filesystem path string.",
+    "directoryPath must be a non-empty filesystem path string."
   );
   const filePrefix =
     options.filePrefix === undefined
@@ -200,28 +219,28 @@ export const createSqliteBackupReplicator = (
       : normalizeTrimmedString(
           options.filePrefix,
           `${backupOptionContractPrefix}.filePrefix`,
-          "filePrefix must be a non-empty string when provided.",
+          "filePrefix must be a non-empty string when provided."
         );
   const sanitizedFilePrefix = normalizeSnapshotFilePrefix(
     filePrefix,
-    `${backupOptionContractPrefix}.filePrefix`,
+    `${backupOptionContractPrefix}.filePrefix`
   );
   const intervalMillis = normalizeOptionalPositiveSafeInteger(
     options.intervalMillis,
     `${backupOptionContractPrefix}.intervalMillis`,
-    "intervalMillis must be a positive safe integer when provided.",
+    "intervalMillis must be a positive safe integer when provided."
   );
   const retentionMaxSnapshots = normalizeOptionalPositiveSafeInteger(
     options.retentionMaxSnapshots,
     `${backupOptionContractPrefix}.retentionMaxSnapshots`,
-    "retentionMaxSnapshots must be a positive safe integer when provided.",
+    "retentionMaxSnapshots must be a positive safe integer when provided."
   );
   const clock = options.clock ?? Date.now;
   const scheduler = options.scheduler ?? defaultBackupReplicationScheduler;
   const autoStart = options.autoStart ?? true;
   const snapshotPattern = new RegExp(
     `^${escapeRegularExpression(sanitizedFilePrefix)}-(\\d{13})-(\\d+)\\.sqlite$`,
-    "u",
+    "u"
   );
 
   let nextSequence = 0;
@@ -231,7 +250,7 @@ export const createSqliteBackupReplicator = (
 
   const publishReplicationError = (
     error: ContractValidationError,
-    context: SqliteBackupReplicationErrorContext,
+    context: SqliteBackupReplicationErrorContext
   ): void => {
     if (onReplicationError === undefined) {
       return;
@@ -244,13 +263,16 @@ export const createSqliteBackupReplicator = (
   };
 
   const applyRetention = (): string[] => {
-    if (retentionMaxSnapshots === null || managedSnapshots.length <= retentionMaxSnapshots) {
+    if (
+      retentionMaxSnapshots === null ||
+      managedSnapshots.length <= retentionMaxSnapshots
+    ) {
       return [];
     }
 
     const staleSnapshots = managedSnapshots.splice(
       0,
-      managedSnapshots.length - retentionMaxSnapshots,
+      managedSnapshots.length - retentionMaxSnapshots
     );
     const deletedSnapshotFilenames: string[] = [];
     for (const staleSnapshot of staleSnapshots) {
@@ -263,20 +285,22 @@ export const createSqliteBackupReplicator = (
 
   mkdirSync(directoryPath, { recursive: true });
   const existingSnapshots = readdirSync(directoryPath)
-    .map((filename) => parseSnapshotRecord(filename, directoryPath, snapshotPattern))
+    .map((filename) =>
+      parseSnapshotRecord(filename, directoryPath, snapshotPattern)
+    )
     .filter((record): record is BackupSnapshotRecord => record !== null)
     .sort(sortSnapshotRecords);
   if (existingSnapshots.length > 0) {
     managedSnapshots.push(...existingSnapshots);
     nextSequence = existingSnapshots.reduce(
       (maxSequence, snapshot) => Math.max(maxSequence, snapshot.sequence),
-      0,
+      0
     );
     applyRetention();
   }
 
   const replicateNow = (
-    trigger: SqliteBackupReplicationTrigger = "manual",
+    trigger: SqliteBackupReplicationTrigger = "manual"
   ): SqliteBackupReplicationMetadata => {
     const createdAtMillis = normalizeCreatedAtMillis(clock());
     nextSequence += 1;
@@ -337,7 +361,10 @@ export const createSqliteBackupReplicator = (
       try {
         replicateNow("interval");
       } catch (cause) {
-        if (cause instanceof ContractValidationError && isClosedDatabaseError(cause)) {
+        if (
+          cause instanceof ContractValidationError &&
+          isClosedDatabaseError(cause)
+        ) {
           stop();
         }
       }

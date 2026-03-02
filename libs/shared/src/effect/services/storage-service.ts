@@ -1,4 +1,5 @@
 import type { DatabaseSync } from "node:sqlite";
+
 import { Context, Effect, Layer } from "effect";
 
 import type {
@@ -11,7 +12,10 @@ import type {
   StorageUpsertRequest,
   StorageUpsertResponse,
 } from "../contracts/index.js";
-import { ContractValidationError, type StorageServiceError } from "../errors.js";
+import {
+  ContractValidationError,
+  type StorageServiceError,
+} from "../errors.js";
 import {
   makeSqliteStorageRepository,
   type SqliteStorageRepositoryOptions,
@@ -30,35 +34,37 @@ export type {
 
 export interface StorageService {
   readonly upsertMemory: (
-    request: StorageUpsertRequest,
+    request: StorageUpsertRequest
   ) => Effect.Effect<StorageUpsertResponse, StorageServiceError>;
   readonly deleteMemory: (
-    request: StorageDeleteRequest,
+    request: StorageDeleteRequest
   ) => Effect.Effect<StorageDeleteResponse, StorageServiceError>;
   readonly exportSnapshot: (
-    request: StorageSnapshotExportRequest,
+    request: StorageSnapshotExportRequest
   ) => Effect.Effect<StorageSnapshotExportResponse, StorageServiceError>;
   readonly importSnapshot: (
-    request: StorageSnapshotImportRequest,
+    request: StorageSnapshotImportRequest
   ) => Effect.Effect<StorageSnapshotImportResponse, StorageServiceError>;
 }
 
 export interface StorageRepository {
   readonly upsertMemory: (
-    request: StorageUpsertRequest,
+    request: StorageUpsertRequest
   ) => Effect.Effect<StorageUpsertResponse, StorageServiceError>;
   readonly deleteMemory: (
-    request: StorageDeleteRequest,
+    request: StorageDeleteRequest
   ) => Effect.Effect<StorageDeleteResponse, StorageServiceError>;
   readonly exportSnapshot: (
-    request: StorageSnapshotExportRequest,
+    request: StorageSnapshotExportRequest
   ) => Effect.Effect<StorageSnapshotExportResponse, StorageServiceError>;
   readonly importSnapshot: (
-    request: StorageSnapshotImportRequest,
+    request: StorageSnapshotImportRequest
   ) => Effect.Effect<StorageSnapshotImportResponse, StorageServiceError>;
 }
 
-export const StorageServiceTag = Context.GenericTag<StorageService>("@ums/effect/StorageService");
+export const StorageServiceTag = Context.GenericTag<StorageService>(
+  "@ums/effect/StorageService"
+);
 
 export const makeNoopStorageService = (): StorageService => ({
   upsertMemory: (request) =>
@@ -78,7 +84,8 @@ export const makeNoopStorageService = (): StorageService => ({
   exportSnapshot: () =>
     Effect.succeed({
       signatureAlgorithm: "hmac-sha256",
-      payload: '{"format":"ums-memory/sqlite-storage-snapshot/v1","tables":[],"userVersion":0}',
+      payload:
+        '{"format":"ums-memory/sqlite-storage-snapshot/v1","tables":[],"userVersion":0}',
       signature: "0".repeat(64),
       tableCount: 0,
       rowCount: 0,
@@ -93,7 +100,7 @@ export const makeNoopStorageService = (): StorageService => ({
 });
 
 export const makeStorageServiceFromRepository = (
-  repository: StorageRepository,
+  repository: StorageRepository
 ): StorageService => ({
   upsertMemory: (request) => repository.upsertMemory(request),
   deleteMemory: (request) => repository.deleteMemory(request),
@@ -105,11 +112,15 @@ export const makeStorageServiceFromRepository = (
 // for typed initialization failures in the Effect error channel.
 export const makeSqliteStorageService = (
   database: DatabaseSync,
-  options: SqliteStorageRepositoryOptions = {},
+  options: SqliteStorageRepositoryOptions = {}
 ): StorageService =>
-  makeStorageServiceFromRepository(makeSqliteStorageRepository(database, options));
+  makeStorageServiceFromRepository(
+    makeSqliteStorageRepository(database, options)
+  );
 
-const toStorageInitializationError = (cause: unknown): ContractValidationError => {
+const toStorageInitializationError = (
+  cause: unknown
+): ContractValidationError => {
   if (cause instanceof ContractValidationError) {
     return cause;
   }
@@ -118,13 +129,15 @@ const toStorageInitializationError = (cause: unknown): ContractValidationError =
     contract: "StorageServiceInitialization",
     message: "Failed to initialize SQLite storage service",
     details:
-      cause instanceof Error ? cause.message : `Unknown initialization failure: ${String(cause)}`,
+      cause instanceof Error
+        ? cause.message
+        : `Unknown initialization failure: ${String(cause)}`,
   });
 };
 
 export const makeSqliteStorageServiceEffect = (
   database: DatabaseSync,
-  options: SqliteStorageRepositoryOptions = {},
+  options: SqliteStorageRepositoryOptions = {}
 ): Effect.Effect<StorageService, StorageServiceError> =>
   Effect.try({
     try: () => makeSqliteStorageService(database, options),
@@ -133,13 +146,17 @@ export const makeSqliteStorageServiceEffect = (
 
 export const noopStorageLayer: Layer.Layer<StorageService> = Layer.succeed(
   StorageServiceTag,
-  makeNoopStorageService(),
+  makeNoopStorageService()
 );
 
 export const makeSqliteStorageLayer = (
   database: DatabaseSync,
-  options: SqliteStorageRepositoryOptions = {},
+  options: SqliteStorageRepositoryOptions = {}
 ): Layer.Layer<StorageService, StorageServiceError> =>
-  Layer.effect(StorageServiceTag, makeSqliteStorageServiceEffect(database, options));
+  Layer.effect(
+    StorageServiceTag,
+    makeSqliteStorageServiceEffect(database, options)
+  );
 
-export const deterministicTestStorageLayer: Layer.Layer<StorageService> = noopStorageLayer;
+export const deterministicTestStorageLayer: Layer.Layer<StorageService> =
+  noopStorageLayer;

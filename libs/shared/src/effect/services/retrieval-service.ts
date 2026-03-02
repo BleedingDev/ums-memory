@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+
 import { Context, Effect, Layer } from "effect";
 
 import type {
@@ -39,15 +40,15 @@ export type {
 
 export interface RetrievalService {
   readonly retrieve: (
-    request: RetrievalRequest,
+    request: RetrievalRequest
   ) => Effect.Effect<RetrievalResponse, RetrievalServiceError>;
   readonly retrieveExplainability: (
-    request: RetrievalRequest,
+    request: RetrievalRequest
   ) => Effect.Effect<RetrievalExplainabilityResponse, RetrievalServiceError>;
 }
 
 export const RetrievalServiceTag = Context.GenericTag<RetrievalService>(
-  "@ums/effect/RetrievalService",
+  "@ums/effect/RetrievalService"
 );
 
 const defaultSnapshotSignatureSecret = "@ums/retrieval-service/snapshot";
@@ -235,7 +236,10 @@ const describeFailure = (cause: unknown): string => {
   return String(cause);
 };
 
-const toRetrievalQueryError = (request: RetrievalRequest, message: string): RetrievalQueryError =>
+const toRetrievalQueryError = (
+  request: RetrievalRequest,
+  message: string
+): RetrievalQueryError =>
   new RetrievalQueryError({
     spaceId: request.spaceId,
     query: request.query,
@@ -244,7 +248,7 @@ const toRetrievalQueryError = (request: RetrievalRequest, message: string): Retr
 
 const readSnapshotTable = (
   snapshot: SqliteStorageSnapshotData,
-  tableName: "scopes" | "memory_items",
+  tableName: "scopes" | "memory_items"
 ) => {
   const table = snapshot.tables.find((entry) => entry.name === tableName);
   if (table === undefined) {
@@ -256,11 +260,13 @@ const readSnapshotTable = (
 const readColumnIndex = (
   tableName: string,
   columns: readonly string[],
-  columnName: string,
+  columnName: string
 ): number => {
   const index = columns.indexOf(columnName);
   if (index === -1) {
-    throw new Error(`Snapshot table ${tableName} is missing required column ${columnName}.`);
+    throw new Error(
+      `Snapshot table ${tableName} is missing required column ${columnName}.`
+    );
   }
   return index;
 };
@@ -268,7 +274,7 @@ const readColumnIndex = (
 const readRowCell = (
   row: readonly (string | number | null)[],
   index: number,
-  label: string,
+  label: string
 ): string | number | null => {
   const value = row[index];
   if (value === undefined) {
@@ -280,7 +286,7 @@ const readRowCell = (
 const readNonEmptyString = (
   row: readonly (string | number | null)[],
   index: number,
-  label: string,
+  label: string
 ): string => {
   const value = readRowCell(row, index, label);
   if (typeof value !== "string" || value.trim().length === 0) {
@@ -292,7 +298,7 @@ const readNonEmptyString = (
 const readNullableString = (
   row: readonly (string | number | null)[],
   index: number,
-  label: string,
+  label: string
 ): string | null => {
   const value = readRowCell(row, index, label);
   if (value === null) {
@@ -307,7 +313,7 @@ const readNullableString = (
 const readNonNegativeInteger = (
   row: readonly (string | number | null)[],
   index: number,
-  label: string,
+  label: string
 ): number => {
   const value = readRowCell(row, index, label);
   if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
@@ -319,7 +325,7 @@ const readNonNegativeInteger = (
 const readNullableNonNegativeInteger = (
   row: readonly (string | number | null)[],
   index: number,
-  label: string,
+  label: string
 ): number | null => {
   const value = readRowCell(row, index, label);
   if (value === null) {
@@ -332,7 +338,12 @@ const readNullableNonNegativeInteger = (
 };
 
 const toScopeLevel = (value: string, label: string): ScopeLevel => {
-  if (value === "common" || value === "project" || value === "job_role" || value === "user") {
+  if (
+    value === "common" ||
+    value === "project" ||
+    value === "job_role" ||
+    value === "user"
+  ) {
     return value;
   }
   throw new Error(`${label} must be one of common, project, job_role, user.`);
@@ -345,40 +356,73 @@ const toMemoryLayer = (value: string, label: string): RetrievalHit["layer"] => {
   throw new Error(`${label} must be one of episodic, working, procedural.`);
 };
 
-const toMemoryId = (value: string): RetrievalHit["memoryId"] => value as RetrievalHit["memoryId"];
+const toMemoryId = (value: string): RetrievalHit["memoryId"] =>
+  value as RetrievalHit["memoryId"];
 
 const parseScopeRows = (
   snapshot: SqliteStorageSnapshotData,
-  spaceId: string,
+  spaceId: string
 ): readonly ParsedScopeRow[] => {
   const table = readSnapshotTable(snapshot, "scopes");
   const scopeIdIndex = readColumnIndex("scopes", table.columns, "scope_id");
   const tenantIdIndex = readColumnIndex("scopes", table.columns, "tenant_id");
-  const scopeLevelIndex = readColumnIndex("scopes", table.columns, "scope_level");
+  const scopeLevelIndex = readColumnIndex(
+    "scopes",
+    table.columns,
+    "scope_level"
+  );
   const projectIdIndex = readColumnIndex("scopes", table.columns, "project_id");
   const roleIdIndex = readColumnIndex("scopes", table.columns, "role_id");
   const userIdIndex = readColumnIndex("scopes", table.columns, "user_id");
-  const parentScopeIdIndex = readColumnIndex("scopes", table.columns, "parent_scope_id");
+  const parentScopeIdIndex = readColumnIndex(
+    "scopes",
+    table.columns,
+    "parent_scope_id"
+  );
 
   const rows: ParsedScopeRow[] = [];
   for (const [rowIndex, row] of table.rows.entries()) {
-    const tenantId = readNonEmptyString(row, tenantIdIndex, `scopes.rows[${rowIndex}].tenant_id`);
+    const tenantId = readNonEmptyString(
+      row,
+      tenantIdIndex,
+      `scopes.rows[${rowIndex}].tenant_id`
+    );
     if (tenantId !== spaceId) {
       continue;
     }
     rows.push({
-      scopeId: readNonEmptyString(row, scopeIdIndex, `scopes.rows[${rowIndex}].scope_id`),
-      scopeLevel: toScopeLevel(
-        readNonEmptyString(row, scopeLevelIndex, `scopes.rows[${rowIndex}].scope_level`),
-        `scopes.rows[${rowIndex}].scope_level`,
+      scopeId: readNonEmptyString(
+        row,
+        scopeIdIndex,
+        `scopes.rows[${rowIndex}].scope_id`
       ),
-      projectId: readNullableString(row, projectIdIndex, `scopes.rows[${rowIndex}].project_id`),
-      roleId: readNullableString(row, roleIdIndex, `scopes.rows[${rowIndex}].role_id`),
-      userId: readNullableString(row, userIdIndex, `scopes.rows[${rowIndex}].user_id`),
+      scopeLevel: toScopeLevel(
+        readNonEmptyString(
+          row,
+          scopeLevelIndex,
+          `scopes.rows[${rowIndex}].scope_level`
+        ),
+        `scopes.rows[${rowIndex}].scope_level`
+      ),
+      projectId: readNullableString(
+        row,
+        projectIdIndex,
+        `scopes.rows[${rowIndex}].project_id`
+      ),
+      roleId: readNullableString(
+        row,
+        roleIdIndex,
+        `scopes.rows[${rowIndex}].role_id`
+      ),
+      userId: readNullableString(
+        row,
+        userIdIndex,
+        `scopes.rows[${rowIndex}].user_id`
+      ),
       parentScopeId: readNullableString(
         row,
         parentScopeIdIndex,
-        `scopes.rows[${rowIndex}].parent_scope_id`,
+        `scopes.rows[${rowIndex}].parent_scope_id`
       ),
     });
   }
@@ -388,26 +432,58 @@ const parseScopeRows = (
 
 const parseMemoryRows = (
   snapshot: SqliteStorageSnapshotData,
-  spaceId: string,
+  spaceId: string
 ): readonly ParsedMemoryRow[] => {
   const table = readSnapshotTable(snapshot, "memory_items");
-  const memoryIdIndex = readColumnIndex("memory_items", table.columns, "memory_id");
-  const tenantIdIndex = readColumnIndex("memory_items", table.columns, "tenant_id");
-  const scopeIdIndex = readColumnIndex("memory_items", table.columns, "scope_id");
-  const layerIndex = readColumnIndex("memory_items", table.columns, "memory_layer");
+  const memoryIdIndex = readColumnIndex(
+    "memory_items",
+    table.columns,
+    "memory_id"
+  );
+  const tenantIdIndex = readColumnIndex(
+    "memory_items",
+    table.columns,
+    "tenant_id"
+  );
+  const scopeIdIndex = readColumnIndex(
+    "memory_items",
+    table.columns,
+    "scope_id"
+  );
+  const layerIndex = readColumnIndex(
+    "memory_items",
+    table.columns,
+    "memory_layer"
+  );
   const statusIndex = readColumnIndex("memory_items", table.columns, "status");
   const titleIndex = readColumnIndex("memory_items", table.columns, "title");
-  const payloadJsonIndex = readColumnIndex("memory_items", table.columns, "payload_json");
-  const updatedAtIndex = readColumnIndex("memory_items", table.columns, "updated_at_ms");
-  const expiresAtIndex = readColumnIndex("memory_items", table.columns, "expires_at_ms");
-  const tombstonedAtIndex = readColumnIndex("memory_items", table.columns, "tombstoned_at_ms");
+  const payloadJsonIndex = readColumnIndex(
+    "memory_items",
+    table.columns,
+    "payload_json"
+  );
+  const updatedAtIndex = readColumnIndex(
+    "memory_items",
+    table.columns,
+    "updated_at_ms"
+  );
+  const expiresAtIndex = readColumnIndex(
+    "memory_items",
+    table.columns,
+    "expires_at_ms"
+  );
+  const tombstonedAtIndex = readColumnIndex(
+    "memory_items",
+    table.columns,
+    "tombstoned_at_ms"
+  );
 
   const rows: ParsedMemoryRow[] = [];
   for (const [rowIndex, row] of table.rows.entries()) {
     const tenantId = readNonEmptyString(
       row,
       tenantIdIndex,
-      `memory_items.rows[${rowIndex}].tenant_id`,
+      `memory_items.rows[${rowIndex}].tenant_id`
     );
     if (tenantId !== spaceId) {
       continue;
@@ -415,34 +491,54 @@ const parseMemoryRows = (
 
     rows.push({
       memoryId: toMemoryId(
-        readNonEmptyString(row, memoryIdIndex, `memory_items.rows[${rowIndex}].memory_id`),
+        readNonEmptyString(
+          row,
+          memoryIdIndex,
+          `memory_items.rows[${rowIndex}].memory_id`
+        )
       ),
-      scopeId: readNonEmptyString(row, scopeIdIndex, `memory_items.rows[${rowIndex}].scope_id`),
+      scopeId: readNonEmptyString(
+        row,
+        scopeIdIndex,
+        `memory_items.rows[${rowIndex}].scope_id`
+      ),
       layer: toMemoryLayer(
-        readNonEmptyString(row, layerIndex, `memory_items.rows[${rowIndex}].memory_layer`),
-        `memory_items.rows[${rowIndex}].memory_layer`,
+        readNonEmptyString(
+          row,
+          layerIndex,
+          `memory_items.rows[${rowIndex}].memory_layer`
+        ),
+        `memory_items.rows[${rowIndex}].memory_layer`
       ),
-      status: readNonEmptyString(row, statusIndex, `memory_items.rows[${rowIndex}].status`),
-      title: readNonEmptyString(row, titleIndex, `memory_items.rows[${rowIndex}].title`),
+      status: readNonEmptyString(
+        row,
+        statusIndex,
+        `memory_items.rows[${rowIndex}].status`
+      ),
+      title: readNonEmptyString(
+        row,
+        titleIndex,
+        `memory_items.rows[${rowIndex}].title`
+      ),
       payloadJson: readNonEmptyString(
         row,
         payloadJsonIndex,
-        `memory_items.rows[${rowIndex}].payload_json`,
+        `memory_items.rows[${rowIndex}].payload_json`
       ),
       updatedAtMillis: readNonNegativeInteger(
         row,
         updatedAtIndex,
-        `memory_items.rows[${rowIndex}].updated_at_ms`,
+        `memory_items.rows[${rowIndex}].updated_at_ms`
       ),
       expiresAtMillis: readNullableNonNegativeInteger(
         row,
         expiresAtIndex,
-        `memory_items.rows[${rowIndex}].expires_at_ms`,
+        `memory_items.rows[${rowIndex}].expires_at_ms`
       ),
       tombstonedAtMillis: readNullableNonNegativeInteger(
         row,
         tombstonedAtIndex,
-        `memory_items.rows[${rowIndex}].tombstoned_at_ms`,
+        `memory_items.rows[${rowIndex}].tombstoned_at_ms`
       ),
     });
   }
@@ -463,7 +559,7 @@ const toOptionalRecord = (value: unknown): Record<string, unknown> | null =>
 
 const readRecordValue = (
   record: Record<string, unknown> | null,
-  keys: readonly string[],
+  keys: readonly string[]
 ): unknown => {
   if (record === null) {
     return undefined;
@@ -476,7 +572,9 @@ const readRecordValue = (
   return undefined;
 };
 
-const parsePayloadRecord = (payloadJson: string): Record<string, unknown> | null => {
+const parsePayloadRecord = (
+  payloadJson: string
+): Record<string, unknown> | null => {
   try {
     return toOptionalRecord(JSON.parse(payloadJson));
   } catch {
@@ -553,19 +651,23 @@ const toOptionalTrimmedString = (value: unknown): string | null => {
   return trimmed.length > 0 ? trimmed : null;
 };
 
-const toOptionalMemoryId = (value: unknown): RetrievalHit["memoryId"] | null => {
+const toOptionalMemoryId = (
+  value: unknown
+): RetrievalHit["memoryId"] | null => {
   const trimmed = toOptionalTrimmedString(value);
   return trimmed === null ? null : toMemoryId(trimmed);
 };
 
 const toSortedMemoryIds = (
-  memoryIds: Iterable<RetrievalHit["memoryId"]>,
+  memoryIds: Iterable<RetrievalHit["memoryId"]>
 ): readonly RetrievalHit["memoryId"][] =>
-  Object.freeze([...new Set(memoryIds)].sort((left, right) => left.localeCompare(right)));
+  Object.freeze(
+    [...new Set(memoryIds)].sort((left, right) => left.localeCompare(right))
+  );
 
 const collectMemoryIdsFromLinkedValue = (
   value: unknown,
-  accumulator: Set<RetrievalHit["memoryId"]>,
+  accumulator: Set<RetrievalHit["memoryId"]>
 ): void => {
   const memoryId = toOptionalMemoryId(value);
   if (memoryId !== null) {
@@ -613,7 +715,7 @@ const toRelationKind = (value: unknown): RelationKind | null => {
 const collectExplicitLinkedMemoryIds = (
   container: Record<string, unknown> | null,
   keys: readonly string[],
-  accumulator: Set<RetrievalHit["memoryId"]>,
+  accumulator: Set<RetrievalHit["memoryId"]>
 ): void => {
   if (container === null) {
     return;
@@ -627,12 +729,14 @@ const collectExplicitLinkedMemoryIds = (
   }
 };
 
-const toRelationRecords = (value: unknown): readonly Record<string, unknown>[] => {
+const toRelationRecords = (
+  value: unknown
+): readonly Record<string, unknown>[] => {
   if (Array.isArray(value)) {
     return Object.freeze(
       value
         .map((entry) => toOptionalRecord(entry))
-        .filter((entry): entry is Record<string, unknown> => entry !== null),
+        .filter((entry): entry is Record<string, unknown> => entry !== null)
     );
   }
   const record = toOptionalRecord(value);
@@ -642,18 +746,32 @@ const toRelationRecords = (value: unknown): readonly Record<string, unknown>[] =
 const appendRelationTargets = (
   relationRecord: Record<string, unknown>,
   contradictsMemoryIds: Set<RetrievalHit["memoryId"]>,
-  supersedesMemoryIds: Set<RetrievalHit["memoryId"]>,
+  supersedesMemoryIds: Set<RetrievalHit["memoryId"]>
 ): void => {
-  collectExplicitLinkedMemoryIds(relationRecord, contradictionLinkKeys, contradictsMemoryIds);
-  collectExplicitLinkedMemoryIds(relationRecord, supersedesLinkKeys, supersedesMemoryIds);
+  collectExplicitLinkedMemoryIds(
+    relationRecord,
+    contradictionLinkKeys,
+    contradictsMemoryIds
+  );
+  collectExplicitLinkedMemoryIds(
+    relationRecord,
+    supersedesLinkKeys,
+    supersedesMemoryIds
+  );
 
-  const relationKind = toRelationKind(readRecordValue(relationRecord, relationKindKeys));
+  const relationKind = toRelationKind(
+    readRecordValue(relationRecord, relationKindKeys)
+  );
   if (relationKind === null) {
     return;
   }
 
   const relationTargetIds = new Set<RetrievalHit["memoryId"]>();
-  collectExplicitLinkedMemoryIds(relationRecord, relationTargetKeys, relationTargetIds);
+  collectExplicitLinkedMemoryIds(
+    relationRecord,
+    relationTargetKeys,
+    relationTargetIds
+  );
   if (relationTargetIds.size === 0) {
     return;
   }
@@ -667,19 +785,27 @@ const appendRelationTargets = (
 
 const toHitChronology = (
   payloadRecord: Record<string, unknown> | null,
-  memoryId: RetrievalHit["memoryId"],
+  memoryId: RetrievalHit["memoryId"]
 ): HitChronology => {
   if (payloadRecord === null) {
     return emptyHitChronology;
   }
 
-  const metadataRecord = toOptionalRecord(readRecordValue(payloadRecord, ["metadata"]));
-  const chronologyRecord = toOptionalRecord(readRecordValue(payloadRecord, ["chronology"]));
-  const lineageRecord = toOptionalRecord(readRecordValue(payloadRecord, ["lineage"]));
-  const metadataChronologyRecord = toOptionalRecord(
-    readRecordValue(metadataRecord, ["chronology"]),
+  const metadataRecord = toOptionalRecord(
+    readRecordValue(payloadRecord, ["metadata"])
   );
-  const metadataLineageRecord = toOptionalRecord(readRecordValue(metadataRecord, ["lineage"]));
+  const chronologyRecord = toOptionalRecord(
+    readRecordValue(payloadRecord, ["chronology"])
+  );
+  const lineageRecord = toOptionalRecord(
+    readRecordValue(payloadRecord, ["lineage"])
+  );
+  const metadataChronologyRecord = toOptionalRecord(
+    readRecordValue(metadataRecord, ["chronology"])
+  );
+  const metadataLineageRecord = toOptionalRecord(
+    readRecordValue(metadataRecord, ["lineage"])
+  );
   const containers = Object.freeze([
     payloadRecord,
     metadataRecord,
@@ -693,8 +819,16 @@ const toHitChronology = (
   const supersedesMemoryIds = new Set<RetrievalHit["memoryId"]>();
 
   for (const container of containers) {
-    collectExplicitLinkedMemoryIds(container, contradictionLinkKeys, contradictsMemoryIds);
-    collectExplicitLinkedMemoryIds(container, supersedesLinkKeys, supersedesMemoryIds);
+    collectExplicitLinkedMemoryIds(
+      container,
+      contradictionLinkKeys,
+      contradictsMemoryIds
+    );
+    collectExplicitLinkedMemoryIds(
+      container,
+      supersedesLinkKeys,
+      supersedesMemoryIds
+    );
 
     if (container === null) {
       continue;
@@ -705,7 +839,11 @@ const toHitChronology = (
       }
       const relationRecords = toRelationRecords(container[relationKey]);
       for (const relationRecord of relationRecords) {
-        appendRelationTargets(relationRecord, contradictsMemoryIds, supersedesMemoryIds);
+        appendRelationTargets(
+          relationRecord,
+          contradictsMemoryIds,
+          supersedesMemoryIds
+        );
       }
     }
   }
@@ -723,11 +861,21 @@ const toHitChronology = (
   });
 };
 
-const toExcerpt = (title: string, payloadRecord: Record<string, unknown> | null): string => {
+const toExcerpt = (
+  title: string,
+  payloadRecord: Record<string, unknown> | null
+): string => {
   let excerpt = title;
 
   if (payloadRecord !== null) {
-    const preferredKeys = ["summary", "content", "text", "description", "note", "details"] as const;
+    const preferredKeys = [
+      "summary",
+      "content",
+      "text",
+      "description",
+      "note",
+      "details",
+    ] as const;
     for (const key of preferredKeys) {
       const value = payloadRecord[key];
       if (typeof value === "string" && value.trim().length > 0) {
@@ -756,7 +904,7 @@ const toScopeRank = (scopeLevel: ScopeLevel): number => {
 };
 
 const toNormalizedRankingWeights = (
-  weights: NormalizedRankingWeights,
+  weights: NormalizedRankingWeights
 ): NormalizedRankingWeights => {
   const totalWeight =
     weights.relevance +
@@ -776,18 +924,25 @@ const toNormalizedRankingWeights = (
   });
 };
 
-const resolveRankingWeights = (request: RetrievalRequest): NormalizedRankingWeights => {
+const resolveRankingWeights = (
+  request: RetrievalRequest
+): NormalizedRankingWeights => {
   const requestWithAliases = request as RetrievalRequest & {
     readonly ranking_weights?: RetrievalRankingWeights;
   };
-  const candidateWeights = request.rankingWeights ?? requestWithAliases.ranking_weights;
+  const candidateWeights =
+    request.rankingWeights ?? requestWithAliases.ranking_weights;
   if (candidateWeights === undefined) {
     return defaultRankingWeights;
   }
-  const evidenceStrength = candidateWeights.evidenceStrength ?? candidateWeights.evidence_strength;
-  const humanWeight = candidateWeights.humanWeight ?? candidateWeights.human_weight;
+  const evidenceStrength =
+    candidateWeights.evidenceStrength ?? candidateWeights.evidence_strength;
+  const humanWeight =
+    candidateWeights.humanWeight ?? candidateWeights.human_weight;
   const utility =
-    candidateWeights.utility ?? candidateWeights.utilityScore ?? candidateWeights.utility_score;
+    candidateWeights.utility ??
+    candidateWeights.utilityScore ??
+    candidateWeights.utility_score;
 
   return toNormalizedRankingWeights({
     relevance: candidateWeights.relevance ?? 0,
@@ -803,11 +958,13 @@ const toOptionalFiniteNumber = (value: unknown): number | null =>
 
 const readNumericSignalFromContainers = (
   containers: readonly (Record<string, unknown> | null)[],
-  keyGroups: readonly (readonly string[])[],
+  keyGroups: readonly (readonly string[])[]
 ): number | null => {
   for (const keys of keyGroups) {
     for (const container of containers) {
-      const candidateNumber = toOptionalFiniteNumber(readRecordValue(container, keys));
+      const candidateNumber = toOptionalFiniteNumber(
+        readRecordValue(container, keys)
+      );
       if (candidateNumber !== null) {
         return candidateNumber;
       }
@@ -817,15 +974,23 @@ const readNumericSignalFromContainers = (
 };
 
 const resolveSignalContainers = (
-  payloadRecord: Record<string, unknown> | null,
+  payloadRecord: Record<string, unknown> | null
 ): readonly (Record<string, unknown> | null)[] => {
-  const metadataRecord = toOptionalRecord(readRecordValue(payloadRecord, ["metadata"]));
-  const rankingRecord = toOptionalRecord(readRecordValue(payloadRecord, ["ranking", "scores"]));
-  const metadataRankingRecord = toOptionalRecord(
-    readRecordValue(metadataRecord, ["ranking", "scores"]),
+  const metadataRecord = toOptionalRecord(
+    readRecordValue(payloadRecord, ["metadata"])
   );
-  const evidenceRecord = toOptionalRecord(readRecordValue(payloadRecord, ["evidence"]));
-  const metadataEvidenceRecord = toOptionalRecord(readRecordValue(metadataRecord, ["evidence"]));
+  const rankingRecord = toOptionalRecord(
+    readRecordValue(payloadRecord, ["ranking", "scores"])
+  );
+  const metadataRankingRecord = toOptionalRecord(
+    readRecordValue(metadataRecord, ["ranking", "scores"])
+  );
+  const evidenceRecord = toOptionalRecord(
+    readRecordValue(payloadRecord, ["evidence"])
+  );
+  const metadataEvidenceRecord = toOptionalRecord(
+    readRecordValue(metadataRecord, ["evidence"])
+  );
 
   return Object.freeze([
     payloadRecord,
@@ -837,12 +1002,17 @@ const resolveSignalContainers = (
   ]);
 };
 
-const toEvidenceStrengthSignal = (payloadRecord: Record<string, unknown> | null): number => {
+const toEvidenceStrengthSignal = (
+  payloadRecord: Record<string, unknown> | null
+): number => {
   const signalContainers = resolveSignalContainers(payloadRecord);
-  const explicitEvidenceStrength = readNumericSignalFromContainers(signalContainers, [
-    ["evidenceStrength", "evidence_strength"],
-    ["evidenceScore", "evidence_score"],
-  ]);
+  const explicitEvidenceStrength = readNumericSignalFromContainers(
+    signalContainers,
+    [
+      ["evidenceStrength", "evidence_strength"],
+      ["evidenceScore", "evidence_score"],
+    ]
+  );
   if (explicitEvidenceStrength !== null) {
     return clampScore(explicitEvidenceStrength);
   }
@@ -873,16 +1043,23 @@ const toEvidenceStrengthSignal = (payloadRecord: Record<string, unknown> | null)
   return clampScore(evidenceCount / (evidenceCount + 1));
 };
 
-const toHumanWeightSignal = (payloadRecord: Record<string, unknown> | null): number => {
+const toHumanWeightSignal = (
+  payloadRecord: Record<string, unknown> | null
+): number => {
   const signalContainers = resolveSignalContainers(payloadRecord);
-  const explicitHumanWeight = readNumericSignalFromContainers(signalContainers, [
-    ["humanWeight", "human_weight"],
-    ["humanScore", "human_score"],
-  ]);
+  const explicitHumanWeight = readNumericSignalFromContainers(
+    signalContainers,
+    [
+      ["humanWeight", "human_weight"],
+      ["humanScore", "human_score"],
+    ]
+  );
   return clampScore(explicitHumanWeight ?? neutralSignalScore);
 };
 
-const toUtilitySignal = (payloadRecord: Record<string, unknown> | null): number => {
+const toUtilitySignal = (
+  payloadRecord: Record<string, unknown> | null
+): number => {
   const signalContainers = resolveSignalContainers(payloadRecord);
   const explicitUtility = readNumericSignalFromContainers(signalContainers, [
     ["utility", "utilityScore", "utility_score"],
@@ -894,7 +1071,7 @@ const toUtilitySignal = (payloadRecord: Record<string, unknown> | null): number 
 const computeQueryRelevanceSignal = (
   queryTokens: readonly string[],
   queryNormalized: string,
-  searchableText: string,
+  searchableText: string
 ): number | null => {
   let relevanceSignal = neutralSignalScore;
   if (queryTokens.length > 0) {
@@ -911,7 +1088,9 @@ const computeQueryRelevanceSignal = (
   }
 
   const exactQueryBoost =
-    queryNormalized.length > 0 && searchableText.includes(queryNormalized) ? 0.15 : 0;
+    queryNormalized.length > 0 && searchableText.includes(queryNormalized)
+      ? 0.15
+      : 0;
   return clampScore(relevanceSignal + exactQueryBoost);
 };
 
@@ -922,7 +1101,7 @@ interface DecaySignalContext {
 }
 
 const buildDecaySignalContext = (
-  candidates: readonly PlannedHitCandidate[],
+  candidates: readonly PlannedHitCandidate[]
 ): DecaySignalContext => {
   const firstCandidate = candidates[0];
   if (firstCandidate === undefined) {
@@ -938,12 +1117,18 @@ const buildDecaySignalContext = (
   let maxRemainingLifespanMillis = 0;
 
   for (const candidate of candidates) {
-    minUpdatedAtMillis = Math.min(minUpdatedAtMillis, candidate.updatedAtMillis);
-    maxUpdatedAtMillis = Math.max(maxUpdatedAtMillis, candidate.updatedAtMillis);
+    minUpdatedAtMillis = Math.min(
+      minUpdatedAtMillis,
+      candidate.updatedAtMillis
+    );
+    maxUpdatedAtMillis = Math.max(
+      maxUpdatedAtMillis,
+      candidate.updatedAtMillis
+    );
     if (candidate.expiresAtMillis !== null) {
       maxRemainingLifespanMillis = Math.max(
         maxRemainingLifespanMillis,
-        Math.max(0, candidate.expiresAtMillis - candidate.updatedAtMillis),
+        Math.max(0, candidate.expiresAtMillis - candidate.updatedAtMillis)
       );
     }
   }
@@ -958,7 +1143,7 @@ const buildDecaySignalContext = (
 const computeDecaySignal = (
   context: DecaySignalContext,
   updatedAtMillis: number,
-  expiresAtMillis: number | null,
+  expiresAtMillis: number | null
 ): number => {
   const recencySignal =
     context.maxUpdatedAtMillis === context.minUpdatedAtMillis
@@ -968,7 +1153,10 @@ const computeDecaySignal = (
 
   let expirySignal = 1;
   if (expiresAtMillis !== null) {
-    const remainingLifespanMillis = Math.max(0, expiresAtMillis - updatedAtMillis);
+    const remainingLifespanMillis = Math.max(
+      0,
+      expiresAtMillis - updatedAtMillis
+    );
     expirySignal =
       context.maxRemainingLifespanMillis > 0
         ? remainingLifespanMillis / context.maxRemainingLifespanMillis
@@ -980,19 +1168,19 @@ const computeDecaySignal = (
 
 const computeRankingScore = (
   rankingWeights: NormalizedRankingWeights,
-  rankingSignals: RankingSignals,
+  rankingSignals: RankingSignals
 ): number =>
   clampScore(
     rankingWeights.relevance * rankingSignals.relevance +
       rankingWeights.evidenceStrength * rankingSignals.evidenceStrength +
       rankingWeights.decay * rankingSignals.decay +
       rankingWeights.humanWeight * rankingSignals.humanWeight +
-      rankingWeights.utility * rankingSignals.utility,
+      rankingWeights.utility * rankingSignals.utility
   );
 
 const toRankingSignals = (
   payloadRecord: Record<string, unknown> | null,
-  relevanceSignal: number,
+  relevanceSignal: number
 ): Omit<RankingSignals, "decay"> => ({
   relevance: relevanceSignal,
   evidenceStrength: toEvidenceStrengthSignal(payloadRecord),
@@ -1003,12 +1191,12 @@ const toRankingSignals = (
 const createPlannedHit = (
   candidate: PlannedHitCandidate,
   rankingWeights: NormalizedRankingWeights,
-  decayContext: DecaySignalContext,
+  decayContext: DecaySignalContext
 ): PlannedHit => {
   const decaySignal = computeDecaySignal(
     decayContext,
     candidate.updatedAtMillis,
-    candidate.expiresAtMillis,
+    candidate.expiresAtMillis
   );
   const rankingSignals: RankingSignals = {
     ...candidate.rankingSignals,
@@ -1046,7 +1234,10 @@ const comparePlannedHits = (left: PlannedHit, right: PlannedHit): number => {
 const encodeCursor = (cursor: CursorPayload): string =>
   Buffer.from(JSON.stringify(cursor), "utf8").toString("base64url");
 
-const decodeCursorOffset = (cursor: string | null | undefined, digest: string): number => {
+const decodeCursorOffset = (
+  cursor: string | null | undefined,
+  digest: string
+): number => {
   if (cursor === undefined || cursor === null) {
     return 0;
   }
@@ -1058,14 +1249,18 @@ const decodeCursorOffset = (cursor: string | null | undefined, digest: string): 
   try {
     decodedJson = Buffer.from(cursor, "base64url").toString("utf8");
   } catch (cause) {
-    throw new Error(`cursor must be valid base64url: ${describeFailure(cause)}`);
+    throw new Error(
+      `cursor must be valid base64url: ${describeFailure(cause)}`
+    );
   }
 
   let parsed: unknown;
   try {
     parsed = JSON.parse(decodedJson);
   } catch (cause) {
-    throw new Error(`cursor payload must be valid JSON: ${describeFailure(cause)}`);
+    throw new Error(
+      `cursor payload must be valid JSON: ${describeFailure(cause)}`
+    );
   }
   if (!isRecord(parsed)) {
     throw new Error("cursor payload must decode to an object.");
@@ -1075,12 +1270,20 @@ const decodeCursorOffset = (cursor: string | null | undefined, digest: string): 
     throw new Error("cursor payload version must equal 1.");
   }
   const cursorOffset = parsed["o"];
-  if (typeof cursorOffset !== "number" || !Number.isSafeInteger(cursorOffset) || cursorOffset < 0) {
-    throw new Error("cursor payload offset must be a non-negative safe integer.");
+  if (
+    typeof cursorOffset !== "number" ||
+    !Number.isSafeInteger(cursorOffset) ||
+    cursorOffset < 0
+  ) {
+    throw new Error(
+      "cursor payload offset must be a non-negative safe integer."
+    );
   }
   const cursorDigest = parsed["d"];
   if (typeof cursorDigest !== "string" || cursorDigest !== digest) {
-    throw new Error("cursor payload digest does not match the current retrieval query.");
+    throw new Error(
+      "cursor payload digest does not match the current retrieval query."
+    );
   }
 
   return cursorOffset;
@@ -1098,7 +1301,11 @@ const toStableDomainValue = (value: unknown): StableDomainValue => {
   if (value === null) {
     return null;
   }
-  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+  if (
+    typeof value === "string" ||
+    typeof value === "number" ||
+    typeof value === "boolean"
+  ) {
     return value;
   }
   if (Array.isArray(value)) {
@@ -1108,9 +1315,11 @@ const toStableDomainValue = (value: unknown): StableDomainValue => {
     return String(value);
   }
 
-  const sortedKeys = Object.keys(value).sort((left, right) => left.localeCompare(right));
+  const sortedKeys = Object.keys(value).sort((left, right) =>
+    left.localeCompare(right)
+  );
   return Object.fromEntries(
-    sortedKeys.map((key) => [key, toStableDomainValue(value[key])] as const),
+    sortedKeys.map((key) => [key, toStableDomainValue(value[key])] as const)
   );
 };
 
@@ -1119,7 +1328,7 @@ const toCursorDigest = (
   selectors: NormalizedScopeSelectors,
   policy: NormalizedPolicyInput,
   rankingWeights: NormalizedRankingWeights,
-  queryNormalized: string,
+  queryNormalized: string
 ): string =>
   createHash("sha256")
     .update(
@@ -1131,16 +1340,25 @@ const toCursorDigest = (
         userId: selectors.userId,
         actorId: policy.actorId,
         action: policy.action,
-        evidenceIds: [...policy.evidenceIds].sort((left, right) => left.localeCompare(right)),
+        evidenceIds: [...policy.evidenceIds].sort((left, right) =>
+          left.localeCompare(right)
+        ),
         policyContext: toStableDomainValue(policy.context),
         rankingWeights,
-      }),
+      })
     )
     .digest("hex");
 
-const resolveScopeSelectors = (request: RetrievalRequest): NormalizedScopeSelectors => {
+const resolveScopeSelectors = (
+  request: RetrievalRequest
+): NormalizedScopeSelectors => {
   const scope = request.scope;
-  const roleId = scope?.roleId ?? scope?.jobRoleId ?? request.roleId ?? request.jobRoleId ?? null;
+  const roleId =
+    scope?.roleId ??
+    scope?.jobRoleId ??
+    request.roleId ??
+    request.jobRoleId ??
+    null;
 
   return Object.freeze({
     projectId: scope?.projectId ?? request.projectId ?? null,
@@ -1151,15 +1369,19 @@ const resolveScopeSelectors = (request: RetrievalRequest): NormalizedScopeSelect
 
 const resolvePolicyInput = (
   request: RetrievalRequest,
-  selectors: NormalizedScopeSelectors,
+  selectors: NormalizedScopeSelectors
 ): NormalizedPolicyInput => {
   const requestPolicy: RetrievalPolicyInput | undefined = request.policy;
-  const baseContext = requestPolicy?.context ?? request.policyContext ?? emptyPolicyContext;
+  const baseContext =
+    requestPolicy?.context ?? request.policyContext ?? emptyPolicyContext;
 
   return {
     actorId: requestPolicy?.actorId ?? request.actorId ?? defaultPolicyActorId,
     action: requestPolicy?.action ?? request.action ?? defaultPolicyAction,
-    evidenceIds: requestPolicy?.evidenceIds ?? request.evidenceIds ?? emptyPolicyEvidenceIds,
+    evidenceIds:
+      requestPolicy?.evidenceIds ??
+      request.evidenceIds ??
+      emptyPolicyEvidenceIds,
     context: {
       ...baseContext,
       retrievalQuery: request.query,
@@ -1170,7 +1392,9 @@ const resolvePolicyInput = (
   };
 };
 
-const normalizeRetrievalRequest = (request: RetrievalRequest): NormalizedRetrievalRequest => {
+const normalizeRetrievalRequest = (
+  request: RetrievalRequest
+): NormalizedRetrievalRequest => {
   const queryNormalized = request.query.trim().toLowerCase();
   const selectors = resolveScopeSelectors(request);
   const policy = resolvePolicyInput(request, selectors);
@@ -1188,9 +1412,11 @@ const normalizeRetrievalRequest = (request: RetrievalRequest): NormalizedRetriev
 
 const resolveAllowedScopeIds = (
   scopeRows: readonly ParsedScopeRow[],
-  selectors: NormalizedScopeSelectors,
+  selectors: NormalizedScopeSelectors
 ): ReadonlySet<string> => {
-  const scopeById = new Map(scopeRows.map((row) => [row.scopeId, row] as const));
+  const scopeById = new Map(
+    scopeRows.map((row) => [row.scopeId, row] as const)
+  );
   const childScopeIdsByParent = new Map<string, string[]>();
   for (const scopeRow of scopeRows) {
     if (scopeRow.parentScopeId === null) {
@@ -1205,7 +1431,9 @@ const resolveAllowedScopeIds = (
   }
   const allowedScopeIds = new Set<string>();
   const hasExplicitScopeSelector =
-    selectors.projectId !== null || selectors.roleId !== null || selectors.userId !== null;
+    selectors.projectId !== null ||
+    selectors.roleId !== null ||
+    selectors.userId !== null;
 
   if (!hasExplicitScopeSelector) {
     for (const scopeRow of scopeRows) {
@@ -1256,7 +1484,11 @@ const resolveAllowedScopeIds = (
     }
 
     const row = scopeById.get(scopeId);
-    if (row === undefined || row.parentScopeId === null || allowedScopeIds.has(row.parentScopeId)) {
+    if (
+      row === undefined ||
+      row.parentScopeId === null ||
+      allowedScopeIds.has(row.parentScopeId)
+    ) {
       continue;
     }
     allowedScopeIds.add(row.parentScopeId);
@@ -1285,10 +1517,15 @@ const resolveAllowedScopeIds = (
 const buildPlannedHits = (
   normalized: NormalizedRetrievalRequest,
   scopeRows: readonly ParsedScopeRow[],
-  memoryRows: readonly ParsedMemoryRow[],
+  memoryRows: readonly ParsedMemoryRow[]
 ): readonly PlannedHit[] => {
-  const scopeById = new Map(scopeRows.map((row) => [row.scopeId, row] as const));
-  const allowedScopeIds = resolveAllowedScopeIds(scopeRows, normalized.selectors);
+  const scopeById = new Map(
+    scopeRows.map((row) => [row.scopeId, row] as const)
+  );
+  const allowedScopeIds = resolveAllowedScopeIds(
+    scopeRows,
+    normalized.selectors
+  );
   const candidateHits: PlannedHitCandidate[] = [];
 
   for (const memoryRow of memoryRows) {
@@ -1311,18 +1548,19 @@ const buildPlannedHits = (
     const scopeRow = scopeById.get(memoryRow.scopeId);
     if (scopeRow === undefined) {
       throw new Error(
-        `Memory ${memoryRow.memoryId} references scope ${memoryRow.scopeId} which is missing from the snapshot.`,
+        `Memory ${memoryRow.memoryId} references scope ${memoryRow.scopeId} which is missing from the snapshot.`
       );
     }
 
     const payloadRecord = parsePayloadRecord(memoryRow.payloadJson);
     const excerpt = toExcerpt(memoryRow.title, payloadRecord);
-    const searchableText = `${memoryRow.title}\n${excerpt}\n${memoryRow.payloadJson}`.toLowerCase();
+    const searchableText =
+      `${memoryRow.title}\n${excerpt}\n${memoryRow.payloadJson}`.toLowerCase();
     const scopeRank = toScopeRank(scopeRow.scopeLevel);
     const relevanceSignal = computeQueryRelevanceSignal(
       normalized.queryTokens,
       normalized.queryNormalized,
-      searchableText,
+      searchableText
     );
     if (relevanceSignal === null) {
       continue;
@@ -1346,7 +1584,7 @@ const buildPlannedHits = (
 
   const decayContext = buildDecaySignalContext(candidateHits);
   const plannedHits = candidateHits.map((candidate) =>
-    createPlannedHit(candidate, normalized.rankingWeights, decayContext),
+    createPlannedHit(candidate, normalized.rankingWeights, decayContext)
   );
   plannedHits.sort(comparePlannedHits);
   return Object.freeze(plannedHits);
@@ -1357,7 +1595,7 @@ const isPolicyDeniedError = (error: unknown): boolean =>
 
 const buildPolicyContextForHit = (
   policyContext: PolicyRequest["context"],
-  hit: PlannedHit,
+  hit: PlannedHit
 ): PolicyRequest["context"] => ({
   ...policyContext,
   retrievalHitScopeId: hit.scopeId,
@@ -1368,7 +1606,7 @@ const buildPolicyContextForHit = (
 const filterDeniedHits = (
   normalized: NormalizedRetrievalRequest,
   policyService: PolicyService,
-  plannedHits: readonly PlannedHit[],
+  plannedHits: readonly PlannedHit[]
 ): Effect.Effect<readonly PlannedHit[], RetrievalQueryError> =>
   Effect.forEach(
     plannedHits,
@@ -1383,29 +1621,40 @@ const filterDeniedHits = (
           context: buildPolicyContextForHit(normalized.policy.context, hit),
         })
         .pipe(
-          Effect.map((policyResult) => (policyResult.decision === "deny" ? null : hit)),
+          Effect.map((policyResult) =>
+            policyResult.decision === "deny" ? null : hit
+          ),
           Effect.catchAll((error) =>
             isPolicyDeniedError(error)
               ? Effect.succeed(null)
               : Effect.fail(
                   toRetrievalQueryError(
                     normalized.request,
-                    `Policy evaluation failed for memory ${hit.memoryId}: ${describeFailure(error)}`,
-                  ),
-                ),
-          ),
+                    `Policy evaluation failed for memory ${hit.memoryId}: ${describeFailure(error)}`
+                  )
+                )
+          )
         ),
-    { concurrency: 1 },
-  ).pipe(Effect.map((maybeHits) => maybeHits.filter((hit): hit is PlannedHit => hit !== null)));
+    { concurrency: 1 }
+  ).pipe(
+    Effect.map((maybeHits) =>
+      maybeHits.filter((hit): hit is PlannedHit => hit !== null)
+    )
+  );
 
-const compareTimelineTruthPriority = (left: PlannedHit, right: PlannedHit): number => {
+const compareTimelineTruthPriority = (
+  left: PlannedHit,
+  right: PlannedHit
+): number => {
   if (left.updatedAtMillis !== right.updatedAtMillis) {
     return right.updatedAtMillis - left.updatedAtMillis;
   }
   return comparePlannedHits(left, right);
 };
 
-const reconcileContradictoryHits = (hits: readonly PlannedHit[]): readonly PlannedHit[] => {
+const reconcileContradictoryHits = (
+  hits: readonly PlannedHit[]
+): readonly PlannedHit[] => {
   if (hits.length < 2) {
     return hits;
   }
@@ -1540,10 +1789,16 @@ const rankingSignalOrder: readonly RankingSignalKey[] = Object.freeze([
   "utility",
 ]);
 
-const hasExplicitScopeSelectors = (selectors: NormalizedScopeSelectors): boolean =>
-  selectors.projectId !== null || selectors.roleId !== null || selectors.userId !== null;
+const hasExplicitScopeSelectors = (
+  selectors: NormalizedScopeSelectors
+): boolean =>
+  selectors.projectId !== null ||
+  selectors.roleId !== null ||
+  selectors.userId !== null;
 
-const toScopeLevelReasonCode = (scopeLevel: ScopeLevel): RetrievalExplainabilityReasonCode => {
+const toScopeLevelReasonCode = (
+  scopeLevel: ScopeLevel
+): RetrievalExplainabilityReasonCode => {
   switch (scopeLevel) {
     case "common":
       return "SCOPE_LEVEL_COMMON";
@@ -1560,11 +1815,13 @@ const toScopeLevelReasonCode = (scopeLevel: ScopeLevel): RetrievalExplainability
 
 const toExplainabilityReasonCodes = (
   normalized: NormalizedRetrievalRequest,
-  hit: PlannedHit,
+  hit: PlannedHit
 ): readonly RetrievalExplainabilityReasonCode[] => {
   const reasonCodes: RetrievalExplainabilityReasonCode[] = [];
   reasonCodes.push(
-    normalized.queryTokens.length > 0 ? "QUERY_TOKEN_MATCH" : "QUERY_EMPTY_FALLBACK",
+    normalized.queryTokens.length > 0
+      ? "QUERY_TOKEN_MATCH"
+      : "QUERY_EMPTY_FALLBACK"
   );
   reasonCodes.push("SCOPE_FILTER_MATCH");
   if (hasExplicitScopeSelectors(normalized.selectors)) {
@@ -1581,21 +1838,23 @@ const toExplainabilityReasonCodes = (
 
 const toExplainabilityWeightedContributions = (
   rankingWeights: NormalizedRankingWeights,
-  rankingSignals: RankingSignals,
+  rankingSignals: RankingSignals
 ): RetrievalExplainabilityHit["weightedContributions"] =>
   Object.freeze(
     rankingSignalOrder.map((signal) => ({
       signal,
       signalScore: rankingSignals[signal],
       weight: rankingWeights[signal],
-      weightedContribution: clampScore(rankingWeights[signal] * rankingSignals[signal]),
-    })),
+      weightedContribution: clampScore(
+        rankingWeights[signal] * rankingSignals[signal]
+      ),
+    }))
   );
 
 const toRetrievalExplainabilityHit = (
   normalized: NormalizedRetrievalRequest,
   hit: PlannedHit,
-  rank: number,
+  rank: number
 ): RetrievalExplainabilityHit => ({
   memoryId: hit.memoryId,
   layer: hit.layer,
@@ -1614,37 +1873,41 @@ const toRetrievalExplainabilityHit = (
   },
   weightedContributions: toExplainabilityWeightedContributions(
     normalized.rankingWeights,
-    hit.rankingSignals,
+    hit.rankingSignals
   ),
 });
 
 const toRetrievalExplainabilityResponse = (
   normalized: NormalizedRetrievalRequest,
-  pagination: PaginatedPlannedHits,
+  pagination: PaginatedPlannedHits
 ): RetrievalExplainabilityResponse => ({
   hits: Object.freeze(
     pagination.pageHits.map((hit, pageIndex) =>
-      toRetrievalExplainabilityHit(normalized, hit, pagination.offset + pageIndex + 1),
-    ),
+      toRetrievalExplainabilityHit(
+        normalized,
+        hit,
+        pagination.offset + pageIndex + 1
+      )
+    )
   ),
   totalHits: pagination.totalHits,
   nextCursor: pagination.nextCursor,
 });
 
-const actionablePackCategoryOrder: readonly ActionablePackCategory[] = Object.freeze([
-  "do",
-  "dont",
-  "examples",
-  "risks",
-]);
+const actionablePackCategoryOrder: readonly ActionablePackCategory[] =
+  Object.freeze(["do", "dont", "examples", "risks"]);
 
-const dontCategoryPattern = /(?:^|\b)(?:do\s+not|don't|never|avoid|stop|skip)\b/i;
-const examplesCategoryPattern = /(?:^|\b)(?:example|for\s+example|e\.g\.|sample|scenario)\b/i;
-const risksCategoryPattern = /(?:^|\b)(?:risk|warning|caution|hazard|pitfall|failure)\b/i;
+const dontCategoryPattern =
+  /(?:^|\b)(?:do\s+not|don't|never|avoid|stop|skip)\b/i;
+const examplesCategoryPattern =
+  /(?:^|\b)(?:example|for\s+example|e\.g\.|sample|scenario)\b/i;
+const risksCategoryPattern =
+  /(?:^|\b)(?:risk|warning|caution|hazard|pitfall|failure)\b/i;
 const doCategoryPattern =
   /(?:^|\b)(?:do|ensure|prefer|use|always|verify|confirm|check|apply|document|test)\b/i;
 
-const normalizeWhitespace = (value: string): string => value.replace(/\s+/g, " ").trim();
+const normalizeWhitespace = (value: string): string =>
+  value.replace(/\s+/g, " ").trim();
 
 const estimateTokenCount = (value: string): number => {
   const normalized = normalizeWhitespace(value);
@@ -1657,7 +1920,7 @@ const estimateTokenCount = (value: string): number => {
 const toBoundedActionableText = (
   value: string,
   tokenLimit: number,
-  characterLimit: number,
+  characterLimit: number
 ): BoundedActionableText => {
   const withoutListPrefix = normalizeWhitespace(value)
     .replace(/^[-*0-9.)]+\s+/, "")
@@ -1698,7 +1961,7 @@ const toBoundedActionableText = (
 
 const routeActionableCategory = (
   line: string,
-  layer: RetrievalHit["layer"],
+  layer: RetrievalHit["layer"]
 ): ActionablePackCategory => {
   if (dontCategoryPattern.test(line)) {
     return "dont";
@@ -1740,34 +2003,38 @@ const estimateActionableSourceTokens = (source: ActionablePackSource): number =>
   estimateTokenCount(source.metadata.layer) +
   1;
 
-const toActionablePackWarnings = (stats: ActionablePackCompilerStats): readonly string[] => {
+const toActionablePackWarnings = (
+  stats: ActionablePackCompilerStats
+): readonly string[] => {
   const warnings: string[] = [];
   if (stats.tokenBudgetDrops > 0) {
     warnings.push(
-      `Actionable pack token budget (${actionablePackTokenBudget}) reached; additional content was omitted.`,
+      `Actionable pack token budget (${actionablePackTokenBudget}) reached; additional content was omitted.`
     );
   }
   const cappedCategories = actionablePackCategoryOrder.filter(
-    (category) => stats.categoryLimitDrops[category] > 0,
+    (category) => stats.categoryLimitDrops[category] > 0
   );
   if (cappedCategories.length > 0) {
     warnings.push(
-      `Actionable pack category limits (${actionablePackPerCategoryLimit}) reached for ${cappedCategories.join(", ")}.`,
+      `Actionable pack category limits (${actionablePackPerCategoryLimit}) reached for ${cappedCategories.join(", ")}.`
     );
   }
   if (stats.sourceLimitDrops > 0) {
     warnings.push(
-      `Actionable pack source limit (${actionablePackSourceLimit}) reached; additional sources were omitted.`,
+      `Actionable pack source limit (${actionablePackSourceLimit}) reached; additional sources were omitted.`
     );
   }
   if (stats.lineTruncations > 0 || stats.sourceExcerptTruncations > 0) {
-    warnings.push("Long excerpts were shortened to keep actionable output bounded.");
+    warnings.push(
+      "Long excerpts were shortened to keep actionable output bounded."
+    );
   }
   return Object.freeze(warnings);
 };
 
 const toActionablePackAnnotationWarnings = (
-  sourceSignals: readonly ActionablePackWarningSignal[],
+  sourceSignals: readonly ActionablePackWarningSignal[]
 ): readonly string[] => {
   const firstSourceSignal = sourceSignals[0];
   if (firstSourceSignal === undefined) {
@@ -1779,14 +2046,20 @@ const toActionablePackAnnotationWarnings = (
   let lowConfidenceSourceCount = 0;
 
   for (const sourceSignal of sourceSignals) {
-    freshestUpdatedAtMillis = Math.max(freshestUpdatedAtMillis, sourceSignal.updatedAtMillis);
+    freshestUpdatedAtMillis = Math.max(
+      freshestUpdatedAtMillis,
+      sourceSignal.updatedAtMillis
+    );
     if (sourceSignal.score < actionablePackLowConfidenceScoreThreshold) {
       lowConfidenceSourceCount += 1;
     }
   }
 
   for (const sourceSignal of sourceSignals) {
-    if (freshestUpdatedAtMillis - sourceSignal.updatedAtMillis >= actionablePackStaleAgeGapMillis) {
+    if (
+      freshestUpdatedAtMillis - sourceSignal.updatedAtMillis >=
+      actionablePackStaleAgeGapMillis
+    ) {
       staleSourceCount += 1;
     }
   }
@@ -1794,19 +2067,21 @@ const toActionablePackAnnotationWarnings = (
   const warnings: string[] = [];
   if (staleSourceCount > 0) {
     warnings.push(
-      `Actionable pack includes stale guidance; ${staleSourceCount} source${staleSourceCount === 1 ? "" : "s"} ${staleSourceCount === 1 ? "is" : "are"} older than the freshest source.`,
+      `Actionable pack includes stale guidance; ${staleSourceCount} source${staleSourceCount === 1 ? "" : "s"} ${staleSourceCount === 1 ? "is" : "are"} older than the freshest source.`
     );
   }
   if (lowConfidenceSourceCount > 0) {
     warnings.push(
-      `Actionable pack includes low-confidence guidance; ${lowConfidenceSourceCount} source${lowConfidenceSourceCount === 1 ? "" : "s"} scored below ${actionablePackLowConfidenceScoreThreshold.toFixed(2)}.`,
+      `Actionable pack includes low-confidence guidance; ${lowConfidenceSourceCount} source${lowConfidenceSourceCount === 1 ? "" : "s"} scored below ${actionablePackLowConfidenceScoreThreshold.toFixed(2)}.`
     );
   }
 
   return Object.freeze(warnings);
 };
 
-const finalizeActionablePack = (pack: MutableActionablePack): ActionableRetrievalPack => ({
+const finalizeActionablePack = (
+  pack: MutableActionablePack
+): ActionableRetrievalPack => ({
   do: Object.freeze([...pack.do]),
   dont: Object.freeze([...pack.dont]),
   examples: Object.freeze([...pack.examples]),
@@ -1819,12 +2094,14 @@ const finalizeActionablePack = (pack: MutableActionablePack): ActionableRetrieva
         score: source.metadata.score,
         layer: source.metadata.layer,
       },
-    })),
+    }))
   ),
   warnings: Object.freeze([...pack.warnings]),
 });
 
-const compileActionablePack = (hits: readonly PlannedHit[]): ActionableRetrievalPack => {
+const compileActionablePack = (
+  hits: readonly PlannedHit[]
+): ActionableRetrievalPack => {
   const pack = createMutableActionablePack();
   const seenLineKeys = new Set<string>();
   const sourceSignals: ActionablePackWarningSignal[] = [];
@@ -1841,7 +2118,7 @@ const compileActionablePack = (hits: readonly PlannedHit[]): ActionableRetrieval
     const boundedLine = toBoundedActionableText(
       hit.excerpt,
       actionablePackLineTokenLimit,
-      actionablePackTextCharacterLimit,
+      actionablePackTextCharacterLimit
     );
     if (boundedLine.value !== null) {
       const category = routeActionableCategory(boundedLine.value, hit.layer);
@@ -1872,7 +2149,7 @@ const compileActionablePack = (hits: readonly PlannedHit[]): ActionableRetrieval
     const boundedSourceExcerpt = toBoundedActionableText(
       hit.excerpt,
       actionablePackSourceExcerptTokenLimit,
-      actionablePackTextCharacterLimit,
+      actionablePackTextCharacterLimit
     );
     if (boundedSourceExcerpt.value === null) {
       continue;
@@ -1885,7 +2162,8 @@ const compileActionablePack = (hits: readonly PlannedHit[]): ActionableRetrieval
         layer: hit.layer,
       },
     };
-    const nextContentTokenCount = contentTokens + estimateActionableSourceTokens(source);
+    const nextContentTokenCount =
+      contentTokens + estimateActionableSourceTokens(source);
     if (nextContentTokenCount > actionablePackContentTokenBudget) {
       stats.tokenBudgetDrops += 1;
       continue;
@@ -1913,7 +2191,7 @@ const compileActionablePack = (hits: readonly PlannedHit[]): ActionableRetrieval
     const boundedWarning = toBoundedActionableText(
       warningCandidate,
       actionablePackWarningTokenLimit,
-      actionablePackTextCharacterLimit,
+      actionablePackTextCharacterLimit
     );
     if (boundedWarning.value === null) {
       continue;
@@ -1934,21 +2212,23 @@ const compileActionablePack = (hits: readonly PlannedHit[]): ActionableRetrieval
 
 const paginateHits = (
   normalized: NormalizedRetrievalRequest,
-  hits: readonly PlannedHit[],
+  hits: readonly PlannedHit[]
 ): PaginatedPlannedHits => {
   const digest = toCursorDigest(
     normalized.request,
     normalized.selectors,
     normalized.policy,
     normalized.rankingWeights,
-    normalized.queryNormalized,
+    normalized.queryNormalized
   );
   const offset = decodeCursorOffset(normalized.request.cursor, digest);
   const totalHits = hits.length;
   const boundedOffset = Math.min(offset, totalHits);
   const limit = normalized.request.limit;
   const pageHits =
-    limit === 0 ? [] : hits.slice(boundedOffset, Math.min(totalHits, boundedOffset + limit));
+    limit === 0
+      ? []
+      : hits.slice(boundedOffset, Math.min(totalHits, boundedOffset + limit));
   const nextOffset = boundedOffset + pageHits.length;
   const nextCursor =
     limit > 0 && nextOffset < totalHits
@@ -1967,7 +2247,9 @@ const paginateHits = (
   };
 };
 
-const toRetrievalResponse = (pagination: PaginatedPlannedHits): RetrievalResponse => ({
+const toRetrievalResponse = (
+  pagination: PaginatedPlannedHits
+): RetrievalResponse => ({
   hits: pagination.pageHits.map(toRetrievalHit),
   totalHits: pagination.totalHits,
   nextCursor: pagination.nextCursor,
@@ -1977,7 +2259,7 @@ const toRetrievalResponse = (pagination: PaginatedPlannedHits): RetrievalRespons
 const planRetrieval = (
   normalized: NormalizedRetrievalRequest,
   policyService: PolicyService,
-  snapshot: SqliteStorageSnapshotData,
+  snapshot: SqliteStorageSnapshotData
 ): Effect.Effect<PaginatedPlannedHits, RetrievalQueryError> =>
   Effect.try({
     try: () => ({
@@ -1987,7 +2269,7 @@ const planRetrieval = (
     catch: (cause) =>
       toRetrievalQueryError(
         normalized.request,
-        `Snapshot projection failed for retrieval planner: ${describeFailure(cause)}`,
+        `Snapshot projection failed for retrieval planner: ${describeFailure(cause)}`
       ),
   }).pipe(
     Effect.flatMap(({ scopeRows, memoryRows }) =>
@@ -1996,22 +2278,26 @@ const planRetrieval = (
         catch: (cause) =>
           toRetrievalQueryError(
             normalized.request,
-            `Retrieval scope planning failed: ${describeFailure(cause)}`,
+            `Retrieval scope planning failed: ${describeFailure(cause)}`
           ),
-      }),
+      })
     ),
-    Effect.flatMap((plannedHits) => filterDeniedHits(normalized, policyService, plannedHits)),
-    Effect.map((policyFilteredHits) => reconcileContradictoryHits(policyFilteredHits)),
+    Effect.flatMap((plannedHits) =>
+      filterDeniedHits(normalized, policyService, plannedHits)
+    ),
+    Effect.map((policyFilteredHits) =>
+      reconcileContradictoryHits(policyFilteredHits)
+    ),
     Effect.flatMap((reconciledHits) =>
       Effect.try({
         try: () => paginateHits(normalized, reconciledHits),
         catch: (cause) =>
           toRetrievalQueryError(
             normalized.request,
-            `Retrieval pagination failed: ${describeFailure(cause)}`,
+            `Retrieval pagination failed: ${describeFailure(cause)}`
           ),
-      }),
-    ),
+      })
+    )
   );
 
 interface PlannedRetrievalResult {
@@ -2023,7 +2309,7 @@ const executeRetrievalPlan = (
   request: RetrievalRequest,
   storageService: StorageService,
   policyService: PolicyService,
-  snapshotSignatureSecret: string,
+  snapshotSignatureSecret: string
 ): Effect.Effect<PlannedRetrievalResult, RetrievalServiceError> =>
   decodeRetrievalRequestEffect(request).pipe(
     Effect.flatMap((decodedRequest) => {
@@ -2036,26 +2322,29 @@ const executeRetrievalPlan = (
           Effect.mapError((error) =>
             toRetrievalQueryError(
               decodedRequest,
-              `Storage snapshot export failed for retrieval planner: ${describeFailure(error)}`,
-            ),
+              `Storage snapshot export failed for retrieval planner: ${describeFailure(error)}`
+            )
           ),
           Effect.flatMap((snapshotExport) =>
             Effect.try({
-              try: () => parseSqliteStorageSnapshotPayload(snapshotExport.payload),
+              try: () =>
+                parseSqliteStorageSnapshotPayload(snapshotExport.payload),
               catch: (cause) =>
                 toRetrievalQueryError(
                   decodedRequest,
-                  `Snapshot payload parsing failed for retrieval planner: ${describeFailure(cause)}`,
+                  `Snapshot payload parsing failed for retrieval planner: ${describeFailure(cause)}`
                 ),
-            }),
+            })
           ),
-          Effect.flatMap((snapshot) => planRetrieval(normalized, policyService, snapshot)),
+          Effect.flatMap((snapshot) =>
+            planRetrieval(normalized, policyService, snapshot)
+          ),
           Effect.map((pagination) => ({
             normalized,
             pagination,
-          })),
+          }))
         );
-    }),
+    })
   );
 
 const emptyPaginatedPlannedHits: PaginatedPlannedHits = Object.freeze({
@@ -2066,7 +2355,8 @@ const emptyPaginatedPlannedHits: PaginatedPlannedHits = Object.freeze({
 });
 
 export const makeNoopRetrievalService = (): RetrievalService => ({
-  retrieve: () => Effect.succeed(toRetrievalResponse(emptyPaginatedPlannedHits)),
+  retrieve: () =>
+    Effect.succeed(toRetrievalResponse(emptyPaginatedPlannedHits)),
   retrieveExplainability: () =>
     Effect.succeed({
       hits: [],
@@ -2078,20 +2368,29 @@ export const makeNoopRetrievalService = (): RetrievalService => ({
 export const makeRetrievalService = (
   storageService: StorageService,
   policyService: PolicyService,
-  options: RetrievalPlannerOptions = {},
+  options: RetrievalPlannerOptions = {}
 ): RetrievalService => {
-  const snapshotSignatureSecret = options.snapshotSignatureSecret ?? defaultSnapshotSignatureSecret;
+  const snapshotSignatureSecret =
+    options.snapshotSignatureSecret ?? defaultSnapshotSignatureSecret;
 
   return {
     retrieve: (request) =>
-      executeRetrievalPlan(request, storageService, policyService, snapshotSignatureSecret).pipe(
-        Effect.map(({ pagination }) => toRetrievalResponse(pagination)),
-      ),
+      executeRetrievalPlan(
+        request,
+        storageService,
+        policyService,
+        snapshotSignatureSecret
+      ).pipe(Effect.map(({ pagination }) => toRetrievalResponse(pagination))),
     retrieveExplainability: (request) =>
-      executeRetrievalPlan(request, storageService, policyService, snapshotSignatureSecret).pipe(
+      executeRetrievalPlan(
+        request,
+        storageService,
+        policyService,
+        snapshotSignatureSecret
+      ).pipe(
         Effect.map(({ normalized, pagination }) =>
-          toRetrievalExplainabilityResponse(normalized, pagination),
-        ),
+          toRetrievalExplainabilityResponse(normalized, pagination)
+        )
       ),
   };
 };
@@ -2104,7 +2403,8 @@ export const __testOnly = Object.freeze({
 
 export const noopRetrievalLayer: Layer.Layer<RetrievalService> = Layer.succeed(
   RetrievalServiceTag,
-  makeNoopRetrievalService(),
+  makeNoopRetrievalService()
 );
 
-export const deterministicTestRetrievalLayer: Layer.Layer<RetrievalService> = noopRetrievalLayer;
+export const deterministicTestRetrievalLayer: Layer.Layer<RetrievalService> =
+  noopRetrievalLayer;

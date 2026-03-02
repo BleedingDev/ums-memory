@@ -1,9 +1,20 @@
 import { Context, Layer, ParseResult, Schema } from "effect";
 
-export const RuntimeEnvironmentSchema = Schema.Literal("development", "test", "production");
-export type RuntimeEnvironment = Schema.Schema.Type<typeof RuntimeEnvironmentSchema>;
+export const RuntimeEnvironmentSchema = Schema.Literal(
+  "development",
+  "test",
+  "production"
+);
+export type RuntimeEnvironment = Schema.Schema.Type<
+  typeof RuntimeEnvironmentSchema
+>;
 
-export const RuntimeLogLevelSchema = Schema.Literal("debug", "info", "warn", "error");
+export const RuntimeLogLevelSchema = Schema.Literal(
+  "debug",
+  "info",
+  "warn",
+  "error"
+);
 export type RuntimeLogLevel = Schema.Schema.Type<typeof RuntimeLogLevelSchema>;
 
 export const RuntimeConfigSchema = Schema.Struct({
@@ -13,7 +24,9 @@ export const RuntimeConfigSchema = Schema.Struct({
 });
 
 export type RuntimeConfig = Schema.Schema.Type<typeof RuntimeConfigSchema>;
-export type RuntimeConfigInput = Schema.Schema.Encoded<typeof RuntimeConfigSchema>;
+export type RuntimeConfigInput = Schema.Schema.Encoded<
+  typeof RuntimeConfigSchema
+>;
 
 export const runtimeConfigDefaults: RuntimeConfig = {
   environment: "development",
@@ -38,17 +51,22 @@ const validateUnknownSync = <A, I>(schema: SchemaWithoutContext<A, I>) =>
 const validateUnknownEither = <A, I>(schema: SchemaWithoutContext<A, I>) =>
   Schema.validateEither(schema);
 
-const validateUnknownEffect = <A, I>(schema: SchemaWithoutContext<A, I>) => Schema.validate(schema);
+const validateUnknownEffect = <A, I>(schema: SchemaWithoutContext<A, I>) =>
+  Schema.validate(schema);
 
-export const formatRuntimeConfigParseError = (error: ParseResult.ParseError): string =>
-  ParseResult.TreeFormatter.formatErrorSync(error);
+export const formatRuntimeConfigParseError = (
+  error: ParseResult.ParseError
+): string => ParseResult.TreeFormatter.formatErrorSync(error);
 
 export const decodeRuntimeConfigSync = decodeUnknownSync(RuntimeConfigSchema);
-export const decodeRuntimeConfigEither = decodeUnknownEither(RuntimeConfigSchema);
+export const decodeRuntimeConfigEither =
+  decodeUnknownEither(RuntimeConfigSchema);
 export const decodeRuntimeConfig = decodeUnknownEffect(RuntimeConfigSchema);
 
-export const validateRuntimeConfigSync = validateUnknownSync(RuntimeConfigSchema);
-export const validateRuntimeConfigEither = validateUnknownEither(RuntimeConfigSchema);
+export const validateRuntimeConfigSync =
+  validateUnknownSync(RuntimeConfigSchema);
+export const validateRuntimeConfigEither =
+  validateUnknownEither(RuntimeConfigSchema);
 export const validateRuntimeConfig = validateUnknownEffect(RuntimeConfigSchema);
 
 export interface RuntimeConfigEnvRecord {
@@ -89,16 +107,20 @@ const normalizeEnvValue = (value: string | undefined): string | undefined => {
   return trimmed.length === 0 ? undefined : trimmed;
 };
 
-const readEnvValue = (env: RuntimeConfigEnvRecord, key: string): string | undefined =>
-  normalizeEnvValue(env[key]);
+const readEnvValue = (
+  env: RuntimeConfigEnvRecord,
+  key: string
+): string | undefined => normalizeEnvValue(env[key]);
 
-const resolveEnvKeys = (keys: Partial<RuntimeConfigEnvKeys> | undefined): RuntimeConfigEnvKeys => ({
+const resolveEnvKeys = (
+  keys: Partial<RuntimeConfigEnvKeys> | undefined
+): RuntimeConfigEnvKeys => ({
   ...defaultRuntimeConfigEnvKeys,
   ...keys,
 });
 
 export const makeRuntimeConfigInputWithDefaults = (
-  defaults: Partial<RuntimeConfigInput> | undefined,
+  defaults: Partial<RuntimeConfigInput> | undefined
 ): RuntimeConfigInput => ({
   ...runtimeConfigDefaults,
   ...defaults,
@@ -106,12 +128,13 @@ export const makeRuntimeConfigInputWithDefaults = (
 
 export const runtimeConfigInputFromEnv = (
   env: RuntimeConfigEnvRecord,
-  options: RuntimeConfigFromEnvOptions = {},
+  options: RuntimeConfigFromEnvOptions = {}
 ): RuntimeConfigEnvInput => {
   const keys = resolveEnvKeys(options.keys);
   const base = makeRuntimeConfigInputWithDefaults(options.defaults);
   const environment =
-    readEnvValue(env, keys.environment) ?? readEnvValue(env, keys.fallbackEnvironment);
+    readEnvValue(env, keys.environment) ??
+    readEnvValue(env, keys.fallbackEnvironment);
   const serviceName = readEnvValue(env, keys.serviceName);
   const logLevel = readEnvValue(env, keys.logLevel);
 
@@ -124,32 +147,34 @@ export const runtimeConfigInputFromEnv = (
 
 export const decodeRuntimeConfigFromEnvSync = (
   env: RuntimeConfigEnvRecord,
-  options: RuntimeConfigFromEnvOptions = {},
-): RuntimeConfig => decodeRuntimeConfigSync(runtimeConfigInputFromEnv(env, options));
+  options: RuntimeConfigFromEnvOptions = {}
+): RuntimeConfig =>
+  decodeRuntimeConfigSync(runtimeConfigInputFromEnv(env, options));
 
 export const decodeRuntimeConfigFromEnvEither = (
   env: RuntimeConfigEnvRecord,
-  options: RuntimeConfigFromEnvOptions = {},
+  options: RuntimeConfigFromEnvOptions = {}
 ) => decodeRuntimeConfigEither(runtimeConfigInputFromEnv(env, options));
 
 export const decodeRuntimeConfigFromEnv = (
   env: RuntimeConfigEnvRecord,
-  options: RuntimeConfigFromEnvOptions = {},
+  options: RuntimeConfigFromEnvOptions = {}
 ) => decodeRuntimeConfig(runtimeConfigInputFromEnv(env, options));
 
 export const validateRuntimeConfigFromEnvSync = (
   env: RuntimeConfigEnvRecord,
-  options: RuntimeConfigFromEnvOptions = {},
-): RuntimeConfig => validateRuntimeConfigSync(runtimeConfigInputFromEnv(env, options));
+  options: RuntimeConfigFromEnvOptions = {}
+): RuntimeConfig =>
+  validateRuntimeConfigSync(runtimeConfigInputFromEnv(env, options));
 
 export const validateRuntimeConfigFromEnvEither = (
   env: RuntimeConfigEnvRecord,
-  options: RuntimeConfigFromEnvOptions = {},
+  options: RuntimeConfigFromEnvOptions = {}
 ) => validateRuntimeConfigEither(runtimeConfigInputFromEnv(env, options));
 
 export const validateRuntimeConfigFromEnv = (
   env: RuntimeConfigEnvRecord,
-  options: RuntimeConfigFromEnvOptions = {},
+  options: RuntimeConfigFromEnvOptions = {}
 ) => validateRuntimeConfig(runtimeConfigInputFromEnv(env, options));
 
 export interface ConfigService {
@@ -157,12 +182,16 @@ export interface ConfigService {
   readonly getAll: () => RuntimeConfig;
 }
 
-export const ConfigServiceTag = Context.GenericTag<ConfigService>("@ums/effect/ConfigService");
+export const ConfigServiceTag = Context.GenericTag<ConfigService>(
+  "@ums/effect/ConfigService"
+);
 
 export const makeConfigService = (config: RuntimeConfig): ConfigService => ({
   get: (key) => config[key],
   getAll: () => config,
 });
 
-export const makeConfigLayer = (config: RuntimeConfig): Layer.Layer<ConfigService> =>
+export const makeConfigLayer = (
+  config: RuntimeConfig
+): Layer.Layer<ConfigService> =>
   Layer.succeed(ConfigServiceTag, makeConfigService(config));

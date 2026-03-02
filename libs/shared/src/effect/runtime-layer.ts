@@ -1,6 +1,14 @@
 import { Layer } from "effect";
 
 import {
+  deterministicTestServiceBoundariesLayer,
+  serviceBoundariesLayer,
+} from "./service-boundaries.js";
+import {
+  makeDeterministicClockLayer,
+  systemClockLayer,
+} from "./services/clock-service.js";
+import {
   decodeRuntimeConfigFromEnvSync,
   decodeRuntimeConfigSync,
   makeConfigLayer,
@@ -9,14 +17,14 @@ import {
   type RuntimeConfigFromEnvOptions,
   type RuntimeConfig,
 } from "./services/config-service.js";
-import { makeLoggerLayer, deterministicTestLoggerLayer } from "./services/logger-service.js";
-import { makeDeterministicClockLayer, systemClockLayer } from "./services/clock-service.js";
 import {
-  deterministicTestServiceBoundariesLayer,
-  serviceBoundariesLayer,
-} from "./service-boundaries.js";
+  makeLoggerLayer,
+  deterministicTestLoggerLayer,
+} from "./services/logger-service.js";
 
-export const defaultRuntimeConfig: RuntimeConfig = decodeRuntimeConfigSync(runtimeConfigDefaults);
+export const defaultRuntimeConfig: RuntimeConfig = decodeRuntimeConfigSync(
+  runtimeConfigDefaults
+);
 
 export const deterministicTestConfig: RuntimeConfig = {
   environment: "test",
@@ -31,12 +39,12 @@ export const runtimeLayerFromConfig = (config: RuntimeConfig) =>
     makeConfigLayer(config),
     makeLoggerLayer(config.logLevel),
     systemClockLayer,
-    serviceBoundariesLayer,
+    serviceBoundariesLayer
   );
 
 export const runtimeLayerFromEnv = (
   env: RuntimeConfigEnvRecord = process.env,
-  options: RuntimeConfigFromEnvOptions = {},
+  options: RuntimeConfigFromEnvOptions = {}
 ) => runtimeLayerFromConfig(decodeRuntimeConfigFromEnvSync(env, options));
 
 export interface DeterministicRuntimeLayerOptions {
@@ -44,7 +52,9 @@ export interface DeterministicRuntimeLayerOptions {
   readonly fixedNowMillis?: number;
 }
 
-export const deterministicRuntimeLayer = (options: DeterministicRuntimeLayerOptions = {}) => {
+export const deterministicRuntimeLayer = (
+  options: DeterministicRuntimeLayerOptions = {}
+) => {
   const config = options.config ?? deterministicTestConfig;
   const fixedNowMillis = options.fixedNowMillis ?? deterministicTestNowMillis;
 
@@ -52,7 +62,7 @@ export const deterministicRuntimeLayer = (options: DeterministicRuntimeLayerOpti
     makeConfigLayer(config),
     deterministicTestLoggerLayer,
     makeDeterministicClockLayer(fixedNowMillis),
-    deterministicTestServiceBoundariesLayer,
+    deterministicTestServiceBoundariesLayer
   );
 };
 

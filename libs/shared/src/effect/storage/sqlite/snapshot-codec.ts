@@ -1,7 +1,8 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 
-export const sqliteStorageSnapshotFormat = "ums-memory/sqlite-storage-snapshot/v1";
+export const sqliteStorageSnapshotFormat =
+  "ums-memory/sqlite-storage-snapshot/v1";
 export const sqliteStorageSnapshotSignatureAlgorithm = "hmac-sha256";
 
 export const sqliteStorageSnapshotTableNames = Object.freeze([
@@ -20,14 +21,16 @@ export const sqliteStorageSnapshotTableNames = Object.freeze([
   "storage_idempotency_ledger",
 ] as const);
 
-export type SqliteStorageSnapshotTableName = (typeof sqliteStorageSnapshotTableNames)[number];
+export type SqliteStorageSnapshotTableName =
+  (typeof sqliteStorageSnapshotTableNames)[number];
 
 const sqliteStorageSnapshotTableNameSet: ReadonlySet<string> = new Set(
-  sqliteStorageSnapshotTableNames,
+  sqliteStorageSnapshotTableNames
 );
 
 export type SqliteStorageSnapshotCellValue = string | number | null;
-export type SqliteStorageSnapshotRow = readonly SqliteStorageSnapshotCellValue[];
+export type SqliteStorageSnapshotRow =
+  readonly SqliteStorageSnapshotCellValue[];
 
 export interface SqliteStorageSnapshotTable {
   readonly name: SqliteStorageSnapshotTableName;
@@ -72,7 +75,8 @@ const compareStringsAscending = (left: string, right: string): number => {
   return 0;
 };
 
-const quoteIdentifier = (identifier: string): string => `"${identifier.replaceAll('"', '""')}"`;
+const quoteIdentifier = (identifier: string): string =>
+  `"${identifier.replaceAll('"', '""')}"`;
 
 const isPlainRecordObject = (value: object): boolean => {
   const prototype: unknown = Object.getPrototypeOf(value);
@@ -82,7 +86,9 @@ const isPlainRecordObject = (value: object): boolean => {
 const toNonNegativeSafeInteger = (value: unknown, label: string): number => {
   if (typeof value === "number") {
     if (!Number.isSafeInteger(value) || value < 0) {
-      throw new RangeError(`${label} must be a non-negative safe integer. Received: ${value}.`);
+      throw new RangeError(
+        `${label} must be a non-negative safe integer. Received: ${value}.`
+      );
     }
     return value;
   }
@@ -90,7 +96,7 @@ const toNonNegativeSafeInteger = (value: unknown, label: string): number => {
   if (typeof value === "bigint") {
     if (value < 0n || value > BigInt(Number.MAX_SAFE_INTEGER)) {
       throw new RangeError(
-        `${label} must be a non-negative safe integer. Received: ${value.toString()}.`,
+        `${label} must be a non-negative safe integer. Received: ${value.toString()}.`
       );
     }
     return Number(value);
@@ -102,14 +108,21 @@ const toNonNegativeSafeInteger = (value: unknown, label: string): number => {
 const toSafeInteger = (value: unknown, label: string): number => {
   if (typeof value === "number") {
     if (!Number.isSafeInteger(value)) {
-      throw new RangeError(`${label} must be a safe integer. Received: ${value}.`);
+      throw new RangeError(
+        `${label} must be a safe integer. Received: ${value}.`
+      );
     }
     return value;
   }
 
   if (typeof value === "bigint") {
-    if (value < BigInt(Number.MIN_SAFE_INTEGER) || value > BigInt(Number.MAX_SAFE_INTEGER)) {
-      throw new RangeError(`${label} must be a safe integer. Received: ${value.toString()}.`);
+    if (
+      value < BigInt(Number.MIN_SAFE_INTEGER) ||
+      value > BigInt(Number.MAX_SAFE_INTEGER)
+    ) {
+      throw new RangeError(
+        `${label} must be a safe integer. Received: ${value.toString()}.`
+      );
     }
     return Number(value);
   }
@@ -117,7 +130,10 @@ const toSafeInteger = (value: unknown, label: string): number => {
   throw new TypeError(`${label} must be a SQLite integer value.`);
 };
 
-const normalizeCanonicalJsonValue = (value: unknown, path: string): CanonicalJsonValue => {
+const normalizeCanonicalJsonValue = (
+  value: unknown,
+  path: string
+): CanonicalJsonValue => {
   if (value === null) {
     return null;
   }
@@ -131,7 +147,9 @@ const normalizeCanonicalJsonValue = (value: unknown, path: string): CanonicalJso
     return value;
   }
   if (Array.isArray(value)) {
-    return value.map((entry, index) => normalizeCanonicalJsonValue(entry, `${path}[${index}]`));
+    return value.map((entry, index) =>
+      normalizeCanonicalJsonValue(entry, `${path}[${index}]`)
+    );
   }
   if (typeof value !== "object" || !isPlainRecordObject(value)) {
     throw new TypeError(`${path} must contain only plain JSON object values.`);
@@ -139,14 +157,17 @@ const normalizeCanonicalJsonValue = (value: unknown, path: string): CanonicalJso
 
   const record = value as Record<string, unknown>;
   const sortedKeys = Object.keys(record).sort((left, right) =>
-    compareStringsAscending(left, right),
+    compareStringsAscending(left, right)
   );
   const normalizedEntries = sortedKeys.map((key) => {
     const childValue = record[key];
     if (childValue === undefined) {
       throw new TypeError(`${path}.${key} must be defined.`);
     }
-    return [key, normalizeCanonicalJsonValue(childValue, `${path}.${key}`)] as const;
+    return [
+      key,
+      normalizeCanonicalJsonValue(childValue, `${path}.${key}`),
+    ] as const;
   });
   return Object.fromEntries(normalizedEntries);
 };
@@ -177,7 +198,7 @@ const readNonEmptyString = (value: unknown, label: string): string => {
 
 const readSnapshotCellValueFromSqlite = (
   value: unknown,
-  label: string,
+  label: string
 ): SqliteStorageSnapshotCellValue => {
   if (value === null) {
     return null;
@@ -194,7 +215,7 @@ const readSnapshotCellValueFromSqlite = (
 
 const readSnapshotCellValueFromJson = (
   value: unknown,
-  label: string,
+  label: string
 ): SqliteStorageSnapshotCellValue => {
   if (value === null) {
     return null;
@@ -215,31 +236,44 @@ const readSnapshotCellValueFromJson = (
 const readPragmaUserVersion = (database: DatabaseSync): number => {
   const pragmaRow = readRecord(
     database.prepare("PRAGMA user_version;").get(),
-    "PRAGMA user_version row",
+    "PRAGMA user_version row"
   );
   if (!Object.hasOwn(pragmaRow, "user_version")) {
-    throw new TypeError("PRAGMA user_version row did not include user_version.");
+    throw new TypeError(
+      "PRAGMA user_version row did not include user_version."
+    );
   }
-  return toNonNegativeSafeInteger(pragmaRow["user_version"], "PRAGMA user_version");
+  return toNonNegativeSafeInteger(
+    pragmaRow["user_version"],
+    "PRAGMA user_version"
+  );
 };
 
 const readTableColumnMetadata = (
   database: DatabaseSync,
-  tableName: SqliteStorageSnapshotTableName,
+  tableName: SqliteStorageSnapshotTableName
 ): readonly SqliteTableColumnMetadata[] => {
   const pragmaSql = `PRAGMA table_info(${quoteIdentifier(tableName)});`;
   const pragmaRows = database.prepare(pragmaSql).all() as readonly unknown[];
   if (pragmaRows.length === 0) {
-    throw new Error(`PRAGMA table_info returned no columns for table ${tableName}.`);
+    throw new Error(
+      `PRAGMA table_info returned no columns for table ${tableName}.`
+    );
   }
 
   const metadata = pragmaRows.map((row, index) => {
     const rowRecord = readRecord(row, `${tableName}.table_info[${index}]`);
-    const name = readNonEmptyString(rowRecord["name"], `${tableName}.table_info[${index}].name`);
-    const cid = toNonNegativeSafeInteger(rowRecord["cid"], `${tableName}.table_info[${index}].cid`);
+    const name = readNonEmptyString(
+      rowRecord["name"],
+      `${tableName}.table_info[${index}].name`
+    );
+    const cid = toNonNegativeSafeInteger(
+      rowRecord["cid"],
+      `${tableName}.table_info[${index}].cid`
+    );
     const pkOrder = toNonNegativeSafeInteger(
       rowRecord["pk"],
-      `${tableName}.table_info[${index}].pk`,
+      `${tableName}.table_info[${index}].pk`
     );
 
     return Object.freeze({
@@ -249,18 +283,22 @@ const readTableColumnMetadata = (
     });
   });
 
-  return Object.freeze([...metadata].sort((left, right) => left.cid - right.cid));
+  return Object.freeze(
+    [...metadata].sort((left, right) => left.cid - right.cid)
+  );
 };
 
 const readTableColumns = (
   database: DatabaseSync,
-  tableName: SqliteStorageSnapshotTableName,
+  tableName: SqliteStorageSnapshotTableName
 ): readonly string[] =>
-  Object.freeze(readTableColumnMetadata(database, tableName).map((column) => column.name));
+  Object.freeze(
+    readTableColumnMetadata(database, tableName).map((column) => column.name)
+  );
 
 const readTablePrimaryKeyColumns = (
   database: DatabaseSync,
-  tableName: SqliteStorageSnapshotTableName,
+  tableName: SqliteStorageSnapshotTableName
 ): readonly string[] => {
   const columns = readTableColumnMetadata(database, tableName)
     .filter((column) => column.pkOrder > 0)
@@ -272,7 +310,7 @@ const readTablePrimaryKeyColumns = (
 const readColumnValue = (
   row: Record<string, unknown>,
   columnName: string,
-  label: string,
+  label: string
 ): unknown => {
   if (!Object.hasOwn(row, columnName)) {
     throw new Error(`${label} is missing required column ${columnName}.`);
@@ -283,11 +321,13 @@ const readColumnValue = (
 const findColumnIndex = (
   tableName: string,
   columns: readonly string[],
-  columnName: string,
+  columnName: string
 ): number => {
   const columnIndex = columns.indexOf(columnName);
   if (columnIndex === -1) {
-    throw new Error(`${tableName} snapshot is missing required column ${columnName}.`);
+    throw new Error(
+      `${tableName} snapshot is missing required column ${columnName}.`
+    );
   }
   return columnIndex;
 };
@@ -295,7 +335,7 @@ const findColumnIndex = (
 const sortRowsBySelfReference = (
   rows: readonly SqliteStorageSnapshotRow[],
   columns: readonly string[],
-  options: SelfReferenceOrderingOptions,
+  options: SelfReferenceOrderingOptions
 ): readonly SqliteStorageSnapshotRow[] => {
   if (rows.length === 0) {
     return rows;
@@ -304,10 +344,18 @@ const sortRowsBySelfReference = (
   const partitionColumnIndex = findColumnIndex(
     options.tableName,
     columns,
-    options.partitionColumnName,
+    options.partitionColumnName
   );
-  const keyColumnIndex = findColumnIndex(options.tableName, columns, options.keyColumnName);
-  const parentColumnIndex = findColumnIndex(options.tableName, columns, options.parentColumnName);
+  const keyColumnIndex = findColumnIndex(
+    options.tableName,
+    columns,
+    options.keyColumnName
+  );
+  const parentColumnIndex = findColumnIndex(
+    options.tableName,
+    columns,
+    options.parentColumnName
+  );
 
   const nodesByPartition = new Map<
     string,
@@ -324,19 +372,22 @@ const sortRowsBySelfReference = (
     const partitionValue = row[partitionColumnIndex];
     if (typeof partitionValue !== "string" || partitionValue.length === 0) {
       throw new TypeError(
-        `${options.tableName}.${options.partitionColumnName} must be a non-empty string.`,
+        `${options.tableName}.${options.partitionColumnName} must be a non-empty string.`
       );
     }
     const keyValue = row[keyColumnIndex];
     if (typeof keyValue !== "string" || keyValue.length === 0) {
       throw new TypeError(
-        `${options.tableName}.${options.keyColumnName} must be a non-empty string.`,
+        `${options.tableName}.${options.keyColumnName} must be a non-empty string.`
       );
     }
     const parentValue = row[parentColumnIndex];
-    if (parentValue !== null && (typeof parentValue !== "string" || parentValue.length === 0)) {
+    if (
+      parentValue !== null &&
+      (typeof parentValue !== "string" || parentValue.length === 0)
+    ) {
       throw new TypeError(
-        `${options.tableName}.${options.parentColumnName} must be a string or null.`,
+        `${options.tableName}.${options.parentColumnName} must be a string or null.`
       );
     }
 
@@ -347,7 +398,7 @@ const sortRowsBySelfReference = (
     }
     if (partitionNodes.has(keyValue)) {
       throw new Error(
-        `${options.tableName} contains duplicate key ${keyValue} in partition ${partitionValue}.`,
+        `${options.tableName} contains duplicate key ${keyValue} in partition ${partitionValue}.`
       );
     }
     partitionNodes.set(keyValue, {
@@ -358,7 +409,7 @@ const sortRowsBySelfReference = (
 
   const orderedRows: SqliteStorageSnapshotRow[] = [];
   const orderedPartitions = [...nodesByPartition.keys()].sort((left, right) =>
-    compareStringsAscending(left, right),
+    compareStringsAscending(left, right)
   );
   for (const partition of orderedPartitions) {
     const partitionNodes = nodesByPartition.get(partition);
@@ -366,7 +417,7 @@ const sortRowsBySelfReference = (
       continue;
     }
     const orderedKeys = [...partitionNodes.keys()].sort((left, right) =>
-      compareStringsAscending(left, right),
+      compareStringsAscending(left, right)
     );
     const visitState = new Map<string, 0 | 1 | 2>();
     const visit = (key: string): void => {
@@ -376,20 +427,20 @@ const sortRowsBySelfReference = (
       }
       if (state === 1) {
         throw new Error(
-          `${options.tableName} contains a cycle for partition ${partition} at key ${key}.`,
+          `${options.tableName} contains a cycle for partition ${partition} at key ${key}.`
         );
       }
       const node = partitionNodes.get(key);
       if (node === undefined) {
         throw new Error(
-          `${options.tableName} references missing key ${key} in partition ${partition}.`,
+          `${options.tableName} references missing key ${key} in partition ${partition}.`
         );
       }
       visitState.set(key, 1);
       if (node.parent !== null) {
         if (!partitionNodes.has(node.parent)) {
           throw new Error(
-            `${options.tableName} key ${key} references missing parent ${node.parent} in partition ${partition}.`,
+            `${options.tableName} key ${key} references missing parent ${node.parent} in partition ${partition}.`
           );
         }
         visit(node.parent);
@@ -407,7 +458,7 @@ const sortRowsBySelfReference = (
 };
 
 const orderRowsForImport = (
-  table: SqliteStorageSnapshotTable,
+  table: SqliteStorageSnapshotTable
 ): readonly SqliteStorageSnapshotRow[] => {
   if (table.name === "scopes") {
     return sortRowsBySelfReference(table.rows, table.columns, {
@@ -430,45 +481,61 @@ const orderRowsForImport = (
 
 const parseSqliteStorageSnapshotTable = (
   value: unknown,
-  tableIndex: number,
+  tableIndex: number
 ): SqliteStorageSnapshotTable => {
   const tableRecord = readRecord(value, `snapshot.tables[${tableIndex}]`);
-  const name = readNonEmptyString(tableRecord["name"], `snapshot.tables[${tableIndex}].name`);
+  const name = readNonEmptyString(
+    tableRecord["name"],
+    `snapshot.tables[${tableIndex}].name`
+  );
   if (!sqliteStorageSnapshotTableNameSet.has(name)) {
-    throw new RangeError(`snapshot.tables[${tableIndex}].name contains unknown table ${name}.`);
+    throw new RangeError(
+      `snapshot.tables[${tableIndex}].name contains unknown table ${name}.`
+    );
   }
 
   const columnsValue = tableRecord["columns"];
   if (!Array.isArray(columnsValue) || columnsValue.length === 0) {
-    throw new TypeError(`snapshot.tables[${tableIndex}].columns must be a non-empty array.`);
+    throw new TypeError(
+      `snapshot.tables[${tableIndex}].columns must be a non-empty array.`
+    );
   }
   const columns = columnsValue.map((columnValue, columnIndex) =>
-    readNonEmptyString(columnValue, `snapshot.tables[${tableIndex}].columns[${columnIndex}]`),
+    readNonEmptyString(
+      columnValue,
+      `snapshot.tables[${tableIndex}].columns[${columnIndex}]`
+    )
   );
   if (new Set(columns).size !== columns.length) {
-    throw new TypeError(`snapshot.tables[${tableIndex}].columns must not contain duplicates.`);
+    throw new TypeError(
+      `snapshot.tables[${tableIndex}].columns must not contain duplicates.`
+    );
   }
 
   const rowsValue = tableRecord["rows"];
   if (!Array.isArray(rowsValue)) {
-    throw new TypeError(`snapshot.tables[${tableIndex}].rows must be an array.`);
+    throw new TypeError(
+      `snapshot.tables[${tableIndex}].rows must be an array.`
+    );
   }
   const rows = rowsValue.map((rowValue, rowIndex) => {
     if (!Array.isArray(rowValue)) {
-      throw new TypeError(`snapshot.tables[${tableIndex}].rows[${rowIndex}] must be an array.`);
+      throw new TypeError(
+        `snapshot.tables[${tableIndex}].rows[${rowIndex}] must be an array.`
+      );
     }
     if (rowValue.length !== columns.length) {
       throw new RangeError(
-        `snapshot.tables[${tableIndex}].rows[${rowIndex}] must contain ${columns.length} values.`,
+        `snapshot.tables[${tableIndex}].rows[${rowIndex}] must contain ${columns.length} values.`
       );
     }
     return Object.freeze(
       rowValue.map((cellValue, cellIndex) =>
         readSnapshotCellValueFromJson(
           cellValue,
-          `snapshot.tables[${tableIndex}].rows[${rowIndex}][${cellIndex}]`,
-        ),
-      ),
+          `snapshot.tables[${tableIndex}].rows[${rowIndex}][${cellIndex}]`
+        )
+      )
     );
   });
 
@@ -480,14 +547,17 @@ const parseSqliteStorageSnapshotTable = (
 };
 
 export const exportSqliteStorageSnapshotData = (
-  database: DatabaseSync,
+  database: DatabaseSync
 ): SqliteStorageSnapshotData => {
   const tables = sqliteStorageSnapshotTableNames.map((tableName) => {
     const columns = readTableColumns(database, tableName);
     const primaryKeyColumns = readTablePrimaryKeyColumns(database, tableName);
-    const orderByColumns = primaryKeyColumns.length > 0 ? primaryKeyColumns : columns;
+    const orderByColumns =
+      primaryKeyColumns.length > 0 ? primaryKeyColumns : columns;
     if (orderByColumns.length === 0) {
-      throw new Error(`Cannot export table ${tableName} because it has no columns.`);
+      throw new Error(
+        `Cannot export table ${tableName} because it has no columns.`
+      );
     }
 
     const selectSql = [
@@ -501,8 +571,8 @@ export const exportSqliteStorageSnapshotData = (
       const row = columns.map((columnName, columnIndex) =>
         readSnapshotCellValueFromSqlite(
           readColumnValue(record, columnName, `${tableName}.rows[${rowIndex}]`),
-          `${tableName}.rows[${rowIndex}][${columnIndex}]`,
-        ),
+          `${tableName}.rows[${rowIndex}][${columnIndex}]`
+        )
       );
       return Object.freeze(row);
     });
@@ -521,7 +591,9 @@ export const exportSqliteStorageSnapshotData = (
   });
 };
 
-export const parseSqliteStorageSnapshotPayload = (payload: string): SqliteStorageSnapshotData => {
+export const parseSqliteStorageSnapshotPayload = (
+  payload: string
+): SqliteStorageSnapshotData => {
   let parsedPayload: unknown;
   try {
     parsedPayload = JSON.parse(payload);
@@ -531,15 +603,18 @@ export const parseSqliteStorageSnapshotPayload = (payload: string): SqliteStorag
   }
 
   const snapshotRecord = readRecord(parsedPayload, "snapshot");
-  const format = readNonEmptyString(snapshotRecord["format"], "snapshot.format");
+  const format = readNonEmptyString(
+    snapshotRecord["format"],
+    "snapshot.format"
+  );
   if (format !== sqliteStorageSnapshotFormat) {
     throw new RangeError(
-      `snapshot.format must equal ${sqliteStorageSnapshotFormat}; received ${format}.`,
+      `snapshot.format must equal ${sqliteStorageSnapshotFormat}; received ${format}.`
     );
   }
   const userVersion = toNonNegativeSafeInteger(
     snapshotRecord["userVersion"],
-    "snapshot.userVersion",
+    "snapshot.userVersion"
   );
 
   const tablesValue = snapshotRecord["tables"];
@@ -548,7 +623,7 @@ export const parseSqliteStorageSnapshotPayload = (payload: string): SqliteStorag
   }
   if (tablesValue.length !== sqliteStorageSnapshotTableNames.length) {
     throw new RangeError(
-      `snapshot.tables must contain ${sqliteStorageSnapshotTableNames.length} tables in deterministic order.`,
+      `snapshot.tables must contain ${sqliteStorageSnapshotTableNames.length} tables in deterministic order.`
     );
   }
 
@@ -557,7 +632,7 @@ export const parseSqliteStorageSnapshotPayload = (payload: string): SqliteStorag
     const expectedTableName = sqliteStorageSnapshotTableNames[tableIndex];
     if (parsedTable.name !== expectedTableName) {
       throw new RangeError(
-        `snapshot.tables[${tableIndex}].name must be ${expectedTableName}; received ${parsedTable.name}.`,
+        `snapshot.tables[${tableIndex}].name must be ${expectedTableName}; received ${parsedTable.name}.`
       );
     }
     return parsedTable;
@@ -571,26 +646,28 @@ export const parseSqliteStorageSnapshotPayload = (payload: string): SqliteStorag
 };
 
 export const serializeSqliteStorageSnapshotData = (
-  snapshotData: SqliteStorageSnapshotData,
+  snapshotData: SqliteStorageSnapshotData
 ): string => toCanonicalJsonString(snapshotData);
 
-export const countSqliteStorageSnapshotRows = (snapshotData: SqliteStorageSnapshotData): number =>
+export const countSqliteStorageSnapshotRows = (
+  snapshotData: SqliteStorageSnapshotData
+): number =>
   snapshotData.tables.reduce((total, table) => total + table.rows.length, 0);
 
 export const assertSqliteStorageSnapshotSchemaCompatibility = (
   database: DatabaseSync,
-  snapshotData: SqliteStorageSnapshotData,
+  snapshotData: SqliteStorageSnapshotData
 ): void => {
   if (snapshotData.format !== sqliteStorageSnapshotFormat) {
     throw new RangeError(
-      `snapshot.format must equal ${sqliteStorageSnapshotFormat}; received ${snapshotData.format}.`,
+      `snapshot.format must equal ${sqliteStorageSnapshotFormat}; received ${snapshotData.format}.`
     );
   }
 
   const currentUserVersion = readPragmaUserVersion(database);
   if (snapshotData.userVersion !== currentUserVersion) {
     throw new RangeError(
-      `snapshot.userVersion ${snapshotData.userVersion} does not match database user_version ${currentUserVersion}.`,
+      `snapshot.userVersion ${snapshotData.userVersion} does not match database user_version ${currentUserVersion}.`
     );
   }
 
@@ -598,21 +675,21 @@ export const assertSqliteStorageSnapshotSchemaCompatibility = (
     const expectedTableName = sqliteStorageSnapshotTableNames[tableIndex];
     if (table.name !== expectedTableName) {
       throw new RangeError(
-        `snapshot.tables[${tableIndex}].name must be ${expectedTableName}; received ${table.name}.`,
+        `snapshot.tables[${tableIndex}].name must be ${expectedTableName}; received ${table.name}.`
       );
     }
 
     const expectedColumns = readTableColumns(database, expectedTableName);
     if (table.columns.length !== expectedColumns.length) {
       throw new RangeError(
-        `snapshot table ${table.name} column length mismatch: expected ${expectedColumns.length}, received ${table.columns.length}.`,
+        `snapshot table ${table.name} column length mismatch: expected ${expectedColumns.length}, received ${table.columns.length}.`
       );
     }
     for (const [columnIndex, expectedColumn] of expectedColumns.entries()) {
       const receivedColumn = table.columns[columnIndex];
       if (receivedColumn !== expectedColumn) {
         throw new RangeError(
-          `snapshot table ${table.name} column ${columnIndex} mismatch: expected ${expectedColumn}, received ${receivedColumn}.`,
+          `snapshot table ${table.name} column ${columnIndex} mismatch: expected ${expectedColumn}, received ${receivedColumn}.`
         );
       }
     }
@@ -621,7 +698,7 @@ export const assertSqliteStorageSnapshotSchemaCompatibility = (
 
 export const applySqliteStorageSnapshotData = (
   database: DatabaseSync,
-  snapshotData: SqliteStorageSnapshotData,
+  snapshotData: SqliteStorageSnapshotData
 ): void => {
   assertSqliteStorageSnapshotSchemaCompatibility(database, snapshotData);
 
@@ -649,20 +726,25 @@ export const applySqliteStorageSnapshotData = (
   }
 };
 
-export const createSqliteStorageSnapshotSignature = (payload: string, secret: string): string =>
-  createHmac("sha256", secret).update(payload).digest("hex");
+export const createSqliteStorageSnapshotSignature = (
+  payload: string,
+  secret: string
+): string => createHmac("sha256", secret).update(payload).digest("hex");
 
 export const verifySqliteStorageSnapshotSignature = (
   payload: string,
   signatureHex: string,
-  secret: string,
+  secret: string
 ): boolean => {
   const normalizedSignature = signatureHex.toLowerCase();
   if (!/^[0-9a-f]{64}$/.test(normalizedSignature)) {
     return false;
   }
 
-  const expectedSignature = createSqliteStorageSnapshotSignature(payload, secret);
+  const expectedSignature = createSqliteStorageSnapshotSignature(
+    payload,
+    secret
+  );
   const expectedBuffer = Buffer.from(expectedSignature, "hex");
   const receivedBuffer = Buffer.from(normalizedSignature, "hex");
   if (expectedBuffer.length !== receivedBuffer.length) {

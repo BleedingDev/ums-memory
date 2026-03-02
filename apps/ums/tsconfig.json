@@ -8,5 +8,9 @@
     "tsBuildInfoFile": "../../dist/typecheck/apps/ums.tsbuildinfo"
   },
   "include": ["**/*.mjs"],
-  "references": [{ "path": "../../libs/shared" }, { "path": "../api" }, { "path": "../cli" }]
+  "references": [
+    { "path": "../../libs/shared" },
+    { "path": "../api" },
+    { "path": "../cli" }
+  ]
 }

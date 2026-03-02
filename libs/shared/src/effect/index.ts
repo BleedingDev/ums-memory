@@ -4,6 +4,7 @@ export * from "./runtime-layer.js";
 export * from "./sample-program.js";
 export * from "./service-boundaries.js";
 export * from "./storage/index.js";
+export * from "./services/authorization-service.js";
 export * from "./services/clock-service.js";
 export * from "./services/config-service.js";
 export * from "./services/evaluation-service.js";
