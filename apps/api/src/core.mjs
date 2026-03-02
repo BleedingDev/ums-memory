@@ -2178,6 +2178,135 @@ function buildSloObservability(requestDigest, operation, targetP95Ms) {
   };
 }
 
+function buildLifecycleCandidateThroughputMetric(
+  state,
+  { processedCount = 0, mutatedCount = 0, actionCounts = null } = {},
+) {
+  const totalCandidates = Array.isArray(state.shadowCandidates) ? state.shadowCandidates.length : 0;
+  const normalizedProcessedCount = toNonNegativeInteger(processedCount, 0);
+  const normalizedMutatedCount = toNonNegativeInteger(mutatedCount, 0);
+  const throughput = {
+    processedCount: normalizedProcessedCount,
+    mutatedCount: normalizedMutatedCount,
+    mutationRate:
+      normalizedProcessedCount > 0 ? roundNumber(normalizedMutatedCount / normalizedProcessedCount, 6) : 0,
+    totalCandidates,
+  };
+  if (isPlainObject(actionCounts)) {
+    throughput.actionCounts = stableSortObject(actionCounts);
+  }
+  return throughput;
+}
+
+function buildLifecycleGatePassRateMetric(state, candidateIds = []) {
+  const scopedCandidateIds = asSortedUniqueStrings(candidateIds);
+  const scopedCandidateIdSet = scopedCandidateIds.length > 0 ? new Set(scopedCandidateIds) : null;
+  const replayEvaluations = Array.isArray(state.replayEvaluations) ? state.replayEvaluations : [];
+  const relevantEvaluations = replayEvaluations.filter((evaluation) => {
+    if (!evaluation || typeof evaluation !== "object") {
+      return false;
+    }
+    if (scopedCandidateIdSet && !scopedCandidateIdSet.has(evaluation.candidateId)) {
+      return false;
+    }
+    return evaluation.pass === true || evaluation.pass === false;
+  });
+  const passCount = relevantEvaluations.reduce(
+    (count, evaluation) => count + (evaluation.pass === true ? 1 : 0),
+    0,
+  );
+  const totalCount = relevantEvaluations.length;
+  return {
+    scope: scopedCandidateIds.length > 0 ? "candidate" : "profile",
+    candidateIds: scopedCandidateIds,
+    passCount,
+    totalCount,
+    failCount: Math.max(totalCount - passCount, 0),
+    rate: totalCount > 0 ? roundNumber(passCount / totalCount, 6) : null,
+  };
+}
+
+function buildLifecycleDemotionReasonsMetric(state, reasonCodes = []) {
+  const normalizedReasonCodes = asSortedUniqueStrings(reasonCodes);
+  const candidates = Array.isArray(state.shadowCandidates) ? state.shadowCandidates : [];
+  const profileCounts = {};
+  for (const candidate of candidates) {
+    const candidateReasonCodes = asSortedUniqueStrings(candidate?.latestDemotionReasonCodes);
+    for (const reasonCode of candidateReasonCodes) {
+      profileCounts[reasonCode] = toNonNegativeInteger(profileCounts[reasonCode], 0) + 1;
+    }
+  }
+  return {
+    reasonCodes: normalizedReasonCodes,
+    reasonCount: normalizedReasonCodes.length,
+    profileCounts: stableSortObject(profileCounts),
+  };
+}
+
+function buildLifecycleLatencyMetric(requestDigest) {
+  const observedLatencyMs = deterministicLatencyMs(requestDigest);
+  return {
+    observedLatencyMs,
+    latencyBucket: latencyBucket(observedLatencyMs),
+  };
+}
+
+function buildLifecycleObservabilityMetrics(
+  state,
+  {
+    requestDigest,
+    candidateIds = [],
+    processedCount = 0,
+    mutatedCount = 0,
+    actionCounts = null,
+    demotionReasonCodes = [],
+  } = {},
+) {
+  const scopedCandidateIds = asSortedUniqueStrings(candidateIds);
+  return stableSortObject({
+    candidateThroughput: buildLifecycleCandidateThroughputMetric(state, {
+      processedCount,
+      mutatedCount,
+      actionCounts,
+    }),
+    gatePassRate: buildLifecycleGatePassRateMetric(state, scopedCandidateIds),
+    demotionReasons: buildLifecycleDemotionReasonsMetric(state, demotionReasonCodes),
+    latency: buildLifecycleLatencyMetric(requestDigest),
+    deterministic: true,
+    replaySafe: true,
+  });
+}
+
+function buildLifecycleTrace(
+  meta,
+  { action = "noop", candidateIds = [], metrics = {}, details = {} } = {},
+) {
+  const payload = stableSortObject({
+    operation: meta.operation,
+    action,
+    storeId: meta.storeId,
+    profile: meta.profile,
+    requestDigest: meta.requestDigest,
+    candidateIds: asSortedUniqueStrings(candidateIds),
+    metrics: stableSortObject(metrics),
+    details: isPlainObject(details) ? stableSortObject(details) : {},
+    deterministic: true,
+    replaySafe: true,
+  });
+  const traceSeed = hash(stableStringify(payload));
+  return {
+    traceId: makeId("trace", traceSeed),
+    spanId: makeId("span", hash(stableStringify({ traceSeed, operation: meta.operation }))),
+    parentSpanId: makeId(
+      "span",
+      hash(stableStringify({ requestDigest: meta.requestDigest, operation: "lifecycle" })),
+    ),
+    payload,
+    deterministic: true,
+    replaySafe: true,
+  };
+}
+
 function compareByIsoTimestampThenId(leftTimestamp, leftId, rightTimestamp, rightId) {
   const timestampDiff = String(leftTimestamp ?? "").localeCompare(String(rightTimestamp ?? ""));
   if (timestampDiff !== 0) {
@@ -3299,10 +3428,48 @@ function runShadowWrite(request) {
   const updatedCount = applied.filter((entry) => entry.action === "updated").length;
   const noopCount = applied.filter((entry) => entry.action === "noop").length;
   const meta = buildMeta("shadow_write", storeId, profile, input);
+  const lifecycleCandidateIds = asSortedUniqueStrings(
+    applied.map((entry) => entry?.candidateId).filter(Boolean),
+  );
+  const lifecycleMutatedCount = createdCount + updatedCount;
+  const lifecycleAction =
+    lifecycleMutatedCount === 0
+      ? "noop"
+      : createdCount > 0 && updatedCount > 0
+        ? "mixed"
+        : createdCount > 0
+          ? "created"
+          : "updated";
+  const lifecycleMetrics = buildLifecycleObservabilityMetrics(state, {
+    requestDigest: meta.requestDigest,
+    candidateIds: lifecycleCandidateIds,
+    processedCount: rawCandidates.length,
+    mutatedCount: lifecycleMutatedCount,
+    actionCounts: {
+      created: createdCount,
+      updated: updatedCount,
+      noop: noopCount,
+    },
+    demotionReasonCodes: [],
+  });
+  const lifecycleTrace = buildLifecycleTrace(meta, {
+    action: lifecycleAction,
+    candidateIds: lifecycleCandidateIds,
+    metrics: lifecycleMetrics,
+    details: {
+      counts: {
+        created: createdCount,
+        updated: updatedCount,
+        noop: noopCount,
+        total: state.shadowCandidates.length,
+      },
+    },
+  });
 
   return {
     ...meta,
     applied,
+    trace: lifecycleTrace,
     counts: {
       created: createdCount,
       updated: updatedCount,
@@ -3313,6 +3480,8 @@ function runShadowWrite(request) {
       candidateCount: rawCandidates.length,
       replaySafe: true,
       evidenceLinked: true,
+      lifecycleMetrics,
+      tracePayload: lifecycleTrace.payload,
       slo: buildSloObservability(meta.requestDigest, "shadow_write", 40),
     },
   };
@@ -3438,6 +3607,40 @@ function runReplayEval(request) {
         })
       : null;
   const meta = buildMeta("replay_eval", storeId, profile, input);
+  const lifecycleMetrics = buildLifecycleObservabilityMetrics(state, {
+    requestDigest: meta.requestDigest,
+    candidateIds: [candidateId],
+    processedCount: 1,
+    mutatedCount: action === "noop" ? 0 : 1,
+    actionCounts: {
+      created: action === "created" ? 1 : 0,
+      updated: action === "updated" ? 1 : 0,
+      noop: action === "noop" ? 1 : 0,
+    },
+    demotionReasonCodes: autoDemotion?.reasonCodes ?? [],
+  });
+  const lifecycleTrace = buildLifecycleTrace(meta, {
+    action,
+    candidateIds: [candidateId],
+    metrics: lifecycleMetrics,
+    details: {
+      replayEvalId,
+      evaluationPackId,
+      gate: {
+        pass,
+        gateThreshold,
+        safetyRegressionCount,
+        severity: safetyDeltas.severity,
+      },
+      autoDemotion: autoDemotion
+        ? {
+            action: autoDemotion.action,
+            reasonCodes: autoDemotion.reasonCodes,
+            removedRuleId: autoDemotion.removedRuleId,
+          }
+        : null,
+    },
+  });
 
   return {
     ...meta,
@@ -3445,6 +3648,7 @@ function runReplayEval(request) {
     candidateId,
     replayEvalId,
     evaluation,
+    trace: lifecycleTrace,
     autoDemotion: autoDemotion
       ? {
           action: autoDemotion.action,
@@ -3471,6 +3675,8 @@ function runReplayEval(request) {
       autoDemotionApplied: autoDemotion?.action === "demoted",
       hasSafetyRegression: safetyRegressionCount > 0,
       safetySeverity: safetyDeltas.severity,
+      lifecycleMetrics,
+      tracePayload: lifecycleTrace.payload,
       slo: buildSloObservability(meta.requestDigest, "replay_eval", 45),
     },
   };
@@ -3573,14 +3779,44 @@ function runPromote(request) {
     state.rules.push(nextRule);
   }
   const meta = buildMeta("promote", storeId, profile, input);
+  const promoteAction = resolved.candidate.status === "promoted" && ruleAction === "noop" ? "noop" : "promoted";
+  const lifecycleMetrics = buildLifecycleObservabilityMetrics(state, {
+    requestDigest: meta.requestDigest,
+    candidateIds: [candidateId],
+    processedCount: 1,
+    mutatedCount: promoteAction === "noop" ? 0 : 1,
+    actionCounts: {
+      promoted: promoteAction === "promoted" ? 1 : 0,
+      noop: promoteAction === "noop" ? 1 : 0,
+      ruleCreated: ruleAction === "created" ? 1 : 0,
+      ruleUpdated: ruleAction === "updated" ? 1 : 0,
+      ruleNoop: ruleAction === "noop" ? 1 : 0,
+    },
+    demotionReasonCodes: nextCandidate.latestDemotionReasonCodes,
+  });
+  const lifecycleTrace = buildLifecycleTrace(meta, {
+    action: promoteAction,
+    candidateIds: [candidateId],
+    metrics: lifecycleMetrics,
+    details: {
+      replayEvalId: latestEvaluation.replayEvalId,
+      ruleAction,
+      freshEvidencePass,
+      freshEvidenceWindowDays,
+      freshEvidenceAgeDays,
+      evidenceNotExpired,
+      hasEvidenceLinks,
+    },
+  });
 
   return {
     ...meta,
-    action: resolved.candidate.status === "promoted" && ruleAction === "noop" ? "noop" : "promoted",
+    action: promoteAction,
     candidate: nextCandidate,
     rule: nextRule,
     ruleAction,
     replayEvalId: latestEvaluation.replayEvalId,
+    trace: lifecycleTrace,
     observability: {
       replayGatePass: true,
       safetyRegressionCount: latestEvaluation.safetyRegressionCount,
@@ -3590,6 +3826,8 @@ function runPromote(request) {
       evidenceNotExpired,
       hasEvidenceLinks,
       replaySafe: true,
+      lifecycleMetrics,
+      tracePayload: lifecycleTrace.payload,
       slo: buildSloObservability(meta.requestDigest, "promote", 45),
     },
   };
@@ -3622,23 +3860,75 @@ function runDemote(request) {
   const providedReasonCodes = normalizeGuardedStringArray(request.reasonCodes, "reasonCodes");
   const reasonCodes = providedReasonCodes.length > 0 ? providedReasonCodes : defaultReasons;
   const meta = buildMeta("demote", storeId, profile, input);
+  const lifecycleCandidateIds = [candidateId];
+  const lifecycleDetails = {
+    threshold: netValueThreshold,
+    replayFailed,
+    belowThreshold,
+    force,
+  };
 
   if (!shouldDemote) {
+    const lifecycleMetrics = buildLifecycleObservabilityMetrics(state, {
+      requestDigest: meta.requestDigest,
+      candidateIds: lifecycleCandidateIds,
+      processedCount: 1,
+      mutatedCount: 0,
+      actionCounts: {
+        noop: 1,
+      },
+      demotionReasonCodes: reasonCodes,
+    });
+    const lifecycleTrace = buildLifecycleTrace(meta, {
+      action: "noop",
+      candidateIds: lifecycleCandidateIds,
+      metrics: lifecycleMetrics,
+      details: {
+        ...lifecycleDetails,
+        reasonCodes,
+        demotionApplied: false,
+      },
+    });
     return {
       ...meta,
       action: "noop",
       candidate: resolved.candidate,
       reasonCodes,
       threshold: netValueThreshold,
+      trace: lifecycleTrace,
       observability: {
         replaySafe: true,
         demotionApplied: false,
+        lifecycleMetrics,
+        tracePayload: lifecycleTrace.payload,
         slo: buildSloObservability(meta.requestDigest, "demote", 40),
       },
     };
   }
 
   const demotion = applyCandidateDemotion(state, resolved, { demotedAt, reasonCodes });
+  const lifecycleMetrics = buildLifecycleObservabilityMetrics(state, {
+    requestDigest: meta.requestDigest,
+    candidateIds: lifecycleCandidateIds,
+    processedCount: 1,
+    mutatedCount: demotion.action === "demoted" ? 1 : 0,
+    actionCounts: {
+      demoted: demotion.action === "demoted" ? 1 : 0,
+      noop: demotion.action === "noop" ? 1 : 0,
+    },
+    demotionReasonCodes: reasonCodes,
+  });
+  const lifecycleTrace = buildLifecycleTrace(meta, {
+    action: demotion.action,
+    candidateIds: lifecycleCandidateIds,
+    metrics: lifecycleMetrics,
+    details: {
+      ...lifecycleDetails,
+      reasonCodes,
+      demotionApplied: demotion.action === "demoted",
+      removedRuleId: demotion.removedRuleId,
+    },
+  });
 
   return {
     ...meta,
@@ -3647,10 +3937,13 @@ function runDemote(request) {
     removedRuleId: demotion.removedRuleId,
     reasonCodes,
     threshold: netValueThreshold,
+    trace: lifecycleTrace,
     observability: {
       replaySafe: true,
       demotionApplied: demotion.action === "demoted",
       ruleRemoved: Boolean(demotion.removedRuleId),
+      lifecycleMetrics,
+      tracePayload: lifecycleTrace.payload,
       slo: buildSloObservability(meta.requestDigest, "demote", 40),
     },
   };

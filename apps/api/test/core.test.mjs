@@ -266,6 +266,169 @@ test("ums-memory-hpl.3 promote rejects candidates with expired evidence even aft
   );
 });
 
+test("ums-memory-hpl.11 lifecycle operations emit throughput/pass-rate/demotion/latency metrics with trace payloads", () => {
+  const storeId = "tenant-hpl11-lifecycle-observability";
+  const profile = "hpl11-lifecycle-observability";
+  const shadow = executeOperation("shadow_write", {
+    storeId,
+    profile,
+    statement: "Lifecycle observability should emit deterministic metrics and traces.",
+    sourceEventIds: ["evt-hpl11-shadow-1"],
+    evidenceEventIds: ["evt-hpl11-shadow-1"],
+    createdAt: "2026-03-02T14:00:00.000Z",
+    expiresAt: "2026-04-02T14:00:00.000Z",
+  });
+  const candidateId = shadow.applied[0].candidateId;
+
+  assert.equal(shadow.observability.lifecycleMetrics.candidateThroughput.processedCount, 1);
+  assert.equal(shadow.observability.lifecycleMetrics.candidateThroughput.mutatedCount, 1);
+  assert.equal(shadow.observability.lifecycleMetrics.gatePassRate.totalCount, 0);
+  assert.equal(shadow.observability.lifecycleMetrics.demotionReasons.reasonCount, 0);
+  assert.equal(
+    shadow.observability.lifecycleMetrics.latency.observedLatencyMs,
+    shadow.observability.slo.observedLatencyMs,
+  );
+  assert.equal(shadow.trace.payload.operation, "shadow_write");
+  assert.deepEqual(shadow.trace.payload.candidateIds, [candidateId]);
+  assert.deepEqual(shadow.trace.payload.metrics, shadow.observability.lifecycleMetrics);
+  assert.deepEqual(shadow.trace.payload, shadow.observability.tracePayload);
+
+  const replay = executeOperation("replay_eval", {
+    storeId,
+    profile,
+    candidateId,
+    successRateDelta: 0.7,
+    evaluatedAt: "2026-03-02T14:10:00.000Z",
+  });
+  assert.equal(replay.gate.pass, true);
+  assert.equal(replay.observability.lifecycleMetrics.gatePassRate.passCount, 1);
+  assert.equal(replay.observability.lifecycleMetrics.gatePassRate.totalCount, 1);
+  assert.equal(replay.observability.lifecycleMetrics.gatePassRate.rate, 1);
+  assert.equal(replay.observability.lifecycleMetrics.candidateThroughput.processedCount, 1);
+  assert.equal(
+    replay.observability.lifecycleMetrics.latency.observedLatencyMs,
+    replay.observability.slo.observedLatencyMs,
+  );
+  assert.equal(replay.trace.payload.details.gate.pass, true);
+  assert.deepEqual(replay.trace.payload.metrics, replay.observability.lifecycleMetrics);
+  assert.deepEqual(replay.trace.payload, replay.observability.tracePayload);
+
+  const promoted = executeOperation("promote", {
+    storeId,
+    profile,
+    candidateId,
+    promotedAt: "2026-03-02T14:20:00.000Z",
+  });
+  assert.equal(promoted.action, "promoted");
+  assert.equal(promoted.observability.lifecycleMetrics.gatePassRate.rate, 1);
+  assert.equal(promoted.observability.lifecycleMetrics.candidateThroughput.mutatedCount, 1);
+  assert.equal(promoted.trace.payload.details.ruleAction, promoted.ruleAction);
+  assert.deepEqual(promoted.trace.payload.metrics, promoted.observability.lifecycleMetrics);
+  assert.deepEqual(promoted.trace.payload, promoted.observability.tracePayload);
+
+  const demoted = executeOperation("demote", {
+    storeId,
+    profile,
+    candidateId,
+    force: true,
+    reasonCodes: ["manual_override", "policy_regression"],
+    demotedAt: "2026-03-02T14:30:00.000Z",
+  });
+  assert.equal(demoted.action, "demoted");
+  assert.deepEqual(demoted.reasonCodes, ["manual_override", "policy_regression"]);
+  assert.deepEqual(demoted.observability.lifecycleMetrics.demotionReasons.reasonCodes, [
+    "manual_override",
+    "policy_regression",
+  ]);
+  assert.equal(demoted.observability.lifecycleMetrics.demotionReasons.profileCounts.manual_override, 1);
+  assert.equal(demoted.observability.lifecycleMetrics.demotionReasons.profileCounts.policy_regression, 1);
+  assert.equal(demoted.observability.lifecycleMetrics.candidateThroughput.mutatedCount, 1);
+  assert.equal(demoted.trace.payload.details.removedRuleId, demoted.removedRuleId);
+  assert.deepEqual(demoted.trace.payload.metrics, demoted.observability.lifecycleMetrics);
+  assert.deepEqual(demoted.trace.payload, demoted.observability.tracePayload);
+});
+
+test("ums-memory-hpl.11 lifecycle observability remains deterministic across replay-safe noop paths", () => {
+  const storeId = "tenant-hpl11-noop-determinism";
+  const profile = "hpl11-noop-determinism";
+  const shadowRequest = {
+    storeId,
+    profile,
+    statement: "Noop replay should preserve lifecycle trace and metrics deterministically.",
+    sourceEventIds: ["evt-hpl11-noop-1"],
+    evidenceEventIds: ["evt-hpl11-noop-1"],
+    createdAt: "2026-03-02T15:00:00.000Z",
+  };
+  executeOperation("shadow_write", shadowRequest);
+  const shadowNoopA = executeOperation("shadow_write", shadowRequest);
+  const shadowNoopB = executeOperation("shadow_write", shadowRequest);
+  const candidateId = shadowNoopA.applied[0].candidateId;
+
+  assert.equal(shadowNoopA.applied[0].action, "noop");
+  assert.equal(shadowNoopB.applied[0].action, "noop");
+  assert.equal(shadowNoopA.trace.traceId, shadowNoopB.trace.traceId);
+  assert.deepEqual(shadowNoopA.observability.lifecycleMetrics, shadowNoopB.observability.lifecycleMetrics);
+  assert.deepEqual(shadowNoopA.trace.payload, shadowNoopB.trace.payload);
+
+  const replayCreated = executeOperation("replay_eval", {
+    storeId,
+    profile,
+    candidateId,
+    successRateDelta: 0.4,
+    evaluatedAt: "2026-03-02T15:10:00.000Z",
+  });
+  const replayNoopRequest = {
+    storeId,
+    profile,
+    candidateId,
+    replayEvalId: replayCreated.replayEvalId,
+    successRateDelta: 0.4,
+    evaluatedAt: "2026-03-02T15:10:00.000Z",
+  };
+  const replayNoopA = executeOperation("replay_eval", replayNoopRequest);
+  const replayNoopB = executeOperation("replay_eval", replayNoopRequest);
+  assert.equal(replayNoopA.action, "noop");
+  assert.equal(replayNoopB.action, "noop");
+  assert.equal(replayNoopA.trace.traceId, replayNoopB.trace.traceId);
+  assert.deepEqual(replayNoopA.observability.lifecycleMetrics, replayNoopB.observability.lifecycleMetrics);
+  assert.deepEqual(replayNoopA.trace.payload, replayNoopB.trace.payload);
+
+  executeOperation("promote", {
+    storeId,
+    profile,
+    candidateId,
+    promotedAt: "2026-03-02T15:20:00.000Z",
+  });
+  const promoteNoopRequest = {
+    storeId,
+    profile,
+    candidateId,
+    promotedAt: "2026-03-02T15:20:00.000Z",
+  };
+  const promoteNoopA = executeOperation("promote", promoteNoopRequest);
+  const promoteNoopB = executeOperation("promote", promoteNoopRequest);
+  assert.equal(promoteNoopA.action, "noop");
+  assert.equal(promoteNoopB.action, "noop");
+  assert.equal(promoteNoopA.trace.traceId, promoteNoopB.trace.traceId);
+  assert.deepEqual(promoteNoopA.observability.lifecycleMetrics, promoteNoopB.observability.lifecycleMetrics);
+  assert.deepEqual(promoteNoopA.trace.payload, promoteNoopB.trace.payload);
+
+  const demoteNoopRequest = {
+    storeId,
+    profile,
+    candidateId,
+    netValueThreshold: -999,
+    demotedAt: "2026-03-02T15:30:00.000Z",
+  };
+  const demoteNoopA = executeOperation("demote", demoteNoopRequest);
+  const demoteNoopB = executeOperation("demote", demoteNoopRequest);
+  assert.equal(demoteNoopA.action, "noop");
+  assert.equal(demoteNoopB.action, "noop");
+  assert.equal(demoteNoopA.trace.traceId, demoteNoopB.trace.traceId);
+  assert.deepEqual(demoteNoopA.observability.lifecycleMetrics, demoteNoopB.observability.lifecycleMetrics);
+  assert.deepEqual(demoteNoopA.trace.payload, demoteNoopB.trace.payload);
+});
+
 test("ums-memory-hpl.4 replay_eval auto-demotes on sustained negative net value and remains replay-safe", () => {
   const storeId = "tenant-hpl4-replay-demote";
   const profile = "hpl4-replay-demote";
