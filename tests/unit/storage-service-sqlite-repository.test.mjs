@@ -1725,6 +1725,240 @@ test("ums-memory-5cb.3: sqlite storage service maps missing deletes to StorageNo
   }
 });
 
+test("ums-memory-5cb.10: sqlite storage service replays upsert responses deterministically for matching idempotency keys", async () => {
+  const storageServiceModule = await loadStorageServiceModule();
+  const db = new DatabaseSync(":memory:");
+
+  try {
+    const storageService = storageServiceModule.makeSqliteStorageService(db);
+    const firstResponse = Effect.runSync(
+      storageService.upsertMemory({
+        spaceId: "tenant-idempotency-upsert",
+        memoryId: "memory-idempotency-upsert",
+        layer: "working",
+        idempotency_key: "upsert-key-001",
+        payload: {
+          title: "Idempotent upsert baseline",
+          updatedAtMillis: 1_700_000_100_100,
+        },
+      }),
+    );
+    const replayResponse = Effect.runSync(
+      storageService.upsertMemory({
+        spaceId: "tenant-idempotency-upsert",
+        memoryId: "memory-idempotency-upsert",
+        layer: "working",
+        idempotencyKey: "upsert-key-001",
+        payload: {
+          title: "Idempotent upsert baseline",
+          updatedAtMillis: 1_700_000_100_100,
+        },
+      }),
+    );
+
+    assert.deepEqual(replayResponse, firstResponse);
+
+    const upsertAuditRows = db
+      .prepare(
+        [
+          "SELECT reason FROM audit_events",
+          "WHERE tenant_id = ? AND memory_id = ? AND operation = 'upsert'",
+          "ORDER BY event_id ASC;",
+        ].join("\n"),
+      )
+      .all("tenant-idempotency-upsert", "memory-idempotency-upsert");
+    assert.deepEqual(upsertAuditRows.map((row) => row.reason), ["inserted"]);
+
+    const idempotencyRow = db
+      .prepare(
+        [
+          "SELECT request_hash_sha256, response_json",
+          "FROM storage_idempotency_ledger",
+          "WHERE tenant_id = ? AND operation = 'upsert' AND idempotency_key = ?;",
+        ].join("\n"),
+      )
+      .get("tenant-idempotency-upsert", "upsert-key-001");
+    assert.ok(idempotencyRow);
+    assert.match(String(idempotencyRow.request_hash_sha256), /^[0-9a-f]{64}$/i);
+    assert.deepEqual(JSON.parse(idempotencyRow.response_json), firstResponse);
+  } finally {
+    db.close();
+  }
+});
+
+test("ums-memory-5cb.10: sqlite storage service rejects upsert idempotency key reuse with mismatched request hash", async () => {
+  const storageServiceModule = await loadStorageServiceModule();
+  const db = new DatabaseSync(":memory:");
+
+  try {
+    const storageService = storageServiceModule.makeSqliteStorageService(db);
+    Effect.runSync(
+      storageService.upsertMemory({
+        spaceId: "tenant-idempotency-upsert-conflict",
+        memoryId: "memory-idempotency-upsert-conflict",
+        layer: "working",
+        idempotencyKey: "upsert-key-conflict-001",
+        payload: {
+          title: "Idempotent upsert conflict baseline",
+          updatedAtMillis: 1_700_000_100_200,
+        },
+      }),
+    );
+
+    const conflictEither = Effect.runSync(
+      Effect.either(
+        storageService.upsertMemory({
+          spaceId: "tenant-idempotency-upsert-conflict",
+          memoryId: "memory-idempotency-upsert-conflict",
+          layer: "working",
+          idempotencyKey: "upsert-key-conflict-001",
+          payload: {
+            title: "Idempotent upsert conflict changed payload",
+            updatedAtMillis: 1_700_000_100_201,
+          },
+        }),
+      ),
+    );
+    const conflictFailure = unwrapFailure(conflictEither);
+
+    assert.equal(conflictFailure._tag, "ContractValidationError");
+    assert.equal(conflictFailure.contract, "StorageUpsertRequest.idempotencyKey");
+    assert.match(conflictFailure.message, /reuse conflict/i);
+
+    const persistedMemoryRow = db
+      .prepare("SELECT title, updated_at_ms FROM memory_items WHERE tenant_id = ? AND memory_id = ?;")
+      .get("tenant-idempotency-upsert-conflict", "memory-idempotency-upsert-conflict");
+    assert.equal(persistedMemoryRow.title, "Idempotent upsert conflict baseline");
+    assert.equal(Number(persistedMemoryRow.updated_at_ms), 1_700_000_100_200);
+  } finally {
+    db.close();
+  }
+});
+
+test("ums-memory-5cb.10: sqlite storage service replays delete responses deterministically for matching idempotency keys", async () => {
+  const storageServiceModule = await loadStorageServiceModule();
+  const db = new DatabaseSync(":memory:");
+
+  try {
+    const storageService = storageServiceModule.makeSqliteStorageService(db);
+    Effect.runSync(
+      storageService.upsertMemory({
+        spaceId: "tenant-idempotency-delete",
+        memoryId: "memory-idempotency-delete",
+        layer: "working",
+        payload: {
+          title: "Delete idempotency seed",
+          updatedAtMillis: 1_700_000_100_300,
+        },
+      }),
+    );
+
+    const firstDeleteResponse = Effect.runSync(
+      storageService.deleteMemory({
+        spaceId: "tenant-idempotency-delete",
+        memoryId: "memory-idempotency-delete",
+        idempotency_key: "delete-key-001",
+      }),
+    );
+    const replayDeleteResponse = Effect.runSync(
+      storageService.deleteMemory({
+        spaceId: "tenant-idempotency-delete",
+        memoryId: "memory-idempotency-delete",
+        idempotencyKey: "delete-key-001",
+      }),
+    );
+
+    assert.deepEqual(replayDeleteResponse, firstDeleteResponse);
+
+    const deleteAuditRows = db
+      .prepare(
+        [
+          "SELECT reason FROM audit_events",
+          "WHERE tenant_id = ? AND memory_id = ? AND operation = 'delete'",
+          "ORDER BY event_id ASC;",
+        ].join("\n"),
+      )
+      .all("tenant-idempotency-delete", "memory-idempotency-delete");
+    assert.deepEqual(deleteAuditRows.map((row) => row.reason), ["deleted"]);
+
+    const idempotencyRow = db
+      .prepare(
+        [
+          "SELECT request_hash_sha256, response_json",
+          "FROM storage_idempotency_ledger",
+          "WHERE tenant_id = ? AND operation = 'delete' AND idempotency_key = ?;",
+        ].join("\n"),
+      )
+      .get("tenant-idempotency-delete", "delete-key-001");
+    assert.ok(idempotencyRow);
+    assert.match(String(idempotencyRow.request_hash_sha256), /^[0-9a-f]{64}$/i);
+    assert.deepEqual(JSON.parse(idempotencyRow.response_json), firstDeleteResponse);
+  } finally {
+    db.close();
+  }
+});
+
+test("ums-memory-5cb.10: sqlite storage service rejects delete idempotency key reuse with mismatched request hash", async () => {
+  const storageServiceModule = await loadStorageServiceModule();
+  const db = new DatabaseSync(":memory:");
+
+  try {
+    const storageService = storageServiceModule.makeSqliteStorageService(db);
+    Effect.runSync(
+      storageService.upsertMemory({
+        spaceId: "tenant-idempotency-delete-conflict",
+        memoryId: "memory-idempotency-delete-a",
+        layer: "working",
+        payload: {
+          title: "Delete idempotency conflict seed A",
+          updatedAtMillis: 1_700_000_100_400,
+        },
+      }),
+    );
+    Effect.runSync(
+      storageService.upsertMemory({
+        spaceId: "tenant-idempotency-delete-conflict",
+        memoryId: "memory-idempotency-delete-b",
+        layer: "working",
+        payload: {
+          title: "Delete idempotency conflict seed B",
+          updatedAtMillis: 1_700_000_100_401,
+        },
+      }),
+    );
+
+    Effect.runSync(
+      storageService.deleteMemory({
+        spaceId: "tenant-idempotency-delete-conflict",
+        memoryId: "memory-idempotency-delete-a",
+        idempotencyKey: "delete-key-conflict-001",
+      }),
+    );
+
+    const conflictEither = Effect.runSync(
+      Effect.either(
+        storageService.deleteMemory({
+          spaceId: "tenant-idempotency-delete-conflict",
+          memoryId: "memory-idempotency-delete-b",
+          idempotencyKey: "delete-key-conflict-001",
+        }),
+      ),
+    );
+    const conflictFailure = unwrapFailure(conflictEither);
+
+    assert.equal(conflictFailure._tag, "ContractValidationError");
+    assert.equal(conflictFailure.contract, "StorageDeleteRequest.idempotencyKey");
+    assert.match(conflictFailure.message, /reuse conflict/i);
+
+    const remainingMemoryRow = db
+      .prepare("SELECT memory_id FROM memory_items WHERE tenant_id = ? AND memory_id = ?;")
+      .get("tenant-idempotency-delete-conflict", "memory-idempotency-delete-b");
+    assert.equal(remainingMemoryRow.memory_id, "memory-idempotency-delete-b");
+  } finally {
+    db.close();
+  }
+});
+
 test("ums-memory-5cb.3: sqlite storage service maps sqlite constraint failures to StorageConflictError", async () => {
   const storageServiceModule = await loadStorageServiceModule();
   const db = new DatabaseSync(":memory:");

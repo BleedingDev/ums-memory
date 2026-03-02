@@ -15,6 +15,8 @@ export const StorageUpsertRequestSchema = Schema.Struct({
   memoryId: MemoryIdSchema,
   layer: MemoryLayerSchema,
   payload: IngestionMetadataSchema,
+  idempotencyKey: Schema.optional(Schema.String),
+  idempotency_key: Schema.optional(Schema.String),
 });
 
 export const StorageUpsertResponseSchema = Schema.Struct({
@@ -28,6 +30,8 @@ export const StorageUpsertResponseSchema = Schema.Struct({
 export const StorageDeleteRequestSchema = Schema.Struct({
   spaceId: SpaceIdSchema,
   memoryId: MemoryIdSchema,
+  idempotencyKey: Schema.optional(Schema.String),
+  idempotency_key: Schema.optional(Schema.String),
 });
 
 export const StorageDeleteResponseSchema = Schema.Struct({

@@ -21,6 +21,7 @@ const expectedTableOrder = Object.freeze([
   "memory_evidence_links",
   "feedback",
   "audit_events",
+  "storage_idempotency_ledger",
 ]);
 
 const expectedIndexOrder = Object.freeze([
@@ -41,6 +42,8 @@ const expectedIndexOrder = Object.freeze([
   "idx_feedback_actor_created",
   "idx_audit_events_tenant_operation",
   "idx_audit_events_owner_reference",
+  "idx_storage_idempotency_ledger_created",
+  "idx_storage_idempotency_ledger_request_hash",
 ]);
 
 const expectedTriggerOrder = Object.freeze([
@@ -127,7 +130,7 @@ test("ums-memory-5cb.1: enterprise sqlite schema ordering is deterministic", asy
     schema.enterpriseSqliteSchemaSql,
     `${schema.enterpriseSqliteSchemaStatements.join("\n\n")}\n`,
   );
-  assert.equal(schema.enterpriseSqliteSchemaVersion, 3);
+  assert.equal(schema.enterpriseSqliteSchemaVersion, 4);
 });
 
 test("ums-memory-5cb.1: enterprise sqlite schema enforces key constraints at runtime", async () => {

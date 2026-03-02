@@ -136,6 +136,13 @@ interface EvidencePointerProjection {
   readonly relationKind: EnterpriseEvidenceRelationKind;
 }
 
+type StorageIdempotencyOperation = "upsert" | "delete";
+
+interface StorageIdempotencyLedgerProjection {
+  readonly requestHashSha256: string;
+  readonly responseJson: string;
+}
+
 export interface SqliteStorageRepositoryOptions {
   readonly applyMigrations?: boolean;
   readonly enforceForeignKeys?: boolean;
@@ -1016,6 +1023,271 @@ const parsePayloadProjection = (request: StorageUpsertRequest): StoragePayloadPr
   });
 };
 
+const parseOptionalIdempotencyKeyValue = (
+  value: unknown,
+  fieldName: "idempotencyKey" | "idempotency_key",
+  contract: "StorageUpsertRequest.idempotencyKey" | "StorageDeleteRequest.idempotencyKey",
+): string | undefined => {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (typeof value !== "string") {
+    throw new ContractValidationError({
+      contract,
+      message: "Idempotency key must be a non-empty string when provided.",
+      details: `${fieldName} must be a string value.`,
+    });
+  }
+
+  const trimmed = value.trim();
+  if (trimmed.length === 0) {
+    throw new ContractValidationError({
+      contract,
+      message: "Idempotency key must be a non-empty string when provided.",
+      details: `${fieldName} must be a non-empty string value.`,
+    });
+  }
+
+  return trimmed;
+};
+
+const resolveOptionalIdempotencyKey = (
+  request: StorageUpsertRequest | StorageDeleteRequest,
+  operation: StorageIdempotencyOperation,
+): string | null => {
+  const contract: "StorageUpsertRequest.idempotencyKey" | "StorageDeleteRequest.idempotencyKey" =
+    operation === "upsert"
+      ? "StorageUpsertRequest.idempotencyKey"
+      : "StorageDeleteRequest.idempotencyKey";
+  const requestWithAliases = request as {
+    readonly idempotencyKey?: unknown;
+    readonly idempotency_key?: unknown;
+  };
+  const camelCaseIdempotencyKey = parseOptionalIdempotencyKeyValue(
+    requestWithAliases.idempotencyKey,
+    "idempotencyKey",
+    contract,
+  );
+  const snakeCaseIdempotencyKey = parseOptionalIdempotencyKeyValue(
+    requestWithAliases.idempotency_key,
+    "idempotency_key",
+    contract,
+  );
+
+  if (
+    camelCaseIdempotencyKey !== undefined &&
+    snakeCaseIdempotencyKey !== undefined &&
+    camelCaseIdempotencyKey !== snakeCaseIdempotencyKey
+  ) {
+    throw new ContractValidationError({
+      contract,
+      message: "Idempotency key aliases must match when both are provided.",
+      details: `idempotencyKey (${camelCaseIdempotencyKey}) does not match idempotency_key (${snakeCaseIdempotencyKey}).`,
+    });
+  }
+
+  return camelCaseIdempotencyKey ?? snakeCaseIdempotencyKey ?? null;
+};
+
+const toDeterministicUpsertRequestHash = (
+  request: StorageUpsertRequest,
+  payloadProjection: StoragePayloadProjection,
+): string =>
+  toSha256Hex(
+    JSON.stringify({
+      operation: "upsert",
+      spaceId: request.spaceId,
+      memoryId: request.memoryId,
+      layer: request.layer,
+      payloadProjection: {
+        scopeId: payloadProjection.scopeId,
+        scopeProjectId: payloadProjection.scopeProjectId,
+        scopeRoleId: payloadProjection.scopeRoleId,
+        scopeUserId: payloadProjection.scopeUserId,
+        memoryKind: payloadProjection.memoryKind,
+        status: payloadProjection.status,
+        title: payloadProjection.title,
+        payloadJson: payloadProjection.payloadJson,
+        createdByUserId: payloadProjection.createdByUserId,
+        supersedesMemoryId: payloadProjection.supersedesMemoryId,
+        createdAtMillis: payloadProjection.createdAtMillis,
+        updatedAtMillis: payloadProjection.updatedAtMillis,
+        expiresAtMillis: payloadProjection.expiresAtMillis,
+        tombstonedAtMillis: payloadProjection.tombstonedAtMillis,
+        provenanceJson: payloadProjection.provenanceJson,
+        evidencePointers: payloadProjection.evidencePointers.map((pointer) => ({
+          proposedEvidenceId: pointer.proposedEvidenceId,
+          sourceKind: pointer.sourceKind,
+          sourceRef: pointer.sourceRef,
+          digestSha256: pointer.digestSha256,
+          payloadJson: pointer.payloadJson,
+          observedAtMillis: pointer.observedAtMillis,
+          createdAtMillis: pointer.createdAtMillis,
+          relationKind: pointer.relationKind,
+        })),
+      },
+    }),
+  );
+
+const toDeterministicDeleteRequestHash = (request: StorageDeleteRequest): string =>
+  toSha256Hex(
+    JSON.stringify({
+      operation: "delete",
+      spaceId: request.spaceId,
+      memoryId: request.memoryId,
+    }),
+  );
+
+const toStoredIdempotencyResponseJson = (
+  response: StorageUpsertResponse | StorageDeleteResponse,
+): string => JSON.stringify(response);
+
+const parseStoredIdempotencyResponseRecord = (
+  responseJson: string,
+  operation: StorageIdempotencyOperation,
+): Record<string, unknown> => {
+  let parsedResponse: unknown;
+  try {
+    parsedResponse = JSON.parse(responseJson);
+  } catch (cause) {
+    const details = cause instanceof Error ? cause.message : String(cause);
+    throw new Error(`Stored ${operation} idempotency response_json is not valid JSON: ${details}`);
+  }
+
+  if (
+    typeof parsedResponse !== "object" ||
+    parsedResponse === null ||
+    Array.isArray(parsedResponse)
+  ) {
+    throw new Error(`Stored ${operation} idempotency response_json must decode to an object.`);
+  }
+
+  return parsedResponse as Record<string, unknown>;
+};
+
+const readStoredIdempotencyResponseString = (
+  record: Record<string, unknown>,
+  fieldName: string,
+  operation: StorageIdempotencyOperation,
+): string => {
+  const value = record[fieldName];
+  if (typeof value !== "string" || value.trim().length === 0) {
+    throw new Error(
+      `Stored ${operation} idempotency response_json.${fieldName} must be a non-empty string.`,
+    );
+  }
+
+  return value;
+};
+
+const readStoredIdempotencyResponseBoolean = (
+  record: Record<string, unknown>,
+  fieldName: string,
+  operation: StorageIdempotencyOperation,
+): boolean => {
+  const value = record[fieldName];
+  if (typeof value !== "boolean") {
+    throw new Error(`Stored ${operation} idempotency response_json.${fieldName} must be boolean.`);
+  }
+
+  return value;
+};
+
+const readStoredIdempotencyResponseInteger = (
+  record: Record<string, unknown>,
+  fieldName: string,
+  operation: StorageIdempotencyOperation,
+): number =>
+  toNonNegativeSafeInteger(
+    record[fieldName],
+    `stored ${operation} idempotency response_json.${fieldName}`,
+  );
+
+const decodeStoredUpsertIdempotencyResponse = (
+  responseJson: string,
+  request: StorageUpsertRequest,
+): StorageUpsertResponse => {
+  const responseRecord = parseStoredIdempotencyResponseRecord(responseJson, "upsert");
+  const spaceId = readStoredIdempotencyResponseString(responseRecord, "spaceId", "upsert");
+  const memoryId = readStoredIdempotencyResponseString(responseRecord, "memoryId", "upsert");
+  if (spaceId !== request.spaceId || memoryId !== request.memoryId) {
+    throw new Error(
+      "Stored upsert idempotency response identity does not match incoming request identity.",
+    );
+  }
+
+  return {
+    spaceId: request.spaceId,
+    memoryId: request.memoryId,
+    accepted: readStoredIdempotencyResponseBoolean(responseRecord, "accepted", "upsert"),
+    persistedAtMillis: readStoredIdempotencyResponseInteger(
+      responseRecord,
+      "persistedAtMillis",
+      "upsert",
+    ),
+    version: readStoredIdempotencyResponseInteger(responseRecord, "version", "upsert"),
+  } satisfies StorageUpsertResponse;
+};
+
+const decodeStoredDeleteIdempotencyResponse = (
+  responseJson: string,
+  request: StorageDeleteRequest,
+): StorageDeleteResponse => {
+  const responseRecord = parseStoredIdempotencyResponseRecord(responseJson, "delete");
+  const spaceId = readStoredIdempotencyResponseString(responseRecord, "spaceId", "delete");
+  const memoryId = readStoredIdempotencyResponseString(responseRecord, "memoryId", "delete");
+  if (spaceId !== request.spaceId || memoryId !== request.memoryId) {
+    throw new Error(
+      "Stored delete idempotency response identity does not match incoming request identity.",
+    );
+  }
+
+  return {
+    spaceId: request.spaceId,
+    memoryId: request.memoryId,
+    deleted: readStoredIdempotencyResponseBoolean(responseRecord, "deleted", "delete"),
+  } satisfies StorageDeleteResponse;
+};
+
+const readStorageIdempotencyLedgerProjection = (
+  row: unknown,
+  operation: StorageIdempotencyOperation,
+): StorageIdempotencyLedgerProjection => {
+  const requestHashSha256 = readRowColumn(row, "request_hash_sha256");
+  if (typeof requestHashSha256 !== "string" || !/^[0-9a-f]{64}$/i.test(requestHashSha256)) {
+    throw new Error(
+      `Stored ${operation} idempotency request_hash_sha256 must be a 64-character hex digest.`,
+    );
+  }
+  const responseJson = readRowColumn(row, "response_json");
+  if (typeof responseJson !== "string" || responseJson.trim().length === 0) {
+    throw new Error(`Stored ${operation} idempotency response_json must be a non-empty string.`);
+  }
+
+  return Object.freeze({
+    requestHashSha256: requestHashSha256.toLowerCase(),
+    responseJson,
+  });
+};
+
+const toIdempotencyKeyConflictError = (
+  operation: StorageIdempotencyOperation,
+  idempotencyKey: string,
+  storedRequestHashSha256: string,
+  incomingRequestHashSha256: string,
+): ContractValidationError => {
+  const contract: "StorageUpsertRequest.idempotencyKey" | "StorageDeleteRequest.idempotencyKey" =
+    operation === "upsert"
+      ? "StorageUpsertRequest.idempotencyKey"
+      : "StorageDeleteRequest.idempotencyKey";
+
+  return new ContractValidationError({
+    contract,
+    message: `Idempotency key reuse conflict for storage ${operation} request.`,
+    details: `idempotencyKey "${idempotencyKey}" already maps to request hash ${storedRequestHashSha256} and cannot be reused with hash ${incomingRequestHashSha256}.`,
+  });
+};
+
 const toContractValidationError = (details: string): ContractValidationError =>
   new ContractValidationError({
     contract: "StorageUpsertRequest.payload",
@@ -1243,6 +1515,28 @@ export const makeSqliteStorageRepository = (
   const deleteMemoryStatement = database.prepare(
     "DELETE FROM memory_items WHERE tenant_id = ? AND memory_id = ?;",
   );
+  const selectIdempotencyLedgerStatement = database.prepare(
+    [
+      "SELECT request_hash_sha256, response_json",
+      "FROM storage_idempotency_ledger",
+      "WHERE tenant_id = ?",
+      "  AND operation = ?",
+      "  AND idempotency_key = ?",
+      "LIMIT 1;",
+    ].join("\n"),
+  );
+  const insertIdempotencyLedgerStatement = database.prepare(
+    [
+      "INSERT OR IGNORE INTO storage_idempotency_ledger (",
+      "  tenant_id,",
+      "  operation,",
+      "  idempotency_key,",
+      "  request_hash_sha256,",
+      "  response_json,",
+      "  created_at_ms",
+      ") VALUES (?, ?, ?, ?, ?, ?);",
+    ].join("\n"),
+  );
   const insertAuditEventStatement = database.prepare(
     [
       "INSERT OR IGNORE INTO audit_events (",
@@ -1352,6 +1646,56 @@ export const makeSqliteStorageRepository = (
     } catch {
       // Audit persistence must not mask the original storage failure mapping.
     }
+  };
+  const persistIdempotencyLedgerEntry = (
+    tenantId: string,
+    operation: StorageIdempotencyOperation,
+    idempotencyKey: string,
+    requestHashSha256: string,
+    responseJson: string,
+    createdAtMillis: number,
+  ): StorageIdempotencyLedgerProjection | null => {
+    const insertResult = insertIdempotencyLedgerStatement.run(
+      tenantId,
+      operation,
+      idempotencyKey,
+      requestHashSha256,
+      responseJson,
+      createdAtMillis,
+    );
+    const insertedRows = toNonNegativeSafeInteger(
+      readRowColumn(insertResult, "changes"),
+      "storage_idempotency_ledger.insert.changes",
+    );
+    if (insertedRows > 0) {
+      return null;
+    }
+
+    const existingLedgerRow = selectIdempotencyLedgerStatement.get(
+      tenantId,
+      operation,
+      idempotencyKey,
+    );
+    if (existingLedgerRow === undefined) {
+      throw new Error(
+        "Unable to resolve storage idempotency ledger row after deterministic INSERT OR IGNORE replay.",
+      );
+    }
+
+    const existingLedgerProjection = readStorageIdempotencyLedgerProjection(
+      existingLedgerRow,
+      operation,
+    );
+    if (existingLedgerProjection.requestHashSha256 !== requestHashSha256) {
+      throw toIdempotencyKeyConflictError(
+        operation,
+        idempotencyKey,
+        existingLedgerProjection.requestHashSha256,
+        requestHashSha256,
+      );
+    }
+
+    return existingLedgerProjection;
   };
   const toNullableAuditLookupKey = (value: string | null): string => value ?? "";
   const allocateFailureAuditRecordedAtMillis = (
@@ -1628,6 +1972,40 @@ export const makeSqliteStorageRepository = (
           withImmediateTransaction(database, () => {
             assertExpectedForeignKeysMode();
             const payloadProjection = parsePayloadProjection(request);
+            const idempotencyKey = resolveOptionalIdempotencyKey(request, "upsert");
+            let upsertRequestHashSha256: string | null = null;
+            if (idempotencyKey !== null) {
+              upsertRequestHashSha256 = toDeterministicUpsertRequestHash(
+                request,
+                payloadProjection,
+              );
+              const idempotencyLedgerRow = selectIdempotencyLedgerStatement.get(
+                request.spaceId,
+                "upsert",
+                idempotencyKey,
+              );
+              if (idempotencyLedgerRow !== undefined) {
+                const storedIdempotencyLedgerProjection = readStorageIdempotencyLedgerProjection(
+                  idempotencyLedgerRow,
+                  "upsert",
+                );
+                if (
+                  storedIdempotencyLedgerProjection.requestHashSha256 !== upsertRequestHashSha256
+                ) {
+                  throw toIdempotencyKeyConflictError(
+                    "upsert",
+                    idempotencyKey,
+                    storedIdempotencyLedgerProjection.requestHashSha256,
+                    upsertRequestHashSha256,
+                  );
+                }
+
+                return decodeStoredUpsertIdempotencyResponse(
+                  storedIdempotencyLedgerProjection.responseJson,
+                  request,
+                );
+              }
+            }
             const existingMemoryRow = selectExistingMemoryLayerAndPayloadStatement.get(
               request.spaceId,
               request.memoryId,
@@ -1859,13 +2237,31 @@ export const makeSqliteStorageRepository = (
               }),
             );
 
-            return {
+            const response = {
               spaceId: request.spaceId,
               memoryId: request.memoryId,
               accepted: true,
               persistedAtMillis,
               version: 1,
             } satisfies StorageUpsertResponse;
+            if (idempotencyKey !== null && upsertRequestHashSha256 !== null) {
+              const persistedIdempotencyLedgerProjection = persistIdempotencyLedgerEntry(
+                request.spaceId,
+                "upsert",
+                idempotencyKey,
+                upsertRequestHashSha256,
+                toStoredIdempotencyResponseJson(response),
+                response.persistedAtMillis,
+              );
+              if (persistedIdempotencyLedgerProjection !== null) {
+                return decodeStoredUpsertIdempotencyResponse(
+                  persistedIdempotencyLedgerProjection.responseJson,
+                  request,
+                );
+              }
+            }
+
+            return response;
           }),
         catch: (cause) => {
           persistUpsertFailureAuditEntry(cause, request);
@@ -1877,6 +2273,37 @@ export const makeSqliteStorageRepository = (
         try: () =>
           withImmediateTransaction(database, () => {
             assertExpectedForeignKeysMode();
+            const idempotencyKey = resolveOptionalIdempotencyKey(request, "delete");
+            let deleteRequestHashSha256: string | null = null;
+            if (idempotencyKey !== null) {
+              deleteRequestHashSha256 = toDeterministicDeleteRequestHash(request);
+              const idempotencyLedgerRow = selectIdempotencyLedgerStatement.get(
+                request.spaceId,
+                "delete",
+                idempotencyKey,
+              );
+              if (idempotencyLedgerRow !== undefined) {
+                const storedIdempotencyLedgerProjection = readStorageIdempotencyLedgerProjection(
+                  idempotencyLedgerRow,
+                  "delete",
+                );
+                if (
+                  storedIdempotencyLedgerProjection.requestHashSha256 !== deleteRequestHashSha256
+                ) {
+                  throw toIdempotencyKeyConflictError(
+                    "delete",
+                    idempotencyKey,
+                    storedIdempotencyLedgerProjection.requestHashSha256,
+                    deleteRequestHashSha256,
+                  );
+                }
+
+                return decodeStoredDeleteIdempotencyResponse(
+                  storedIdempotencyLedgerProjection.responseJson,
+                  request,
+                );
+              }
+            }
             const existingMemoryRow = selectTenantMemoryUpdatedAtStatement.get(
               request.spaceId,
               request.memoryId,
@@ -1931,11 +2358,29 @@ export const makeSqliteStorageRepository = (
               }),
             );
 
-            return {
+            const response = {
               spaceId: request.spaceId,
               memoryId: request.memoryId,
               deleted: true,
             } satisfies StorageDeleteResponse;
+            if (idempotencyKey !== null && deleteRequestHashSha256 !== null) {
+              const persistedIdempotencyLedgerProjection = persistIdempotencyLedgerEntry(
+                request.spaceId,
+                "delete",
+                idempotencyKey,
+                deleteRequestHashSha256,
+                toStoredIdempotencyResponseJson(response),
+                deletedUpdatedAtMillis,
+              );
+              if (persistedIdempotencyLedgerProjection !== null) {
+                return decodeStoredDeleteIdempotencyResponse(
+                  persistedIdempotencyLedgerProjection.responseJson,
+                  request,
+                );
+              }
+            }
+
+            return response;
           }),
         catch: (cause) => {
           persistDeleteFailureAuditEntry(cause, request);

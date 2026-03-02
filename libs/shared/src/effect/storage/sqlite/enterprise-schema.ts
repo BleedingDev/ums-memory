@@ -107,6 +107,7 @@ export const enterpriseSqliteTableNames = Object.freeze([
   "memory_evidence_links",
   "feedback",
   "audit_events",
+  "storage_idempotency_ledger",
 ] as const);
 
 export type EnterpriseSqliteTableName = (typeof enterpriseSqliteTableNames)[number];
@@ -388,6 +389,23 @@ const auditEventsTableDdl = createStrictTableDdl("audit_events", [
   )`,
 ]);
 
+const storageIdempotencyLedgerTableDdl = createStrictTableDdl("storage_idempotency_ledger", [
+  "tenant_id TEXT NOT NULL",
+  "operation TEXT NOT NULL",
+  "idempotency_key TEXT NOT NULL",
+  "request_hash_sha256 TEXT NOT NULL",
+  "response_json TEXT NOT NULL",
+  "created_at_ms INTEGER NOT NULL",
+  "PRIMARY KEY (tenant_id, operation, idempotency_key)",
+  "CHECK (length(trim(tenant_id)) > 0)",
+  `CHECK (operation IN (${toSqlStringLiteralList(enterpriseAuditEventOperations)}))`,
+  "CHECK (length(trim(idempotency_key)) > 0)",
+  "CHECK (length(request_hash_sha256) = 64)",
+  "CHECK (request_hash_sha256 NOT GLOB '*[^0-9A-Fa-f]*')",
+  "CHECK (json_valid(response_json))",
+  "CHECK (created_at_ms >= 0)",
+]);
+
 export const enterpriseSqliteTables = Object.freeze([
   {
     name: "tenants",
@@ -452,6 +470,11 @@ export const enterpriseSqliteTables = Object.freeze([
   {
     name: "audit_events",
     ddl: auditEventsTableDdl,
+    dependencies: [] as const,
+  },
+  {
+    name: "storage_idempotency_ledger",
+    ddl: storageIdempotencyLedgerTableDdl,
     dependencies: [] as const,
   },
 ] as const satisfies readonly SqliteTableMetadata<EnterpriseSqliteTableName>[]);
@@ -827,6 +850,14 @@ const idxAuditEventsOwnerReferenceDdl = [
   "(owner_tenant_id, reference_kind, reference_id, tenant_id, recorded_at_ms, event_id)",
   "WHERE owner_tenant_id IS NOT NULL;",
 ].join("\n");
+const idxStorageIdempotencyLedgerCreatedDdl = [
+  "CREATE INDEX IF NOT EXISTS idx_storage_idempotency_ledger_created ON storage_idempotency_ledger",
+  "(tenant_id, operation, created_at_ms DESC, idempotency_key);",
+].join("\n");
+const idxStorageIdempotencyLedgerRequestHashDdl = [
+  "CREATE INDEX IF NOT EXISTS idx_storage_idempotency_ledger_request_hash ON storage_idempotency_ledger",
+  "(tenant_id, operation, request_hash_sha256, created_at_ms DESC);",
+].join("\n");
 
 export const enterpriseSqliteIndexNames = Object.freeze([
   "idx_users_tenant_status",
@@ -846,6 +877,8 @@ export const enterpriseSqliteIndexNames = Object.freeze([
   "idx_feedback_actor_created",
   "idx_audit_events_tenant_operation",
   "idx_audit_events_owner_reference",
+  "idx_storage_idempotency_ledger_created",
+  "idx_storage_idempotency_ledger_request_hash",
 ] as const);
 
 export type EnterpriseSqliteIndexName = (typeof enterpriseSqliteIndexNames)[number];
@@ -953,6 +986,18 @@ export const enterpriseSqliteIndexes = Object.freeze([
     unique: false,
     ddl: idxAuditEventsOwnerReferenceDdl,
   },
+  {
+    name: "idx_storage_idempotency_ledger_created",
+    table: "storage_idempotency_ledger",
+    unique: false,
+    ddl: idxStorageIdempotencyLedgerCreatedDdl,
+  },
+  {
+    name: "idx_storage_idempotency_ledger_request_hash",
+    table: "storage_idempotency_ledger",
+    unique: false,
+    ddl: idxStorageIdempotencyLedgerRequestHashDdl,
+  },
 ] as const satisfies readonly SqliteIndexMetadata<
   EnterpriseSqliteIndexName,
   EnterpriseSqliteTableName
@@ -966,7 +1011,7 @@ export const enterpriseSqliteSchemaStatements = Object.freeze([
 
 export const enterpriseSqliteSchemaSql = `${enterpriseSqliteSchemaStatements.join("\n\n")}\n`;
 
-export const enterpriseSqliteSchemaVersion = 3 as const;
+export const enterpriseSqliteSchemaVersion = 4 as const;
 
 export const enterpriseSqliteSchema: SqliteSchemaMetadata<
   EnterpriseSqliteTableName,

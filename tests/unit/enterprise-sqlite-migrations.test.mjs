@@ -72,8 +72,8 @@ const readSchemaSignature = (database) =>
 test("ums-memory-5cb.2: enterprise sqlite migration definitions and planning are deterministic", async () => {
   const migrationsModule = await loadSqliteMigrationModule();
 
-  assert.equal(migrationsModule.enterpriseSqliteMigrations.length, 3);
-  assert.equal(migrationsModule.enterpriseSqliteLatestMigrationVersion, 3);
+  assert.equal(migrationsModule.enterpriseSqliteMigrations.length, 4);
+  assert.equal(migrationsModule.enterpriseSqliteLatestMigrationVersion, 4);
 
   const migrationV1 = migrationsModule.enterpriseSqliteMigrations[0];
   assert.equal(migrationV1.version, 1);
@@ -87,22 +87,26 @@ test("ums-memory-5cb.2: enterprise sqlite migration definitions and planning are
   assert.equal(migrationV3.version, 3);
   assert.equal(migrationV3.name, "enterprise_sqlite_v3_audit_event_ledger");
   assert.equal(migrationV3.sql, `${migrationV3.statements.join("\n\n")}\n`);
+  const migrationV4 = migrationsModule.enterpriseSqliteMigrations[3];
+  assert.equal(migrationV4.version, 4);
+  assert.equal(migrationV4.name, "enterprise_sqlite_v4_storage_idempotency_ledger");
+  assert.equal(migrationV4.sql, `${migrationV4.statements.join("\n\n")}\n`);
 
   const planFromVersionZero = migrationsModule.planSqliteMigrations(
     migrationsModule.enterpriseSqliteMigrations,
     0,
   );
   assert.equal(planFromVersionZero.currentVersion, 0);
-  assert.equal(planFromVersionZero.targetVersion, 3);
-  assert.equal(planFromVersionZero.latestVersion, 3);
+  assert.equal(planFromVersionZero.targetVersion, 4);
+  assert.equal(planFromVersionZero.latestVersion, 4);
   assert.equal(planFromVersionZero.isUpToDate, false);
-  assert.deepEqual(toMigrationVersions(planFromVersionZero.pendingMigrations), [1, 2, 3]);
+  assert.deepEqual(toMigrationVersions(planFromVersionZero.pendingMigrations), [1, 2, 3, 4]);
 
   const planFromLatest = migrationsModule.planSqliteMigrations(
     migrationsModule.enterpriseSqliteMigrations,
-    3,
+    4,
   );
-  assert.equal(planFromLatest.currentVersion, 3);
+  assert.equal(planFromLatest.currentVersion, 4);
   assert.equal(planFromLatest.isUpToDate, true);
   assert.deepEqual(toMigrationVersions(planFromLatest.pendingMigrations), []);
 
@@ -111,7 +115,7 @@ test("ums-memory-5cb.2: enterprise sqlite migration definitions and planning are
     1,
   );
   assert.equal(planFromVersionOne.currentVersion, 1);
-  assert.deepEqual(toMigrationVersions(planFromVersionOne.pendingMigrations), [2, 3]);
+  assert.deepEqual(toMigrationVersions(planFromVersionOne.pendingMigrations), [2, 3, 4]);
 });
 
 test("ums-memory-5cb.2: enterprise sqlite migration apply is replay-safe deterministic and no-op when up to date", async () => {
@@ -124,17 +128,17 @@ test("ums-memory-5cb.2: enterprise sqlite migration apply is replay-safe determi
       assert.equal(migrationsModule.readSqliteUserVersion(database), 0);
 
       const initialPending = migrationsModule.listPendingEnterpriseSqliteMigrations(database);
-      assert.deepEqual(toMigrationVersions(initialPending), [1, 2, 3]);
+      assert.deepEqual(toMigrationVersions(initialPending), [1, 2, 3, 4]);
 
       const firstApplyResult = migrationsModule.applyEnterpriseSqliteMigrations(database);
       assert.equal(firstApplyResult.isUpToDate, false);
-      assert.deepEqual(toMigrationVersions(firstApplyResult.appliedMigrations), [1, 2, 3]);
-      assert.equal(migrationsModule.readSqliteUserVersion(database), 3);
+      assert.deepEqual(toMigrationVersions(firstApplyResult.appliedMigrations), [1, 2, 3, 4]);
+      assert.equal(migrationsModule.readSqliteUserVersion(database), 4);
 
       const replayApplyResult = migrationsModule.applyEnterpriseSqliteMigrations(database);
       assert.equal(replayApplyResult.isUpToDate, true);
       assert.deepEqual(toMigrationVersions(replayApplyResult.appliedMigrations), []);
-      assert.equal(migrationsModule.readSqliteUserVersion(database), 3);
+      assert.equal(migrationsModule.readSqliteUserVersion(database), 4);
 
       return readSchemaSignature(database);
     } finally {
@@ -213,9 +217,9 @@ test("ums-memory-5cb.6: migrating from v1 to v2 backfills FTS rows and uses virt
       ),
     );
 
-    const v3ApplyResult = migrationsModule.applyEnterpriseSqliteMigrations(database);
-    assert.deepEqual(toMigrationVersions(v3ApplyResult.appliedMigrations), [3]);
-    assert.equal(migrationsModule.readSqliteUserVersion(database), 3);
+    const v3AndV4ApplyResult = migrationsModule.applyEnterpriseSqliteMigrations(database);
+    assert.deepEqual(toMigrationVersions(v3AndV4ApplyResult.appliedMigrations), [3, 4]);
+    assert.equal(migrationsModule.readSqliteUserVersion(database), 4);
   } finally {
     database.close();
   }
@@ -231,7 +235,7 @@ test("ums-memory-5cb.8: migrating from v2 to v3 adds append-only audit ledger ob
     assert.deepEqual(toMigrationVersions(v2ApplyResult.appliedMigrations), [1, 2]);
     assert.equal(migrationsModule.readSqliteUserVersion(database), 2);
 
-    const v3ApplyResult = migrationsModule.applyEnterpriseSqliteMigrations(database);
+    const v3ApplyResult = migrationsModule.applyEnterpriseSqliteMigrations(database, 3);
     assert.deepEqual(toMigrationVersions(v3ApplyResult.appliedMigrations), [3]);
     assert.equal(migrationsModule.readSqliteUserVersion(database), 3);
 
@@ -263,6 +267,62 @@ test("ums-memory-5cb.8: migrating from v2 to v3 adds append-only audit ledger ob
           .prepare("UPDATE audit_events SET details = ? WHERE event_id = ?")
           .run("mutated", "audit:migration-v3"),
       /audit_events_append_only/i,
+    );
+  } finally {
+    database.close();
+  }
+});
+
+test("ums-memory-5cb.10: migrating from v3 to v4 adds storage idempotency ledger objects", async () => {
+  const migrationsModule = await loadSqliteMigrationModule();
+  const database = new DatabaseSync(":memory:");
+
+  try {
+    database.exec("PRAGMA foreign_keys = ON;");
+    const v3ApplyResult = migrationsModule.applyEnterpriseSqliteMigrations(database, 3);
+    assert.deepEqual(toMigrationVersions(v3ApplyResult.appliedMigrations), [1, 2, 3]);
+    assert.equal(migrationsModule.readSqliteUserVersion(database), 3);
+
+    const v4ApplyResult = migrationsModule.applyEnterpriseSqliteMigrations(database);
+    assert.deepEqual(toMigrationVersions(v4ApplyResult.appliedMigrations), [4]);
+    assert.equal(migrationsModule.readSqliteUserVersion(database), 4);
+
+    const tableRow = database
+      .prepare(
+        "SELECT name FROM sqlite_schema WHERE type = 'table' AND name = 'storage_idempotency_ledger';",
+      )
+      .get();
+    assert.equal(tableRow?.name, "storage_idempotency_ledger");
+
+    database
+      .prepare(
+        "INSERT INTO storage_idempotency_ledger (tenant_id, operation, idempotency_key, request_hash_sha256, response_json, created_at_ms) VALUES (?, ?, ?, ?, ?, ?);",
+      )
+      .run(
+        "tenant-migration-v4",
+        "upsert",
+        "migration-v4-key",
+        "a".repeat(64),
+        '{"spaceId":"tenant-migration-v4","memoryId":"memory-migration-v4","accepted":true,"persistedAtMillis":0,"version":1}',
+        0,
+      );
+
+    const indexRows = database
+      .prepare(
+        [
+          "SELECT name FROM sqlite_schema",
+          "WHERE type = 'index'",
+          "  AND name IN ('idx_storage_idempotency_ledger_created', 'idx_storage_idempotency_ledger_request_hash')",
+          "ORDER BY name ASC;",
+        ].join("\n"),
+      )
+      .all();
+    assert.deepEqual(
+      indexRows.map((row) => row.name),
+      [
+        "idx_storage_idempotency_ledger_created",
+        "idx_storage_idempotency_ledger_request_hash",
+      ],
     );
   } finally {
     database.close();
@@ -400,8 +460,8 @@ test("ums-memory-5cb.2: enterprise sqlite migration planning rejects unknown fut
   const database = new DatabaseSync(":memory:");
 
   try {
-    migrationsModule.writeSqliteUserVersion(database, 4);
-    assert.equal(migrationsModule.readSqliteUserVersion(database), 4);
+    migrationsModule.writeSqliteUserVersion(database, 5);
+    assert.equal(migrationsModule.readSqliteUserVersion(database), 5);
 
     assert.throws(
       () => migrationsModule.planEnterpriseSqliteMigrations(database),

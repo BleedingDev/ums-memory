@@ -327,6 +327,8 @@ const hasMemoryItemsFtsSchemaObject = (statement: string): boolean =>
   statement.includes("memory_items_fts");
 const hasAuditEventsSchemaObject = (statement: string): boolean =>
   statement.includes("audit_events");
+const hasStorageIdempotencyLedgerSchemaObject = (statement: string): boolean =>
+  statement.includes("storage_idempotency_ledger");
 
 const enterpriseSqliteSchemaObjectStatements = toDeterministicMigrationStatements(
   enterpriseSqliteSchemaStatements,
@@ -335,7 +337,9 @@ const enterpriseSqliteSchemaObjectStatements = toDeterministicMigrationStatement
 const enterpriseSqliteV1Statements = Object.freeze(
   enterpriseSqliteSchemaObjectStatements.filter(
     (statement) =>
-      !hasMemoryItemsFtsSchemaObject(statement) && !hasAuditEventsSchemaObject(statement),
+      !hasMemoryItemsFtsSchemaObject(statement) &&
+      !hasAuditEventsSchemaObject(statement) &&
+      !hasStorageIdempotencyLedgerSchemaObject(statement),
   ),
 );
 
@@ -354,6 +358,12 @@ const enterpriseSqliteV2Statements = Object.freeze([
 const enterpriseSqliteV3Statements = Object.freeze(
   enterpriseSqliteSchemaObjectStatements.filter((statement) =>
     hasAuditEventsSchemaObject(statement),
+  ),
+);
+
+const enterpriseSqliteV4Statements = Object.freeze(
+  enterpriseSqliteSchemaObjectStatements.filter((statement) =>
+    hasStorageIdempotencyLedgerSchemaObject(statement),
   ),
 );
 
@@ -399,10 +409,25 @@ const enterpriseAuditEventLedgerMigrationWithSql = Object.freeze({
   sql: `${enterpriseAuditEventLedgerMigration.statements.join("\n\n")}\n`,
 } as const satisfies SqliteMigrationDefinition<3>);
 
+const enterpriseStorageIdempotencyLedgerMigration = Object.freeze({
+  version: 4,
+  name: "enterprise_sqlite_v4_storage_idempotency_ledger",
+  description:
+    "Adds tenant-scoped write-path idempotency key ledger objects for deterministic upsert/delete deduplication.",
+  statements: enterpriseSqliteV4Statements,
+  sql: "",
+} as const satisfies SqliteMigrationDefinition<4>);
+
+const enterpriseStorageIdempotencyLedgerMigrationWithSql = Object.freeze({
+  ...enterpriseStorageIdempotencyLedgerMigration,
+  sql: `${enterpriseStorageIdempotencyLedgerMigration.statements.join("\n\n")}\n`,
+} as const satisfies SqliteMigrationDefinition<4>);
+
 export const enterpriseSqliteMigrations = Object.freeze([
   enterpriseInitialMigrationWithSql,
   enterpriseFtsMigrationWithSql,
   enterpriseAuditEventLedgerMigrationWithSql,
+  enterpriseStorageIdempotencyLedgerMigrationWithSql,
 ] as const satisfies readonly SqliteMigrationDefinition[]);
 
 export type EnterpriseSqliteMigration = (typeof enterpriseSqliteMigrations)[number];
