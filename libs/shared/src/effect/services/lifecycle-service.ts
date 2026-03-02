@@ -136,7 +136,30 @@ const toSortedUnique = <T extends string>(values: readonly T[]): readonly T[] =>
   [...new Set(values)].sort((left, right) => left.localeCompare(right));
 
 const toCandidateKey = (spaceId: string, candidateId: string): string =>
-  `${spaceId}::${candidateId}`;
+  stableStringify([spaceId, candidateId]);
+
+const cloneCandidate = (
+  candidate: MemoryLifecycleCandidate
+): MemoryLifecycleCandidate => structuredClone(candidate);
+
+const cloneResponse = <TResponse extends MemoryLifecycleResponse>(
+  response: TResponse
+): TResponse => structuredClone(response);
+
+const canonicalizeShadowWriteRequest = (
+  request: MemoryLifecycleShadowWriteRequest
+): MemoryLifecycleShadowWriteRequest => ({
+  ...request,
+  scope: request.scope ?? "global",
+  sourceEpisodeIds: toSortedUnique(request.sourceEpisodeIds),
+});
+
+const canonicalizeDemoteRequest = (
+  request: MemoryLifecycleDemoteRequest
+): MemoryLifecycleDemoteRequest => ({
+  ...request,
+  reasonCodes: toSortedUnique(request.reasonCodes),
+});
 
 const toMemoryLifecyclePreconditionError = ({
   operation,
@@ -194,15 +217,20 @@ const getCachedResponse = <TResponse extends MemoryLifecycleResponse>(
   state: MutableLifecycleState,
   requestDigest: string
 ): TResponse | undefined =>
-  state.responseByRequestDigest.get(requestDigest) as TResponse | undefined;
+  state.responseByRequestDigest.has(requestDigest)
+    ? cloneResponse(
+        state.responseByRequestDigest.get(requestDigest) as TResponse
+      )
+    : undefined;
 
 const cacheResponse = <TResponse extends MemoryLifecycleResponse>(
   state: MutableLifecycleState,
   requestDigest: string,
   response: TResponse
 ): TResponse => {
-  state.responseByRequestDigest.set(requestDigest, response);
-  return response;
+  const cachedResponse = cloneResponse(response);
+  state.responseByRequestDigest.set(requestDigest, cachedResponse);
+  return cloneResponse(cachedResponse);
 };
 
 const latestGateStatusOrPass = (
@@ -215,7 +243,8 @@ export const makeMemoryLifecycleService = (): MemoryLifecycleService => {
   const shadowWrite: MemoryLifecycleService["shadowWrite"] = (request) =>
     decodeMemoryLifecycleShadowWriteRequestEffect(request).pipe(
       Effect.flatMap((decodedRequest) => {
-        const requestDigest = toRequestDigest("shadow_write", decodedRequest);
+        const canonicalRequest = canonicalizeShadowWriteRequest(decodedRequest);
+        const requestDigest = toRequestDigest("shadow_write", canonicalRequest);
         const cachedResponse =
           getCachedResponse<MemoryLifecycleShadowWriteResponse>(
             state,
@@ -225,12 +254,12 @@ export const makeMemoryLifecycleService = (): MemoryLifecycleService => {
           return Effect.succeed(cachedResponse);
         }
 
-        if (decodedRequest.sourceEpisodeIds.length === 0) {
+        if (canonicalRequest.sourceEpisodeIds.length === 0) {
           return Effect.fail(
             toMemoryLifecyclePreconditionError({
               operation: "shadow_write",
-              spaceId: decodedRequest.spaceId,
-              candidateId: decodedRequest.candidateId,
+              spaceId: canonicalRequest.spaceId,
+              candidateId: canonicalRequest.candidateId,
               reasonCode: "SHADOW_WRITE_REQUIRES_SOURCE_EPISODES",
               message:
                 "shadow_write requires at least one sourceEpisodeId for deterministic replay lineage.",
@@ -239,16 +268,16 @@ export const makeMemoryLifecycleService = (): MemoryLifecycleService => {
         }
 
         const candidateKey = toCandidateKey(
-          decodedRequest.spaceId,
-          decodedRequest.candidateId
+          canonicalRequest.spaceId,
+          canonicalRequest.candidateId
         );
         const existingCandidate = state.candidatesByKey.get(candidateKey);
         if (existingCandidate?.status === "promoted") {
           return Effect.fail(
             toMemoryLifecyclePreconditionError({
               operation: "shadow_write",
-              spaceId: decodedRequest.spaceId,
-              candidateId: decodedRequest.candidateId,
+              spaceId: canonicalRequest.spaceId,
+              candidateId: canonicalRequest.candidateId,
               reasonCode: "SHADOW_WRITE_REJECTS_PROMOTED_CANDIDATE",
               message:
                 "shadow_write cannot overwrite promoted candidates; demote first to preserve lifecycle determinism.",
@@ -256,29 +285,54 @@ export const makeMemoryLifecycleService = (): MemoryLifecycleService => {
           );
         }
 
+        if (
+          existingCandidate !== undefined &&
+          existingCandidate.status === "shadow" &&
+          existingCandidate.statement === canonicalRequest.statement &&
+          existingCandidate.scope === canonicalRequest.scope &&
+          stableStringify(existingCandidate.sourceEpisodeIds) ===
+            stableStringify(canonicalRequest.sourceEpisodeIds) &&
+          existingCandidate.expiresAtMillis ===
+            canonicalRequest.expiresAtMillis &&
+          existingCandidate.updatedAtMillis ===
+            canonicalRequest.writtenAtMillis &&
+          existingCandidate.latestReplayEvalId === null
+        ) {
+          const noopResponse: MemoryLifecycleShadowWriteResponse = {
+            operation: "shadow_write",
+            requestDigest,
+            action: "noop",
+            candidate: cloneCandidate(existingCandidate),
+          };
+          return Effect.succeed(
+            cacheResponse(state, requestDigest, noopResponse)
+          );
+        }
+
         const nextCandidate: MemoryLifecycleCandidate = {
-          spaceId: decodedRequest.spaceId,
-          candidateId: decodedRequest.candidateId,
-          statement: decodedRequest.statement,
-          scope: decodedRequest.scope ?? "global",
-          sourceEpisodeIds: toSortedUnique(decodedRequest.sourceEpisodeIds),
+          spaceId: canonicalRequest.spaceId,
+          candidateId: canonicalRequest.candidateId,
+          statement: canonicalRequest.statement,
+          scope: canonicalRequest.scope ?? "global",
+          sourceEpisodeIds: canonicalRequest.sourceEpisodeIds,
           status: "shadow",
-          expiresAtMillis: decodedRequest.expiresAtMillis,
+          expiresAtMillis: canonicalRequest.expiresAtMillis,
           latestReplayEvalId: null,
           promotedRuleId: null,
           promotedAtMillis: null,
           demotedAtMillis: null,
-          updatedAtMillis: decodedRequest.writtenAtMillis,
+          updatedAtMillis: canonicalRequest.writtenAtMillis,
         };
 
-        state.candidatesByKey.set(candidateKey, nextCandidate);
+        const storedCandidate = cloneCandidate(nextCandidate);
+        state.candidatesByKey.set(candidateKey, storedCandidate);
         state.latestReplayByKey.delete(candidateKey);
 
         const response: MemoryLifecycleShadowWriteResponse = {
           operation: "shadow_write",
           requestDigest,
           action: existingCandidate === undefined ? "created" : "updated",
-          candidate: nextCandidate,
+          candidate: cloneCandidate(storedCandidate),
         };
 
         return Effect.succeed(cacheResponse(state, requestDigest, response));
@@ -351,11 +405,12 @@ export const makeMemoryLifecycleService = (): MemoryLifecycleService => {
           ),
         };
 
-        state.candidatesByKey.set(candidateKey, nextCandidate);
+        const storedCandidate = cloneCandidate(nextCandidate);
+        state.candidatesByKey.set(candidateKey, storedCandidate);
         state.latestReplayByKey.set(candidateKey, {
           replayEvalId,
           gateStatus,
-          safetyDelta: decodedRequest.safetyDelta,
+          safetyDelta: structuredClone(decodedRequest.safetyDelta),
         });
 
         return Effect.succeed(cacheResponse(state, requestDigest, response));
@@ -398,7 +453,7 @@ export const makeMemoryLifecycleService = (): MemoryLifecycleService => {
             operation: "promote",
             requestDigest,
             action: "noop",
-            candidate: existingCandidate,
+            candidate: cloneCandidate(existingCandidate),
             ruleId: existingCandidate.promotedRuleId,
             replayEvalId: existingCandidate.latestReplayEvalId,
             gateStatus: latestGateStatusOrPass(replayState),
@@ -461,13 +516,14 @@ export const makeMemoryLifecycleService = (): MemoryLifecycleService => {
           updatedAtMillis: decodedRequest.promotedAtMillis,
         };
 
-        state.candidatesByKey.set(candidateKey, promotedCandidate);
+        const storedCandidate = cloneCandidate(promotedCandidate);
+        state.candidatesByKey.set(candidateKey, storedCandidate);
 
         const response: MemoryLifecyclePromoteResponse = {
           operation: "promote",
           requestDigest,
           action: "promoted",
-          candidate: promotedCandidate,
+          candidate: cloneCandidate(storedCandidate),
           ruleId,
           replayEvalId: replayState.replayEvalId,
           gateStatus: replayState.gateStatus,
@@ -480,7 +536,8 @@ export const makeMemoryLifecycleService = (): MemoryLifecycleService => {
   const demote: MemoryLifecycleService["demote"] = (request) =>
     decodeMemoryLifecycleDemoteRequestEffect(request).pipe(
       Effect.flatMap((decodedRequest) => {
-        const requestDigest = toRequestDigest("demote", decodedRequest);
+        const canonicalRequest = canonicalizeDemoteRequest(decodedRequest);
+        const requestDigest = toRequestDigest("demote", canonicalRequest);
         const cachedResponse = getCachedResponse<MemoryLifecycleDemoteResponse>(
           state,
           requestDigest
@@ -490,29 +547,29 @@ export const makeMemoryLifecycleService = (): MemoryLifecycleService => {
         }
 
         const candidateKey = toCandidateKey(
-          decodedRequest.spaceId,
-          decodedRequest.candidateId
+          canonicalRequest.spaceId,
+          canonicalRequest.candidateId
         );
         const existingCandidate = state.candidatesByKey.get(candidateKey);
         if (existingCandidate === undefined) {
           return Effect.fail(
             toMemoryLifecyclePreconditionError({
               operation: "demote",
-              spaceId: decodedRequest.spaceId,
-              candidateId: decodedRequest.candidateId,
+              spaceId: canonicalRequest.spaceId,
+              candidateId: canonicalRequest.candidateId,
               reasonCode: "DEMOTE_REQUIRES_EXISTING_CANDIDATE",
               message: "demote requires an existing candidate.",
             })
           );
         }
 
-        const reasonCodes = toSortedUnique(decodedRequest.reasonCodes);
+        const reasonCodes = canonicalRequest.reasonCodes;
         if (reasonCodes.length === 0) {
           return Effect.fail(
             toMemoryLifecyclePreconditionError({
               operation: "demote",
-              spaceId: decodedRequest.spaceId,
-              candidateId: decodedRequest.candidateId,
+              spaceId: canonicalRequest.spaceId,
+              candidateId: canonicalRequest.candidateId,
               reasonCode: "DEMOTE_REQUIRES_REASON_CODES",
               message:
                 "demote requires at least one deterministic reasonCode for auditability.",
@@ -525,7 +582,7 @@ export const makeMemoryLifecycleService = (): MemoryLifecycleService => {
             operation: "demote",
             requestDigest,
             action: "noop",
-            candidate: existingCandidate,
+            candidate: cloneCandidate(existingCandidate),
             removedRuleId: null,
             reasonCodes,
           };
@@ -538,17 +595,18 @@ export const makeMemoryLifecycleService = (): MemoryLifecycleService => {
           ...existingCandidate,
           status: "demoted",
           promotedRuleId: null,
-          demotedAtMillis: decodedRequest.demotedAtMillis,
-          updatedAtMillis: decodedRequest.demotedAtMillis,
+          demotedAtMillis: canonicalRequest.demotedAtMillis,
+          updatedAtMillis: canonicalRequest.demotedAtMillis,
         };
 
-        state.candidatesByKey.set(candidateKey, demotedCandidate);
+        const storedCandidate = cloneCandidate(demotedCandidate);
+        state.candidatesByKey.set(candidateKey, storedCandidate);
 
         const response: MemoryLifecycleDemoteResponse = {
           operation: "demote",
           requestDigest,
           action: "demoted",
-          candidate: demotedCandidate,
+          candidate: cloneCandidate(storedCandidate),
           removedRuleId: existingCandidate.promotedRuleId,
           reasonCodes,
         };
@@ -572,10 +630,10 @@ export const makeNoopMemoryLifecycleService =
   makeDeterministicMemoryLifecycleService;
 
 export const noopMemoryLifecycleLayer: Layer.Layer<MemoryLifecycleService> =
-  Layer.succeed(MemoryLifecycleServiceTag, makeNoopMemoryLifecycleService());
+  Layer.sync(MemoryLifecycleServiceTag, makeNoopMemoryLifecycleService);
 
 export const deterministicTestMemoryLifecycleLayer: Layer.Layer<MemoryLifecycleService> =
-  Layer.succeed(
+  Layer.sync(
     MemoryLifecycleServiceTag,
-    makeDeterministicMemoryLifecycleService()
+    makeDeterministicMemoryLifecycleService
   );

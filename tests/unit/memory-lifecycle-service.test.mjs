@@ -83,6 +83,26 @@ process.on("exit", () => {
 
 const runEither = (effect) => Effect.runPromise(Effect.either(effect));
 
+const defaultShadowWriteRequest = Object.freeze({
+  spaceId: "tenant-75m-default",
+  candidateId: "candidate-75m-default",
+  statement: "Memory lifecycle request baseline",
+  scope: "project",
+  sourceEpisodeIds: ["episode-a", "episode-b"],
+  expiresAtMillis: 1_900_000_000_000,
+  writtenAtMillis: 1_800_000_000_000,
+});
+
+const runShadowWriteViaLayer = (lifecycleServiceModule, request) =>
+  Effect.runPromise(
+    Effect.provide(
+      Effect.flatMap(lifecycleServiceModule.MemoryLifecycleServiceTag, (service) =>
+        service.shadowWrite(request),
+      ),
+      lifecycleServiceModule.noopMemoryLifecycleLayer,
+    ),
+  );
+
 test("ums-memory-75m: shadow_write and replay_eval are deterministic for identical request digests", async () => {
   const lifecycleServiceModule = await loadModules();
   const service = lifecycleServiceModule.makeDeterministicMemoryLifecycleService();
@@ -138,6 +158,84 @@ test("ums-memory-75m: shadow_write and replay_eval are deterministic for identic
   assert.deepEqual(replayedReplay, firstReplay);
   assert.equal(firstReplay.gateStatus, "pass");
   assert.ok(firstReplay.netValueScore >= 0);
+});
+
+test("ums-memory-75m: shadow_write canonical request digest is stable across sourceEpisodeIds ordering", async () => {
+  const lifecycleServiceModule = await loadModules();
+  const service = lifecycleServiceModule.makeDeterministicMemoryLifecycleService();
+
+  const first = await Effect.runPromise(
+    service.shadowWrite({
+      ...defaultShadowWriteRequest,
+      spaceId: "tenant-75m-shadow-canonical",
+      candidateId: "candidate-75m-shadow-canonical",
+      sourceEpisodeIds: ["episode-b", "episode-a"],
+    }),
+  );
+
+  const replay = await Effect.runPromise(
+    service.shadowWrite({
+      ...defaultShadowWriteRequest,
+      spaceId: "tenant-75m-shadow-canonical",
+      candidateId: "candidate-75m-shadow-canonical",
+      sourceEpisodeIds: ["episode-a", "episode-b"],
+    }),
+  );
+
+  assert.deepEqual(replay, first);
+  assert.equal(first.action, "created");
+});
+
+test("ums-memory-75m: shadow_write with newer writtenAtMillis refreshes candidate and clears replay state", async () => {
+  const lifecycleServiceModule = await loadModules();
+  const service = lifecycleServiceModule.makeDeterministicMemoryLifecycleService();
+
+  await Effect.runPromise(
+    service.shadowWrite({
+      ...defaultShadowWriteRequest,
+      spaceId: "tenant-75m-shadow-refresh",
+      candidateId: "candidate-75m-shadow-refresh",
+      sourceEpisodeIds: ["episode-refresh-1"],
+      writtenAtMillis: 1_800_000_000_100,
+    }),
+  );
+
+  const replay = await Effect.runPromise(
+    service.replayEval({
+      spaceId: "tenant-75m-shadow-refresh",
+      candidateId: "candidate-75m-shadow-refresh",
+      evaluationPackId: "pack-75m-shadow-refresh",
+      targetMemorySpace: "tenant-75m-shadow-refresh",
+      evaluatedAtMillis: 1_800_000_000_200,
+      qualityDelta: {
+        successRateDelta: 0.12,
+        reopenRateDelta: -0.03,
+      },
+      efficiencyDelta: {
+        latencyP95DeltaMs: -80,
+        tokenCostDelta: -12,
+      },
+      safetyDelta: {
+        policyViolationsDelta: 0,
+        hallucinationFlagDelta: 0,
+      },
+    }),
+  );
+
+  const refreshed = await Effect.runPromise(
+    service.shadowWrite({
+      ...defaultShadowWriteRequest,
+      spaceId: "tenant-75m-shadow-refresh",
+      candidateId: "candidate-75m-shadow-refresh",
+      sourceEpisodeIds: ["episode-refresh-1"],
+      writtenAtMillis: 1_800_000_000_300,
+    }),
+  );
+
+  assert.equal(replay.gateStatus, "pass");
+  assert.equal(refreshed.action, "updated");
+  assert.equal(refreshed.candidate.latestReplayEvalId, null);
+  assert.equal(refreshed.candidate.updatedAtMillis, 1_800_000_000_300);
 });
 
 test("ums-memory-75m: promote and demote transitions stay deterministic while enforcing idempotent no-op replays", async () => {
@@ -222,6 +320,16 @@ test("ums-memory-75m: promote and demote transitions stay deterministic while en
   assert.equal(demoteNoop.action, "noop");
   assert.equal(demoteNoop.removedRuleId, null);
   assert.deepEqual(demoteNoop.reasonCodes, ["manual_override", "stability_check"]);
+
+  const demoteReplayCanonical = await Effect.runPromise(
+    service.demote({
+      spaceId: "tenant-75m-promote",
+      candidateId: "candidate-75m-promote",
+      demotedAtMillis: 1_800_000_030_000,
+      reasonCodes: ["stability_check", "manual_override"],
+    }),
+  );
+  assert.deepEqual(demoteReplayCanonical, demoted);
 });
 
 test("ums-memory-75m: lifecycle contract decoding and gate errors are deterministic and typed", async () => {
@@ -277,4 +385,87 @@ test("ums-memory-75m: lifecycle contract decoding and gate errors are determinis
     promoteBeforeReplayB.left.reasonCode,
     "PROMOTE_REQUIRES_PASSING_REPLAY_EVAL",
   );
+});
+
+test("ums-memory-75m: state isolation via lifecycle layer keeps fresh in-memory state per provide", async () => {
+  const lifecycleServiceModule = await loadModules();
+  const request = {
+    ...defaultShadowWriteRequest,
+    spaceId: "tenant-75m-layer-isolation",
+    candidateId: "candidate-75m-layer-isolation",
+  };
+
+  const first = await runShadowWriteViaLayer(lifecycleServiceModule, request);
+  const second = await runShadowWriteViaLayer(lifecycleServiceModule, request);
+
+  assert.equal(first.action, "created");
+  assert.equal(second.action, "created");
+});
+
+test("ums-memory-75m: response mutation does not corrupt internal candidate state", async () => {
+  const lifecycleServiceModule = await loadModules();
+  const service = lifecycleServiceModule.makeDeterministicMemoryLifecycleService();
+
+  const shadow = await Effect.runPromise(
+    service.shadowWrite({
+      ...defaultShadowWriteRequest,
+      spaceId: "tenant-75m-response-isolation",
+      candidateId: "candidate-75m-response-isolation",
+      sourceEpisodeIds: ["episode-response-1"],
+    }),
+  );
+
+  shadow.candidate.status = "promoted";
+  shadow.candidate.statement = "mutated-local-response-only";
+
+  const replay = await Effect.runPromise(
+    service.replayEval({
+      spaceId: "tenant-75m-response-isolation",
+      candidateId: "candidate-75m-response-isolation",
+      evaluationPackId: "pack-75m-response-isolation",
+      targetMemorySpace: "tenant-75m-response-isolation",
+      evaluatedAtMillis: 1_800_000_050_000,
+      qualityDelta: {
+        successRateDelta: 0.1,
+        reopenRateDelta: -0.03,
+      },
+      efficiencyDelta: {
+        latencyP95DeltaMs: -30,
+        tokenCostDelta: -10,
+      },
+      safetyDelta: {
+        policyViolationsDelta: 0,
+        hallucinationFlagDelta: 0,
+      },
+    }),
+  );
+
+  assert.equal(replay.gateStatus, "pass");
+});
+
+test("ums-memory-75m: candidate keying is collision-free across delimiter-like IDs", async () => {
+  const lifecycleServiceModule = await loadModules();
+  const service = lifecycleServiceModule.makeDeterministicMemoryLifecycleService();
+
+  const first = await Effect.runPromise(
+    service.shadowWrite({
+      ...defaultShadowWriteRequest,
+      spaceId: "tenant::alpha",
+      candidateId: "candidate",
+      sourceEpisodeIds: ["episode-collision-1"],
+    }),
+  );
+
+  const second = await Effect.runPromise(
+    service.shadowWrite({
+      ...defaultShadowWriteRequest,
+      spaceId: "tenant",
+      candidateId: "alpha::candidate",
+      sourceEpisodeIds: ["episode-collision-2"],
+    }),
+  );
+
+  assert.equal(first.action, "created");
+  assert.equal(second.action, "created");
+  assert.notEqual(first.requestDigest, second.requestDigest);
 });
