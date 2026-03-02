@@ -110,6 +110,24 @@ const containsRedactedTokenCategory = (text, category) =>
   text.includes(`[REDACTED_${category}:`);
 
 const toSha256Hex = (value) => createHash("sha256").update(value).digest("hex");
+const sqlitePayloadEncryptionEnvelopeFormat =
+  "ums-memory/sqlite-memory-payload-encrypted/v1";
+const sqlitePayloadEncryptionEnvelopeAlgorithm = "aes-256-gcm";
+
+const toBase64EncryptionKey = (seedByte) => Buffer.alloc(32, seedByte).toString("base64");
+
+const readEncryptedPayloadEnvelope = (payloadJson) => {
+  const parsedEnvelope = JSON.parse(payloadJson);
+  assert.equal(parsedEnvelope.format, sqlitePayloadEncryptionEnvelopeFormat);
+  assert.equal(parsedEnvelope.version, 1);
+  assert.equal(parsedEnvelope.algorithm, sqlitePayloadEncryptionEnvelopeAlgorithm);
+  assert.equal(typeof parsedEnvelope.keyId, "string");
+  assert.ok(parsedEnvelope.keyId.length > 0);
+  assert.match(parsedEnvelope.ivBase64, /^[A-Za-z0-9+/]+={0,2}$/);
+  assert.match(parsedEnvelope.authTagBase64, /^[A-Za-z0-9+/]+={0,2}$/);
+  assert.match(parsedEnvelope.ciphertextBase64, /^[A-Za-z0-9+/]+={0,2}$/);
+  return parsedEnvelope;
+};
 
 const toCanonicalJsonValue = (value) => {
   if (Array.isArray(value)) {
@@ -2902,6 +2920,229 @@ test("ums-memory-a9v.3: sqlite storage idempotency hash remains conflict-safe wh
   } finally {
     db.close();
   }
+});
+
+test("ums-memory-a9v.4: sqlite storage encrypts memory payload_json at rest and preserves deterministic idempotent replay", async () => {
+  const storageServiceModule = await loadStorageServiceModule();
+  const db = new DatabaseSync(":memory:");
+
+  try {
+    const storageService = storageServiceModule.makeSqliteStorageService(db, {
+      encryptionAtRest: {
+        enabled: true,
+        activeKeyId: "key-v1",
+        keyRing: {
+          "key-v1": toBase64EncryptionKey(11),
+        },
+      },
+    });
+
+    const request = {
+      spaceId: "tenant-a9v4-encrypted-persistence",
+      memoryId: "memory-a9v4-encrypted-persistence",
+      layer: "working",
+      idempotencyKey: "a9v4-encrypted-idempotency-001",
+      payload: {
+        title: "Encrypted at-rest payload baseline",
+        notes: "token=super-secret-value owner=atrest@example.com",
+        updatedAtMillis: 1_700_000_130_001,
+      },
+    };
+
+    const firstResponse = Effect.runSync(storageService.upsertMemory(request));
+    const replayResponse = Effect.runSync(
+      storageService.upsertMemory({
+        ...request,
+        idempotency_key: request.idempotencyKey,
+      }),
+    );
+
+    assert.deepEqual(replayResponse, firstResponse);
+
+    const persistedRow = db
+      .prepare("SELECT payload_json FROM memory_items WHERE tenant_id = ? AND memory_id = ?;")
+      .get(request.spaceId, request.memoryId);
+    assert.ok(persistedRow);
+    assert.ok(typeof persistedRow.payload_json === "string");
+    assert.ok(!persistedRow.payload_json.includes("Encrypted at-rest payload baseline"));
+    assert.ok(!persistedRow.payload_json.includes("super-secret-value"));
+    assert.ok(!persistedRow.payload_json.includes("atrest@example.com"));
+    const envelope = readEncryptedPayloadEnvelope(persistedRow.payload_json);
+    assert.equal(envelope.keyId, "key-v1");
+
+    const idempotencyRow = db
+      .prepare(
+        [
+          "SELECT request_hash_sha256, response_json",
+          "FROM storage_idempotency_ledger",
+          "WHERE tenant_id = ? AND operation = 'upsert' AND idempotency_key = ?;",
+        ].join("\n"),
+      )
+      .get(request.spaceId, request.idempotencyKey);
+    assert.ok(idempotencyRow);
+    assert.match(String(idempotencyRow.request_hash_sha256), /^[0-9a-f]{64}$/);
+    assert.deepEqual(JSON.parse(idempotencyRow.response_json), firstResponse);
+  } finally {
+    db.close();
+  }
+});
+
+test("ums-memory-a9v.4: sqlite storage decrypts older key ids from keyRing and re-encrypts with active rotation key", async () => {
+  const storageServiceModule = await loadStorageServiceModule();
+  const db = new DatabaseSync(":memory:");
+  const oldKeyId = "key-2025";
+  const rotatedKeyId = "key-2026";
+  const oldKeyMaterial = toBase64EncryptionKey(22);
+  const rotatedKeyMaterial = toBase64EncryptionKey(33);
+
+  try {
+    const firstService = storageServiceModule.makeSqliteStorageService(db, {
+      encryptionAtRest: {
+        enabled: true,
+        activeKeyId: oldKeyId,
+        keyRing: {
+          [oldKeyId]: oldKeyMaterial,
+        },
+      },
+    });
+
+    Effect.runSync(
+      firstService.upsertMemory({
+        spaceId: "tenant-a9v4-rotation",
+        memoryId: "memory-a9v4-rotation",
+        layer: "procedural",
+        payload: {
+          title: "Rotation baseline",
+          provenance: {
+            source: "shadow-replay",
+            decisionId: "decision-a9v4-rotation",
+          },
+          evidencePointers: [
+            {
+              sourceKind: "event",
+              sourceRef: "event://evt-a9v4-rotation",
+              digestSha256: "e".repeat(64),
+              relationKind: "supports",
+            },
+          ],
+          updatedAtMillis: 1_700_000_130_100,
+        },
+      }),
+    );
+
+    const initialPersistedRow = db
+      .prepare("SELECT payload_json FROM memory_items WHERE tenant_id = ? AND memory_id = ?;")
+      .get("tenant-a9v4-rotation", "memory-a9v4-rotation");
+    assert.ok(initialPersistedRow);
+    const initialEnvelope = readEncryptedPayloadEnvelope(initialPersistedRow.payload_json);
+    assert.equal(initialEnvelope.keyId, oldKeyId);
+
+    const rotatedService = storageServiceModule.makeSqliteStorageService(db, {
+      applyMigrations: false,
+      encryptionAtRest: {
+        enabled: true,
+        activeKeyId: rotatedKeyId,
+        keyRing: {
+          [oldKeyId]: oldKeyMaterial,
+          [rotatedKeyId]: rotatedKeyMaterial,
+        },
+      },
+    });
+
+    const rotatedResponse = Effect.runSync(
+      rotatedService.upsertMemory({
+        spaceId: "tenant-a9v4-rotation",
+        memoryId: "memory-a9v4-rotation",
+        layer: "procedural",
+        payload: {
+          title: "Rotation update after key change",
+          provenance: {
+            source: "shadow-replay",
+            decisionId: "decision-a9v4-rotation",
+          },
+          evidencePointers: [
+            {
+              sourceKind: "event",
+              sourceRef: "event://evt-a9v4-rotation",
+              digestSha256: "e".repeat(64),
+              relationKind: "supports",
+            },
+          ],
+          updatedAtMillis: 1_700_000_130_101,
+        },
+      }),
+    );
+    assert.equal(rotatedResponse.accepted, true);
+    assert.equal(rotatedResponse.persistedAtMillis, 1_700_000_130_101);
+
+    const rotatedPersistedRow = db
+      .prepare("SELECT payload_json FROM memory_items WHERE tenant_id = ? AND memory_id = ?;")
+      .get("tenant-a9v4-rotation", "memory-a9v4-rotation");
+    assert.ok(rotatedPersistedRow);
+    const rotatedEnvelope = readEncryptedPayloadEnvelope(rotatedPersistedRow.payload_json);
+    assert.equal(rotatedEnvelope.keyId, rotatedKeyId);
+  } finally {
+    db.close();
+  }
+});
+
+test("ums-memory-a9v.4: sqlite storage encryption config misconfiguration fails fast with strict contracts", async () => {
+  const storageServiceModule = await loadStorageServiceModule();
+
+  const assertMisconfiguration = (
+    encryptionAtRestOptions,
+    expectedContract,
+    expectedMessagePattern,
+  ) => {
+    const misconfiguredDb = new DatabaseSync(":memory:");
+    try {
+      assert.throws(
+        () =>
+          storageServiceModule.makeSqliteStorageService(misconfiguredDb, {
+            encryptionAtRest: encryptionAtRestOptions,
+          }),
+        (error) => {
+          assert.equal(error?._tag, "ContractValidationError");
+          assert.equal(error?.contract, expectedContract);
+          assert.match(error?.message ?? "", expectedMessagePattern);
+          return true;
+        },
+      );
+    } finally {
+      misconfiguredDb.close();
+    }
+  };
+
+  assertMisconfiguration(
+    {
+      enabled: true,
+      activeKeyId: "key-v1",
+    },
+    "SqliteStorageRepositoryOptions.encryptionAtRest.keyRing",
+    /keyring/i,
+  );
+  assertMisconfiguration(
+    {
+      enabled: true,
+      activeKeyId: "missing-key",
+      keyRing: {
+        "key-v1": toBase64EncryptionKey(44),
+      },
+    },
+    "SqliteStorageRepositoryOptions.encryptionAtRest.activeKeyId",
+    /activekeyid/i,
+  );
+  assertMisconfiguration(
+    {
+      enabled: false,
+      activeKeyId: "key-v1",
+      keyRing: {
+        "key-v1": toBase64EncryptionKey(44),
+      },
+    },
+    "SqliteStorageRepositoryOptions.encryptionAtRest.enabled",
+    /enabled/i,
+  );
 });
 
 test("ums-memory-5cb.10: sqlite storage service replays upsert responses deterministically for matching idempotency keys", async () => {

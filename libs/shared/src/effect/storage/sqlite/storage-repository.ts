@@ -1,4 +1,9 @@
-import { createHash } from "node:crypto";
+import {
+  createCipheriv,
+  createDecipheriv,
+  createHash,
+  randomBytes,
+} from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 
 import { Effect } from "effect";
@@ -192,6 +197,16 @@ class ScopeAuthorizationViolationFailure extends Error {
   }
 }
 const storageRuntimeFailureContract = "StorageRuntimeFailure";
+const sqlitePayloadEncryptionContract =
+  "SqliteStorageRepositoryOptions.encryptionAtRest";
+const sqlitePayloadEncryptionEnvelopeFormat =
+  "ums-memory/sqlite-memory-payload-encrypted/v1";
+const sqlitePayloadEncryptionEnvelopeVersion = 1;
+const sqlitePayloadEncryptionEnvelopeAlgorithm = "aes-256-gcm";
+const sqlitePayloadEncryptionKeyLengthBytes = 32;
+const sqlitePayloadEncryptionIvLengthBytes = 12;
+const sqlitePayloadEncryptionAuthTagLengthBytes = 16;
+const sqlitePayloadEncryptionBase64Pattern = /^[A-Za-z0-9+/]+={0,2}$/;
 
 export interface TenantIsolationViolationAuditEvent {
   readonly operation: "upsert" | "delete";
@@ -268,6 +283,7 @@ export interface SqliteStorageRepositoryOptions {
   readonly applyMigrations?: boolean;
   readonly enforceForeignKeys?: boolean;
   readonly wal?: SqliteStorageRepositoryWalOptions;
+  readonly encryptionAtRest?: SqliteStorageRepositoryEncryptionAtRestOptions;
   readonly backupReplication?: SqliteBackupReplicationOptions;
   readonly onTenantIsolationViolation?: (
     event: TenantIsolationViolationAuditEvent
@@ -276,6 +292,12 @@ export interface SqliteStorageRepositoryOptions {
 
 export interface SqliteStorageRepositoryWalOptions {
   readonly enabled?: boolean;
+}
+
+export interface SqliteStorageRepositoryEncryptionAtRestOptions {
+  readonly enabled?: boolean;
+  readonly activeKeyId?: string;
+  readonly keyRing?: Readonly<Record<string, string>>;
 }
 
 export interface SqliteStorageRepository {
@@ -291,6 +313,23 @@ export interface SqliteStorageRepository {
   readonly importSnapshot: (
     request: StorageSnapshotImportRequest
   ) => Effect.Effect<StorageSnapshotImportResponse, StorageServiceError>;
+}
+
+interface SqlitePayloadEncryptionConfig {
+  readonly enabled: boolean;
+  readonly activeKeyId: string | null;
+  readonly activeKey: Buffer | null;
+  readonly keyRing: ReadonlyMap<string, Buffer>;
+}
+
+interface SqlitePayloadEncryptionEnvelope {
+  readonly format: string;
+  readonly version: number;
+  readonly algorithm: string;
+  readonly keyId: string;
+  readonly ivBase64: string;
+  readonly authTagBase64: string;
+  readonly ciphertextBase64: string;
 }
 
 const withImmediateTransaction = <Value>(
@@ -932,11 +971,16 @@ const parseEvidencePointerProjections = (
 };
 
 const readPersistedProvenanceJsonFromPayloadJson = (
-  payloadJson: string
+  payloadJson: string,
+  payloadEncryptionConfig: SqlitePayloadEncryptionConfig
 ): string | null => {
+  const plaintextPayloadJson = decryptPersistedMemoryPayloadJson(
+    payloadJson,
+    payloadEncryptionConfig
+  );
   let parsedPayload: unknown;
   try {
-    parsedPayload = JSON.parse(payloadJson);
+    parsedPayload = JSON.parse(plaintextPayloadJson);
   } catch (cause) {
     const details = cause instanceof Error ? cause.message : String(cause);
     throw new Error(
@@ -954,6 +998,412 @@ const readPersistedProvenanceJsonFromPayloadJson = (
   }
 
   return toCanonicalJsonString(provenanceValue, "persistedPayload.provenance");
+};
+
+const toSqlitePayloadEncryptionContractError = (
+  contractSuffix: string,
+  message: string,
+  details: string
+): ContractValidationError =>
+  new ContractValidationError({
+    contract: `${sqlitePayloadEncryptionContract}${contractSuffix}`,
+    message,
+    details,
+  });
+
+const toDisabledSqlitePayloadEncryptionConfig =
+  (): SqlitePayloadEncryptionConfig =>
+    Object.freeze({
+      enabled: false,
+      activeKeyId: null,
+      activeKey: null,
+      keyRing: new Map<string, Buffer>(),
+    });
+
+const decodeBase64PayloadEncryptionValue = (
+  encodedValue: string,
+  label: string,
+  contractSuffix: string
+): Buffer => {
+  const trimmedValue = encodedValue.trim();
+  if (trimmedValue.length === 0) {
+    throw toSqlitePayloadEncryptionContractError(
+      contractSuffix,
+      "Encryption-at-rest base64 payload segments must be non-empty.",
+      `${label} must be a non-empty base64 string.`
+    );
+  }
+  if (
+    trimmedValue.length % 4 !== 0 ||
+    !sqlitePayloadEncryptionBase64Pattern.test(trimmedValue)
+  ) {
+    throw toSqlitePayloadEncryptionContractError(
+      contractSuffix,
+      "Encryption-at-rest base64 payload segments must be canonical.",
+      `${label} must contain canonical base64 characters with standard padding.`
+    );
+  }
+  const decoded = Buffer.from(trimmedValue, "base64");
+  if (decoded.toString("base64") !== trimmedValue) {
+    throw toSqlitePayloadEncryptionContractError(
+      contractSuffix,
+      "Encryption-at-rest base64 payload segments must be canonical.",
+      `${label} must be canonical base64 data.`
+    );
+  }
+
+  return decoded;
+};
+
+const normalizeSqlitePayloadEncryptionKeyId = (
+  keyId: unknown,
+  contractSuffix: string
+): string => {
+  if (typeof keyId !== "string") {
+    throw toSqlitePayloadEncryptionContractError(
+      contractSuffix,
+      "Encryption-at-rest key ids must be non-empty strings.",
+      "activeKeyId must be provided as a string."
+    );
+  }
+  const normalizedKeyId = keyId.trim();
+  if (normalizedKeyId.length === 0) {
+    throw toSqlitePayloadEncryptionContractError(
+      contractSuffix,
+      "Encryption-at-rest key ids must be non-empty strings.",
+      "activeKeyId must be a non-empty string."
+    );
+  }
+
+  return normalizedKeyId;
+};
+
+const decodeSqlitePayloadEncryptionKeyMaterial = (
+  keyMaterial: unknown,
+  keyId: string
+): Buffer => {
+  if (typeof keyMaterial !== "string") {
+    throw toSqlitePayloadEncryptionContractError(
+      ".keyRing",
+      "Encryption-at-rest key ring entries must be non-empty base64 strings.",
+      `keyRing["${keyId}"] must be a string containing base64 key material.`
+    );
+  }
+  const decodedKey = decodeBase64PayloadEncryptionValue(
+    keyMaterial,
+    `keyRing["${keyId}"]`,
+    ".keyRing"
+  );
+  if (decodedKey.length !== sqlitePayloadEncryptionKeyLengthBytes) {
+    throw toSqlitePayloadEncryptionContractError(
+      ".keyRing",
+      "Encryption-at-rest key ring entries must decode to 256-bit keys.",
+      `keyRing["${keyId}"] must decode to exactly ${sqlitePayloadEncryptionKeyLengthBytes} bytes.`
+    );
+  }
+
+  return decodedKey;
+};
+
+const resolveSqlitePayloadEncryptionConfig = (
+  options: SqliteStorageRepositoryOptions
+): SqlitePayloadEncryptionConfig => {
+  const encryptionOptions = options.encryptionAtRest;
+  if (encryptionOptions === undefined) {
+    return toDisabledSqlitePayloadEncryptionConfig();
+  }
+  if (
+    typeof encryptionOptions !== "object" ||
+    encryptionOptions === null ||
+    Array.isArray(encryptionOptions) ||
+    !isPlainRecordObject(encryptionOptions)
+  ) {
+    throw toSqlitePayloadEncryptionContractError(
+      "",
+      "Encryption-at-rest options must be a plain object.",
+      "encryptionAtRest must be a plain object when provided."
+    );
+  }
+
+  const enabled = encryptionOptions.enabled ?? false;
+  if (typeof enabled !== "boolean") {
+    throw toSqlitePayloadEncryptionContractError(
+      ".enabled",
+      "Encryption-at-rest enabled flag must be boolean when provided.",
+      `Expected boolean enabled value but received ${String(encryptionOptions.enabled)}.`
+    );
+  }
+  if (!enabled) {
+    if (
+      encryptionOptions.activeKeyId !== undefined ||
+      encryptionOptions.keyRing !== undefined
+    ) {
+      throw toSqlitePayloadEncryptionContractError(
+        ".enabled",
+        "Encryption-at-rest key material is only valid when encryption is enabled.",
+        "Set encryptionAtRest.enabled to true before providing activeKeyId or keyRing."
+      );
+    }
+    return toDisabledSqlitePayloadEncryptionConfig();
+  }
+
+  const activeKeyId = normalizeSqlitePayloadEncryptionKeyId(
+    encryptionOptions.activeKeyId,
+    ".activeKeyId"
+  );
+  const keyRingRecord = encryptionOptions.keyRing;
+  if (
+    typeof keyRingRecord !== "object" ||
+    keyRingRecord === null ||
+    Array.isArray(keyRingRecord) ||
+    !isPlainRecordObject(keyRingRecord)
+  ) {
+    throw toSqlitePayloadEncryptionContractError(
+      ".keyRing",
+      "Encryption-at-rest keyRing must be a plain object when encryption is enabled.",
+      "keyRing must map key ids to base64 encoded 256-bit keys."
+    );
+  }
+  const keyRingEntries = Object.entries(keyRingRecord);
+  if (keyRingEntries.length === 0) {
+    throw toSqlitePayloadEncryptionContractError(
+      ".keyRing",
+      "Encryption-at-rest keyRing must include at least one key.",
+      "keyRing cannot be empty when encryption is enabled."
+    );
+  }
+
+  const decodedKeyRing = new Map<string, Buffer>();
+  for (const [keyIdCandidate, rawKeyMaterial] of keyRingEntries) {
+    const normalizedKeyId = keyIdCandidate.trim();
+    if (normalizedKeyId.length === 0) {
+      throw toSqlitePayloadEncryptionContractError(
+        ".keyRing",
+        "Encryption-at-rest key ids must be non-empty strings.",
+        "keyRing must not include blank key ids."
+      );
+    }
+    if (decodedKeyRing.has(normalizedKeyId)) {
+      throw toSqlitePayloadEncryptionContractError(
+        ".keyRing",
+        "Encryption-at-rest key ids must be unique after normalization.",
+        `keyRing contains duplicate key ids after trimming: "${normalizedKeyId}".`
+      );
+    }
+    decodedKeyRing.set(
+      normalizedKeyId,
+      decodeSqlitePayloadEncryptionKeyMaterial(rawKeyMaterial, normalizedKeyId)
+    );
+  }
+
+  const activeKey = decodedKeyRing.get(activeKeyId);
+  if (activeKey === undefined) {
+    throw toSqlitePayloadEncryptionContractError(
+      ".activeKeyId",
+      "Encryption-at-rest activeKeyId must reference a keyRing entry.",
+      `activeKeyId "${activeKeyId}" was not found in encryptionAtRest.keyRing.`
+    );
+  }
+
+  return Object.freeze({
+    enabled: true,
+    activeKeyId,
+    activeKey,
+    keyRing: decodedKeyRing,
+  });
+};
+
+const parsePersistedMemoryPayloadEncryptionEnvelope = (
+  parsedPayload: unknown
+): SqlitePayloadEncryptionEnvelope | null => {
+  if (
+    typeof parsedPayload !== "object" ||
+    parsedPayload === null ||
+    Array.isArray(parsedPayload) ||
+    !isPlainRecordObject(parsedPayload)
+  ) {
+    return null;
+  }
+  const envelope = parsedPayload as Record<string, unknown>;
+  if (envelope.format !== sqlitePayloadEncryptionEnvelopeFormat) {
+    return null;
+  }
+
+  const version = envelope.version;
+  const algorithm = envelope.algorithm;
+  const keyId = envelope.keyId;
+  const ivBase64 = envelope.ivBase64;
+  const authTagBase64 = envelope.authTagBase64;
+  const ciphertextBase64 = envelope.ciphertextBase64;
+
+  if (version !== sqlitePayloadEncryptionEnvelopeVersion) {
+    throw new Error(
+      `Persisted encrypted memory payload_json version ${String(version)} is unsupported.`
+    );
+  }
+  if (algorithm !== sqlitePayloadEncryptionEnvelopeAlgorithm) {
+    throw new Error(
+      `Persisted encrypted memory payload_json algorithm ${String(algorithm)} is unsupported.`
+    );
+  }
+  if (typeof keyId !== "string" || keyId.trim().length === 0) {
+    throw new Error("Persisted encrypted memory payload_json keyId is invalid.");
+  }
+  if (typeof ivBase64 !== "string" || ivBase64.trim().length === 0) {
+    throw new Error("Persisted encrypted memory payload_json ivBase64 is invalid.");
+  }
+  if (typeof authTagBase64 !== "string" || authTagBase64.trim().length === 0) {
+    throw new Error(
+      "Persisted encrypted memory payload_json authTagBase64 is invalid."
+    );
+  }
+  if (
+    typeof ciphertextBase64 !== "string" ||
+    ciphertextBase64.trim().length === 0
+  ) {
+    throw new Error(
+      "Persisted encrypted memory payload_json ciphertextBase64 is invalid."
+    );
+  }
+
+  return Object.freeze({
+    format: sqlitePayloadEncryptionEnvelopeFormat,
+    version: sqlitePayloadEncryptionEnvelopeVersion,
+    algorithm: sqlitePayloadEncryptionEnvelopeAlgorithm,
+    keyId: keyId.trim(),
+    ivBase64: ivBase64.trim(),
+    authTagBase64: authTagBase64.trim(),
+    ciphertextBase64: ciphertextBase64.trim(),
+  });
+};
+
+const toStoredMemoryPayloadJson = (
+  payloadJson: string,
+  payloadEncryptionConfig: SqlitePayloadEncryptionConfig
+): string => {
+  if (!payloadEncryptionConfig.enabled) {
+    return payloadJson;
+  }
+  if (
+    payloadEncryptionConfig.activeKeyId === null ||
+    payloadEncryptionConfig.activeKey === null
+  ) {
+    throw toSqlitePayloadEncryptionContractError(
+      ".activeKeyId",
+      "Encryption-at-rest active key is unavailable for payload writes.",
+      "activeKeyId and keyRing must resolve to a usable 256-bit key when encryption is enabled."
+    );
+  }
+
+  const initializationVector = randomBytes(sqlitePayloadEncryptionIvLengthBytes);
+  const cipher = createCipheriv(
+    sqlitePayloadEncryptionEnvelopeAlgorithm,
+    payloadEncryptionConfig.activeKey,
+    initializationVector
+  );
+  const ciphertext = Buffer.concat([
+    cipher.update(payloadJson, "utf8"),
+    cipher.final(),
+  ]);
+  const authTag = cipher.getAuthTag();
+
+  return JSON.stringify({
+    format: sqlitePayloadEncryptionEnvelopeFormat,
+    version: sqlitePayloadEncryptionEnvelopeVersion,
+    algorithm: sqlitePayloadEncryptionEnvelopeAlgorithm,
+    keyId: payloadEncryptionConfig.activeKeyId,
+    ivBase64: initializationVector.toString("base64"),
+    authTagBase64: authTag.toString("base64"),
+    ciphertextBase64: ciphertext.toString("base64"),
+  } satisfies SqlitePayloadEncryptionEnvelope);
+};
+
+const decryptPersistedMemoryPayloadJson = (
+  payloadJson: string,
+  payloadEncryptionConfig: SqlitePayloadEncryptionConfig
+): string => {
+  let parsedPayload: unknown;
+  try {
+    parsedPayload = JSON.parse(payloadJson);
+  } catch (cause) {
+    const details = cause instanceof Error ? cause.message : String(cause);
+    throw new Error(
+      `Persisted memory payload_json is not valid JSON: ${details}`
+    );
+  }
+
+  const encryptedEnvelope =
+    parsePersistedMemoryPayloadEncryptionEnvelope(parsedPayload);
+  if (encryptedEnvelope === null) {
+    return payloadJson;
+  }
+  if (!payloadEncryptionConfig.enabled) {
+    throw toSqlitePayloadEncryptionContractError(
+      ".enabled",
+      "Encrypted payload_json encountered while encryption-at-rest is disabled.",
+      "Enable encryptionAtRest with the keyRing that can decrypt persisted rows."
+    );
+  }
+
+  const decryptionKey = payloadEncryptionConfig.keyRing.get(
+    encryptedEnvelope.keyId
+  );
+  if (decryptionKey === undefined) {
+    throw toSqlitePayloadEncryptionContractError(
+      ".keyRing",
+      "Encryption-at-rest keyRing is missing key material for persisted payload_json.",
+      `No decryption key was configured for keyId "${encryptedEnvelope.keyId}".`
+    );
+  }
+
+  const initializationVector = decodeBase64PayloadEncryptionValue(
+    encryptedEnvelope.ivBase64,
+    "payload_json.ivBase64",
+    ".keyRing"
+  );
+  if (initializationVector.length !== sqlitePayloadEncryptionIvLengthBytes) {
+    throw toSqlitePayloadEncryptionContractError(
+      ".keyRing",
+      "Persisted encrypted payload_json IV length is invalid.",
+      `payload_json.ivBase64 must decode to exactly ${sqlitePayloadEncryptionIvLengthBytes} bytes.`
+    );
+  }
+  const authTag = decodeBase64PayloadEncryptionValue(
+    encryptedEnvelope.authTagBase64,
+    "payload_json.authTagBase64",
+    ".keyRing"
+  );
+  if (authTag.length !== sqlitePayloadEncryptionAuthTagLengthBytes) {
+    throw toSqlitePayloadEncryptionContractError(
+      ".keyRing",
+      "Persisted encrypted payload_json authentication tag length is invalid.",
+      `payload_json.authTagBase64 must decode to exactly ${sqlitePayloadEncryptionAuthTagLengthBytes} bytes.`
+    );
+  }
+  const ciphertext = decodeBase64PayloadEncryptionValue(
+    encryptedEnvelope.ciphertextBase64,
+    "payload_json.ciphertextBase64",
+    ".keyRing"
+  );
+
+  try {
+    const decipher = createDecipheriv(
+      sqlitePayloadEncryptionEnvelopeAlgorithm,
+      decryptionKey,
+      initializationVector
+    );
+    decipher.setAuthTag(authTag);
+    return Buffer.concat([
+      decipher.update(ciphertext),
+      decipher.final(),
+    ]).toString("utf8");
+  } catch (cause) {
+    throw toSqlitePayloadEncryptionContractError(
+      ".keyRing",
+      "Unable to decrypt persisted encrypted payload_json with configured keyRing.",
+      `Decrypt failed for keyId "${encryptedEnvelope.keyId}": ${toErrorMessage(cause)}`
+    );
+  }
 };
 
 const isDomainRecord = (value: unknown): value is DomainRecord => {
@@ -2436,6 +2886,7 @@ export const makeSqliteStorageRepository = (
   const enforceForeignKeys = options.enforceForeignKeys ?? true;
   const walEnabled = options.wal?.enabled ?? false;
   const runMigrations = options.applyMigrations ?? true;
+  const payloadEncryptionConfig = resolveSqlitePayloadEncryptionConfig(options);
 
   configureSqliteForeignKeys(database, enforceForeignKeys);
   configureSqliteWalMode(database, walEnabled);
@@ -3284,7 +3735,8 @@ export const makeSqliteStorageRepository = (
                 }
                 const existingProvenanceJson =
                   readPersistedProvenanceJsonFromPayloadJson(
-                    existingPayloadJson
+                    existingPayloadJson,
+                    payloadEncryptionConfig
                   );
                 if (existingProvenanceJson !== null) {
                   if (
@@ -3408,6 +3860,10 @@ export const makeSqliteStorageRepository = (
               }
             }
 
+            const persistedPayloadJson = toStoredMemoryPayloadJson(
+              payloadProjection.payloadJson,
+              payloadEncryptionConfig
+            );
             const upsertMemoryResult = upsertMemoryStatement.run(
               request.spaceId,
               request.memoryId,
@@ -3416,7 +3872,7 @@ export const makeSqliteStorageRepository = (
               payloadProjection.memoryKind,
               payloadProjection.status,
               payloadProjection.title,
-              payloadProjection.payloadJson,
+              persistedPayloadJson,
               payloadProjection.createdByUserId,
               payloadProjection.supersedesMemoryId,
               payloadProjection.createdAtMillis,
