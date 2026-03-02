@@ -9,6 +9,7 @@ import {
 import {
   EvidenceIdSchema,
   MemoryIdSchema,
+  ProfileIdSchema,
   ProjectIdSchema,
   RoleIdSchema,
   SpaceIdSchema,
@@ -287,6 +288,35 @@ export const PolicyResponseSchema = Schema.Struct({
   decision: PolicyOutcomeSchema,
   reasonCodes: Schema.Array(Schema.String),
   evaluatedAtMillis: NonNegativeIntSchema,
+});
+
+export const PolicyPackPluginContractVersionSchema = Schema.Literal("v1");
+
+export const PolicyPackPluginRequestSchema = Schema.Struct({
+  contractVersion: PolicyPackPluginContractVersionSchema,
+  operation: Schema.Literal("policy_decision_update"),
+  storeId: SpaceIdSchema,
+  profileId: ProfileIdSchema,
+  decisionId: Schema.NonEmptyTrimmedString,
+  policyKey: Schema.NonEmptyTrimmedString,
+  action: Schema.NonEmptyTrimmedString,
+  surface: Schema.NonEmptyTrimmedString,
+  outcome: PolicyOutcomeSchema,
+  reasonCodes: Schema.Array(Schema.String),
+  provenanceEventIds: Schema.Array(EvidenceIdSchema),
+  evidenceEventIds: Schema.Array(EvidenceIdSchema),
+  metadata: PolicyContextSchema,
+  createdAt: Schema.String,
+  updatedAt: Schema.String,
+});
+
+export const PolicyPackPluginOutcomeSchema = Schema.Literal("pass", "deny");
+
+export const PolicyPackPluginResponseSchema = Schema.Struct({
+  contractVersion: PolicyPackPluginContractVersionSchema,
+  outcome: PolicyPackPluginOutcomeSchema,
+  reasonCodes: Schema.Array(Schema.String),
+  metadata: Schema.optional(PolicyContextSchema),
 });
 
 export const AuthorizationRoleSchema = Schema.Literal(
@@ -572,6 +602,18 @@ export type EvaluationResponse = Schema.Schema.Type<
 >;
 export type PolicyRequest = Schema.Schema.Type<typeof PolicyRequestSchema>;
 export type PolicyResponse = Schema.Schema.Type<typeof PolicyResponseSchema>;
+export type PolicyPackPluginContractVersion = Schema.Schema.Type<
+  typeof PolicyPackPluginContractVersionSchema
+>;
+export type PolicyPackPluginRequest = Schema.Schema.Type<
+  typeof PolicyPackPluginRequestSchema
+>;
+export type PolicyPackPluginOutcome = Schema.Schema.Type<
+  typeof PolicyPackPluginOutcomeSchema
+>;
+export type PolicyPackPluginResponse = Schema.Schema.Type<
+  typeof PolicyPackPluginResponseSchema
+>;
 export type AuthorizationRole = Schema.Schema.Type<
   typeof AuthorizationRoleSchema
 >;

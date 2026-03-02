@@ -90,6 +90,9 @@ const POLICY_REASON_CODES_CONTRACT_ERROR =
   "VALIDATION_CONTRACT_VIOLATION: policy_decision_update deny outcome requires reasonCodes.";
 const POLICY_PROVENANCE_EVENT_CONTRACT_ERROR =
   "EVIDENCE_POINTER_CONTRACT_VIOLATION: policy_decision_update requires provenanceEventIds.";
+const POLICY_PACK_PLUGIN_CONTRACT_VERSION = "v1";
+const POLICY_PACK_PLUGIN_FAIL_CLOSED_CONTRACT_REASON_CODE = "policy_pack_plugin_contract_error";
+const POLICY_PACK_PLUGIN_FAIL_CLOSED_FAILURE_REASON_CODE = "policy_pack_plugin_failure";
 const SHADOW_WRITE_EVIDENCE_CONTRACT_ERROR =
   "EVIDENCE_POINTER_CONTRACT_VIOLATION: shadow_write requires at least one sourceEventId or evidenceEventId.";
 const REPLAY_EVAL_CANDIDATE_CONTRACT_ERROR =
@@ -301,6 +304,29 @@ function normalizeMetadata(value) {
   }
   return stableSortObject(value);
 }
+
+function createNoopPolicyPackPlugin() {
+  return {
+    name: "noop-policy-pack-plugin",
+    evaluatePolicyDecisionUpdate() {
+      return {
+        contractVersion: POLICY_PACK_PLUGIN_CONTRACT_VERSION,
+        outcome: "pass",
+        reasonCodes: [],
+        metadata: {},
+      };
+    },
+  };
+}
+
+function normalizePolicyPackPluginName(value) {
+  if (typeof value === "string" && value.trim()) {
+    return value.trim();
+  }
+  return "anonymous-policy-pack-plugin";
+}
+
+let policyPackPlugin = createNoopPolicyPackPlugin();
 
 function asSortedUniqueStrings(values) {
   if (!Array.isArray(values)) {
@@ -1617,6 +1643,152 @@ function mergeReviewScheduleEntry(existing, incoming) {
     createdAt: existing.createdAt ?? incoming.createdAt,
     updatedAt: incoming.updatedAt ?? existing.updatedAt,
   };
+}
+
+function normalizePolicyPackPluginResponse(response) {
+  if (!isPlainObject(response)) {
+    throw new Error("policy pack plugin response must be an object.");
+  }
+  const contractVersion = normalizeBoundedStringLenient(response.contractVersion, 16);
+  if (contractVersion !== POLICY_PACK_PLUGIN_CONTRACT_VERSION) {
+    throw new Error(
+      `policy pack plugin response contractVersion must be '${POLICY_PACK_PLUGIN_CONTRACT_VERSION}'.`,
+    );
+  }
+  const outcome = normalizeBoundedStringLenient(response.outcome, 16);
+  if (outcome !== "pass" && outcome !== "deny") {
+    throw new Error("policy pack plugin response outcome must be either 'pass' or 'deny'.");
+  }
+  const reasonCodes = normalizeBoundedStringArray(response.reasonCodes, "policyPackPlugin.reasonCodes");
+  if (outcome === "deny" && reasonCodes.length === 0) {
+    throw new Error("policy pack plugin deny outcome requires reasonCodes.");
+  }
+  return {
+    contractVersion,
+    outcome,
+    reasonCodes: outcome === "deny" ? reasonCodes : [],
+    metadata: normalizeMetadata(response.metadata),
+  };
+}
+
+function toPolicyPackPluginFailureMessage(error, fallback) {
+  if (error instanceof Error) {
+    return normalizeBoundedStringLenient(error.message, 256) ?? fallback;
+  }
+  if (typeof error === "string") {
+    return normalizeBoundedStringLenient(error, 256) ?? fallback;
+  }
+  return fallback;
+}
+
+function toFailClosedPolicyPackInvocation(pluginName, reasonCode, failureMessage) {
+  return {
+    pluginName,
+    contractVersion: POLICY_PACK_PLUGIN_CONTRACT_VERSION,
+    status: "fail_closed",
+    outcome: "deny",
+    reasonCodes: [reasonCode],
+    failureCode: reasonCode,
+    failureMessage,
+    metadata: {},
+  };
+}
+
+function invokePolicyPackPluginForDecisionUpdate(storeId, incoming) {
+  const activePlugin = policyPackPlugin;
+  const pluginName = normalizePolicyPackPluginName(activePlugin?.name);
+  const request = {
+    contractVersion: POLICY_PACK_PLUGIN_CONTRACT_VERSION,
+    operation: "policy_decision_update",
+    storeId,
+    profileId: incoming.profileId,
+    decisionId: incoming.decisionId,
+    policyKey: incoming.policyKey,
+    action: incoming.action,
+    surface: incoming.surface,
+    outcome: incoming.outcome,
+    reasonCodes: [...incoming.reasonCodes],
+    provenanceEventIds: [...incoming.provenanceEventIds],
+    evidenceEventIds: [...incoming.evidenceEventIds],
+    metadata: normalizeMetadata(incoming.metadata),
+    createdAt: incoming.createdAt,
+    updatedAt: incoming.updatedAt,
+  };
+
+  let rawResponse;
+  try {
+    rawResponse = activePlugin.evaluatePolicyDecisionUpdate(request);
+  } catch (error) {
+    return toFailClosedPolicyPackInvocation(
+      pluginName,
+      POLICY_PACK_PLUGIN_FAIL_CLOSED_FAILURE_REASON_CODE,
+      toPolicyPackPluginFailureMessage(error, "policy pack plugin threw.")
+    );
+  }
+
+  let normalizedResponse;
+  try {
+    normalizedResponse = normalizePolicyPackPluginResponse(rawResponse);
+  } catch (error) {
+    return toFailClosedPolicyPackInvocation(
+      pluginName,
+      POLICY_PACK_PLUGIN_FAIL_CLOSED_CONTRACT_REASON_CODE,
+      toPolicyPackPluginFailureMessage(error, "policy pack plugin contract validation failed.")
+    );
+  }
+
+  return {
+    pluginName,
+    contractVersion: normalizedResponse.contractVersion,
+    status: "executed",
+    outcome: normalizedResponse.outcome,
+    reasonCodes: normalizedResponse.reasonCodes,
+    failureCode: null,
+    failureMessage: null,
+    metadata: normalizedResponse.metadata,
+  };
+}
+
+function applyPolicyPackInvocationToDecision(incoming, invocation) {
+  const enforcedOutcome =
+    invocation.status === "fail_closed" || invocation.outcome === "deny"
+      ? "deny"
+      : incoming.outcome;
+  const reasonCodes =
+    enforcedOutcome === "deny"
+      ? mergeStringLists(incoming.reasonCodes, invocation.reasonCodes)
+      : incoming.reasonCodes;
+
+  return {
+    ...incoming,
+    outcome: enforcedOutcome,
+    reasonCodes,
+    metadata: stableSortObject({
+      ...(incoming.metadata ?? {}),
+      policyPackPlugin: {
+        pluginName: invocation.pluginName,
+        contractVersion: invocation.contractVersion,
+        status: invocation.status,
+        outcome: invocation.outcome,
+        reasonCodes: invocation.reasonCodes,
+        failureCode: invocation.failureCode,
+        failureMessage: invocation.failureMessage,
+        metadata: invocation.metadata,
+      },
+    }),
+  };
+}
+
+function toPolicyPackPluginAuditMetadata(invocation) {
+  return stableSortObject({
+    pluginName: invocation.pluginName,
+    contractVersion: invocation.contractVersion,
+    status: invocation.status,
+    outcome: invocation.outcome,
+    reasonCodes: invocation.reasonCodes,
+    failureCode: invocation.failureCode,
+    failureMessage: invocation.failureMessage,
+  });
 }
 
 function normalizePolicyDecisionUpdateRequest(request, storeId, profile) {
@@ -4805,14 +4977,18 @@ function runPolicyDecisionUpdate(request) {
   const { storeId, profile, input } = normalizeRequest("policy_decision_update", request);
   const state = getProfileState(storeId, profile);
   const incoming = normalizePolicyDecisionUpdateRequest(request, storeId, profile);
+  const pluginInvocation = invokePolicyPackPluginForDecisionUpdate(storeId, incoming);
+  const pluginAwareIncoming = applyPolicyPackInvocationToDecision(incoming, pluginInvocation);
   const meta = buildMeta("policy_decision_update", storeId, profile, input);
-  const existingIndex = state.policyDecisions.findIndex((decision) => decision.decisionId === incoming.decisionId);
+  const existingIndex = state.policyDecisions.findIndex(
+    (decision) => decision.decisionId === pluginAwareIncoming.decisionId,
+  );
   let action = "created";
-  let next = incoming;
+  let next = pluginAwareIncoming;
 
   if (existingIndex >= 0) {
     const existing = state.policyDecisions[existingIndex];
-    const merged = mergePolicyDecision(existing, incoming);
+    const merged = mergePolicyDecision(existing, pluginAwareIncoming);
     if (stableStringify(existing) === stableStringify(merged)) {
       action = "noop";
       next = existing;
@@ -4822,7 +4998,7 @@ function runPolicyDecisionUpdate(request) {
       state.policyDecisions[existingIndex] = merged;
     }
   } else {
-    state.policyDecisions.push(incoming);
+    state.policyDecisions.push(pluginAwareIncoming);
   }
 
   const policyAuditEvent = appendPolicyAuditTrail(state, {
@@ -4837,6 +5013,7 @@ function runPolicyDecisionUpdate(request) {
       action,
       provenanceEventIds: next.provenanceEventIds,
       evidenceEventIds: next.evidenceEventIds,
+      pluginInvocation: toPolicyPackPluginAuditMetadata(pluginInvocation),
     },
     timestamp: next.updatedAt ?? next.createdAt ?? DEFAULT_VERSION_TIMESTAMP,
   });
@@ -4853,6 +5030,7 @@ function runPolicyDecisionUpdate(request) {
       denied: next.outcome === "deny",
       reasonCodeCount: next.reasonCodes.length,
       provenanceCount: next.provenanceEventIds.length,
+      pluginFailClosed: pluginInvocation.status === "fail_closed",
       slo: buildSloObservability(meta.requestDigest, "policy_decision_update", 45),
     },
   };
@@ -9512,8 +9690,35 @@ export function importStoreSnapshot(snapshot) {
   }
 }
 
+function normalizeConfiguredPolicyPackPlugin(plugin) {
+  if (typeof plugin === "function") {
+    return {
+      name: normalizePolicyPackPluginName(plugin.name),
+      evaluatePolicyDecisionUpdate: plugin,
+    };
+  }
+  if (isPlainObject(plugin) && typeof plugin.evaluatePolicyDecisionUpdate === "function") {
+    return {
+      name: normalizePolicyPackPluginName(plugin.name),
+      evaluatePolicyDecisionUpdate: plugin.evaluatePolicyDecisionUpdate,
+    };
+  }
+  throw new Error(
+    "policy pack plugin must be a function or object with evaluatePolicyDecisionUpdate(request).",
+  );
+}
+
+export function setPolicyPackPlugin(plugin) {
+  policyPackPlugin = normalizeConfiguredPolicyPackPlugin(plugin);
+}
+
+export function resetPolicyPackPlugin() {
+  policyPackPlugin = createNoopPolicyPackPlugin();
+}
+
 export function resetStore() {
   stores.clear();
+  resetPolicyPackPlugin();
 }
 
 export function findRuleByDigestPrefix(profile, digestPrefix, storeId = DEFAULT_STORE_ID) {

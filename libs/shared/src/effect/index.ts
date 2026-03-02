@@ -11,6 +11,7 @@ export * from "./services/evaluation-service.js";
 export * from "./services/ingestion-service.js";
 export * from "./services/lifecycle-service.js";
 export * from "./services/logger-service.js";
+export * from "./services/policy-pack-plugin-service.js";
 export * from "./services/policy-service.js";
 export * from "./services/retrieval-service.js";
 export * from "./services/storage-service.js";

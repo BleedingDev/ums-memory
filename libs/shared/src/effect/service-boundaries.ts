@@ -17,6 +17,10 @@ import {
   noopMemoryLifecycleLayer,
 } from "./services/lifecycle-service.js";
 import {
+  deterministicTestPolicyPackPluginLayer,
+  noopPolicyPackPluginLayer,
+} from "./services/policy-pack-plugin-service.js";
+import {
   deterministicTestPolicyLayer,
   noopPolicyLayer,
 } from "./services/policy-service.js";
@@ -34,6 +38,7 @@ export const serviceBoundariesLayer = Layer.mergeAll(
   noopStorageLayer,
   noopRetrievalLayer,
   noopEvaluationLayer,
+  noopPolicyPackPluginLayer,
   noopPolicyLayer,
   noopIngestionLayer,
   noopMemoryLifecycleLayer
@@ -44,6 +49,7 @@ export const deterministicTestServiceBoundariesLayer = Layer.mergeAll(
   deterministicTestStorageLayer,
   deterministicTestRetrievalLayer,
   deterministicTestEvaluationLayer,
+  deterministicTestPolicyPackPluginLayer,
   deterministicTestPolicyLayer,
   deterministicTestIngestionLayer,
   deterministicTestMemoryLifecycleLayer

@@ -5,7 +5,9 @@ import {
   exportStoreSnapshot,
   importStoreSnapshot,
   listOperations,
+  resetPolicyPackPlugin,
   resetStore,
+  setPolicyPackPlugin,
   snapshotProfile,
 } from "../src/core.mjs";
 import { createIdentityGraphEdge, IdentityGraphRelationKind } from "../../../libs/shared/src/entities.js";
@@ -13,6 +15,7 @@ import { ErrorCode } from "../../../libs/shared/src/errors.js";
 
 test.beforeEach(() => {
   resetStore();
+  resetPolicyPackPlugin();
 });
 
 test("core exposes the full required operation surface", () => {
@@ -1975,6 +1978,151 @@ test("ums-memory-d6q.5.4 policy_decision_update enforces policy checks and deter
   assert.equal(replay.action, "noop");
   assert.equal(replay.observability.denied, true);
   assert.deepEqual(replay.decision.provenanceEventIds, ["evt-pol-1", "evt-pol-2"]);
+});
+
+test("ums-memory-a9v.5 default policy pack plugin is noop and records audit metadata", () => {
+  const result = executeOperation("policy_decision_update", {
+    storeId: "tenant-policy-plugin-noop",
+    profile: "learner-policy-plugin-noop",
+    policyKey: "plugin-noop",
+    outcome: "review",
+    reasonCodes: ["insufficient-evidence"],
+    provenanceEventIds: ["evt-plugin-noop-1"],
+    timestamp: "2026-03-02T20:00:00.000Z",
+  });
+
+  assert.equal(result.action, "created");
+  assert.equal(result.decision.outcome, "review");
+  assert.equal(result.decision.metadata.policyPackPlugin.pluginName, "noop-policy-pack-plugin");
+  assert.equal(result.decision.metadata.policyPackPlugin.status, "executed");
+  assert.equal(result.decision.metadata.policyPackPlugin.outcome, "pass");
+  assert.deepEqual(result.decision.metadata.policyPackPlugin.reasonCodes, []);
+  assert.equal(result.observability.pluginFailClosed, false);
+
+  const snapshot = snapshotProfile("learner-policy-plugin-noop", "tenant-policy-plugin-noop");
+  const auditEntry = snapshot.policyAuditTrail.find((entry) => entry.auditEventId === result.policyAuditEventId);
+  assert.ok(auditEntry);
+  assert.equal(auditEntry.details.pluginInvocation.status, "executed");
+  assert.equal(auditEntry.details.pluginInvocation.outcome, "pass");
+});
+
+test("ums-memory-a9v.5 custom policy pack plugin hook can enforce deny outcomes", () => {
+  let seenRequest = null;
+  setPolicyPackPlugin({
+    name: "deny-on-plugin-review",
+    evaluatePolicyDecisionUpdate(request) {
+      seenRequest = request;
+      return {
+        contractVersion: "v1",
+        outcome: "deny",
+        reasonCodes: ["plugin-risk"],
+        metadata: {
+          pluginRule: "deny-on-plugin-review",
+        },
+      };
+    },
+  });
+
+  const result = executeOperation("policy_decision_update", {
+    storeId: "tenant-policy-plugin-custom",
+    profile: "learner-policy-plugin-custom",
+    policyKey: "plugin-custom",
+    outcome: "review",
+    reasonCodes: ["insufficient-evidence"],
+    provenanceEventIds: ["evt-plugin-custom-1"],
+    timestamp: "2026-03-02T20:05:00.000Z",
+  });
+
+  assert.ok(seenRequest);
+  assert.equal(seenRequest.operation, "policy_decision_update");
+  assert.equal(result.decision.outcome, "deny");
+  assert.deepEqual(result.decision.reasonCodes, ["insufficient-evidence", "plugin-risk"]);
+  assert.equal(result.decision.metadata.policyPackPlugin.pluginName, "deny-on-plugin-review");
+  assert.equal(result.decision.metadata.policyPackPlugin.outcome, "deny");
+  assert.equal(result.decision.metadata.policyPackPlugin.metadata.pluginRule, "deny-on-plugin-review");
+});
+
+test("ums-memory-a9v.5 policy_decision_update fails closed when policy pack plugin throws", () => {
+  setPolicyPackPlugin({
+    name: "throwing-plugin",
+    evaluatePolicyDecisionUpdate() {
+      throw new Error("deterministic plugin failure");
+    },
+  });
+
+  const result = executeOperation("policy_decision_update", {
+    storeId: "tenant-policy-plugin-failclosed",
+    profile: "learner-policy-plugin-failclosed",
+    policyKey: "plugin-failclosed",
+    outcome: "review",
+    reasonCodes: ["insufficient-evidence"],
+    provenanceEventIds: ["evt-plugin-failclosed-1"],
+    timestamp: "2026-03-02T20:10:00.000Z",
+  });
+
+  assert.equal(result.decision.outcome, "deny");
+  assert.equal(result.decision.reasonCodes.includes("policy_pack_plugin_failure"), true);
+  assert.equal(result.decision.metadata.policyPackPlugin.status, "fail_closed");
+  assert.equal(
+    result.decision.metadata.policyPackPlugin.failureCode,
+    "policy_pack_plugin_failure",
+  );
+  assert.equal(result.observability.pluginFailClosed, true);
+
+  const snapshot = snapshotProfile(
+    "learner-policy-plugin-failclosed",
+    "tenant-policy-plugin-failclosed",
+  );
+  const auditEntry = snapshot.policyAuditTrail.find(
+    (entry) => entry.auditEventId === result.policyAuditEventId,
+  );
+  assert.ok(auditEntry);
+  assert.equal(auditEntry.details.pluginInvocation.status, "fail_closed");
+  assert.equal(
+    auditEntry.details.pluginInvocation.failureCode,
+    "policy_pack_plugin_failure",
+  );
+});
+
+test("ums-memory-a9v.5 policy_decision_update remains replay-deterministic with policy pack plugins", () => {
+  setPolicyPackPlugin({
+    name: "deterministic-pass-plugin",
+    evaluatePolicyDecisionUpdate(request) {
+      return {
+        contractVersion: "v1",
+        outcome: "pass",
+        reasonCodes: [],
+        metadata: {
+          decisionSeed: request.decisionId,
+        },
+      };
+    },
+  });
+
+  const request = {
+    storeId: "tenant-policy-plugin-replay",
+    profile: "learner-policy-plugin-replay",
+    decisionId: "pol-plugin-replay-1",
+    policyKey: "plugin-replay",
+    outcome: "review",
+    reasonCodes: ["insufficient-evidence"],
+    provenanceEventIds: ["evt-plugin-replay-1"],
+    timestamp: "2026-03-02T20:15:00.000Z",
+  };
+  const created = executeOperation("policy_decision_update", request);
+  const replay = executeOperation("policy_decision_update", request);
+
+  assert.equal(created.action, "created");
+  assert.equal(replay.action, "noop");
+  assert.equal(created.decisionDigest, replay.decisionDigest);
+  assert.equal(
+    replay.decision.metadata.policyPackPlugin.metadata.decisionSeed,
+    "pol-plugin-replay-1",
+  );
+  assert.equal(
+    snapshotProfile("learner-policy-plugin-replay", "tenant-policy-plugin-replay").policyDecisions.length,
+    1,
+  );
 });
 
 function withPolicyAuditSigningEnv(run) {
