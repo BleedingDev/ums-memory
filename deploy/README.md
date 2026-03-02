@@ -2,6 +2,12 @@
 
 These assets containerize the current API and worker runtimes with a shared on-disk state file.
 
+## Runbook
+
+For deterministic deploy and operations procedures (local, staging, production, backup/restore, incidents, observability), use:
+
+- [UMS Deploy and Operations Runbook (Compose-First)](../docs/runbooks/deploy-operations-compose-first.md)
+
 ## Prerequisites
 
 - Docker 24+ with Compose v2
