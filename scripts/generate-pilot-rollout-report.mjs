@@ -14,6 +14,10 @@ const SUCCESS_TOKENS = new Set([
   "allow",
   "deny",
   "review",
+  "pass",
+  "allowed",
+  "denied",
+  "not_found",
 ]);
 const FAILURE_TOKENS = new Set(["error", "failed", "failure", "timeout", "exception"]);
 
@@ -33,6 +37,8 @@ const TIMESTAMP_KEYS = ["timestamp", "time", "ts", "createdAt", "created_at"];
 const OUTCOME_KEYS = ["status", "result", "requestStatus", "request_status", "outcome"];
 const TEAM_KEYS = ["team", "teamId", "team_id"];
 const PROJECT_KEYS = ["project", "projectId", "project_id"];
+const ISO_TIMESTAMP_PATTERN =
+  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?(?:Z|[+-]\d{2}:\d{2})$/u;
 
 function compareStrings(left, right) {
   if (left < right) {
@@ -88,7 +94,11 @@ function toIsoTimestamp(value) {
   if (typeof value !== "string" || !value.trim()) {
     return null;
   }
-  const parsed = Date.parse(value);
+  const normalized = value.trim();
+  if (!ISO_TIMESTAMP_PATTERN.test(normalized)) {
+    return null;
+  }
+  const parsed = Date.parse(normalized);
   if (!Number.isFinite(parsed)) {
     return null;
   }
@@ -178,12 +188,6 @@ export function parseTelemetryEvents(source) {
 }
 
 function parseOutcomeToken(value) {
-  if (typeof value === "boolean") {
-    return value;
-  }
-  if (typeof value === "number" && Number.isFinite(value)) {
-    return value !== 0;
-  }
   if (typeof value === "string") {
     const token = normalizeToken(value);
     if (!token) {
@@ -202,14 +206,36 @@ function parseOutcomeToken(value) {
       return false;
     }
   }
-  return null;
+  return undefined;
 }
 
 function classifySuccess(record, index) {
   const explicit = pickFirst(record, ["success", "ok", "isSuccess", "is_success"]);
-  const explicitOutcome = parseOutcomeToken(explicit);
-  if (explicitOutcome !== null) {
-    return explicitOutcome;
+  if (typeof explicit === "boolean") {
+    return explicit;
+  }
+  if (typeof explicit === "number" && Number.isFinite(explicit)) {
+    if (explicit === 1) {
+      return true;
+    }
+    if (explicit === 0) {
+      return false;
+    }
+    throw new Error(
+      `Telemetry event at index ${index} has unsupported explicit outcome value: ${JSON.stringify(explicit)}`,
+    );
+  }
+  if (typeof explicit === "string") {
+    const token = normalizeToken(explicit);
+    if (token === "true" || token === "1") {
+      return true;
+    }
+    if (token === "false" || token === "0") {
+      return false;
+    }
+    throw new Error(
+      `Telemetry event at index ${index} has unsupported explicit outcome value: ${JSON.stringify(explicit)}`,
+    );
   }
   if (explicit !== undefined && explicit !== null) {
     throw new Error(
@@ -218,8 +244,19 @@ function classifySuccess(record, index) {
   }
 
   const outcomeRaw = pickFirst(record, OUTCOME_KEYS);
+  if (typeof outcomeRaw === "number" && Number.isFinite(outcomeRaw)) {
+    if (outcomeRaw >= 200 && outcomeRaw < 400) {
+      return true;
+    }
+    if (outcomeRaw >= 400) {
+      return false;
+    }
+    throw new Error(
+      `Telemetry event at index ${index} has unsupported outcome token: ${JSON.stringify(outcomeRaw)}`,
+    );
+  }
   const parsedOutcome = parseOutcomeToken(outcomeRaw);
-  if (parsedOutcome !== null) {
+  if (typeof parsedOutcome === "boolean") {
     return parsedOutcome;
   }
   if (outcomeRaw !== undefined && outcomeRaw !== null) {
@@ -366,9 +403,12 @@ function summarizePerOperation(operationTotals) {
   );
 }
 
-export function generatePilotRolloutReport(events) {
+export function generatePilotRolloutReport(events, { allowInvalid = false } = {}) {
   if (!Array.isArray(events)) {
     throw new Error("Expected telemetry events to be an array.");
+  }
+  if (typeof allowInvalid !== "boolean") {
+    throw new Error("allowInvalid option must be a boolean.");
   }
 
   let successCount = 0;
@@ -384,6 +424,7 @@ export function generatePilotRolloutReport(events) {
 
   const latencies = [];
   const timestamps = [];
+  let invalidEventCount = 0;
 
   for (let index = 0; index < events.length; index += 1) {
     const event = events[index];
@@ -391,15 +432,32 @@ export function generatePilotRolloutReport(events) {
       throw new Error(`Telemetry event at index ${index} must be a JSON object.`);
     }
 
-    const success = classifySuccess(event, index);
-    const operation = extractOperation(event, index);
-    const failureCode = extractFailureCode(event, success);
-    const policyDecision = extractPolicyDecision(event);
-    const anomalyType = extractAnomalyType(event);
-    const latencyMs = extractLatencyMs(event, index);
-    const timestamp = extractTimestamp(event, index);
-    const team = extractTeam(event, index);
-    const project = extractProject(event, index);
+    let success;
+    let operation;
+    let failureCode;
+    let policyDecision;
+    let anomalyType;
+    let latencyMs;
+    let timestamp;
+    let team;
+    let project;
+    try {
+      success = classifySuccess(event, index);
+      operation = extractOperation(event, index);
+      failureCode = extractFailureCode(event, success);
+      policyDecision = extractPolicyDecision(event);
+      anomalyType = extractAnomalyType(event);
+      latencyMs = extractLatencyMs(event, index);
+      timestamp = extractTimestamp(event, index);
+      team = extractTeam(event, index);
+      project = extractProject(event, index);
+    } catch (error) {
+      if (!allowInvalid) {
+        throw error;
+      }
+      invalidEventCount += 1;
+      continue;
+    }
 
     incrementHistogram(operationHistogram, operation);
     incrementHistogram(teamHistogram, team);
@@ -438,7 +496,7 @@ export function generatePilotRolloutReport(events) {
     timestamps.push(timestamp);
   }
 
-  const requestVolume = events.length;
+  const requestVolume = successCount + failureCount;
   const p95LatencyMs = computeP95(latencies);
   const window = computeWindow(timestamps);
 
@@ -458,7 +516,7 @@ export function generatePilotRolloutReport(events) {
     teamHistogram: histogramToSortedObject(teamHistogram),
     projectHistogram: histogramToSortedObject(projectHistogram),
     perOperation: summarizePerOperation(perOperation),
-    invalidEventCount: 0,
+    invalidEventCount,
     telemetryWindow: window,
   };
 }
@@ -468,6 +526,7 @@ function parseArgs(argv) {
     input: "",
     output: "",
     compact: false,
+    allowInvalid: false,
     help: false,
   };
 
@@ -493,6 +552,10 @@ function parseArgs(argv) {
       parsed.compact = true;
       continue;
     }
+    if (token === "--allow-invalid") {
+      parsed.allowInvalid = true;
+      continue;
+    }
     throw new Error(`Unknown argument: ${token}`);
   }
 
@@ -508,6 +571,7 @@ function printUsage() {
     [
       "Usage:",
       "  node scripts/generate-pilot-rollout-report.mjs --input <path|-> [--output <path>] [--compact]",
+      "  node scripts/generate-pilot-rollout-report.mjs --input <path|-> [--output <path>] [--compact] [--allow-invalid]",
       "",
       "Input formats:",
       "  - NDJSON (one telemetry object per line)",
@@ -516,6 +580,7 @@ function printUsage() {
       "Examples:",
       "  node scripts/generate-pilot-rollout-report.mjs --input ops/pilot-rollout/pilot-a/telemetry.ndjson",
       "  node scripts/generate-pilot-rollout-report.mjs --input telemetry.json --output docs/reports/pilot-summary.json",
+      "  node scripts/generate-pilot-rollout-report.mjs --input telemetry.ndjson --allow-invalid",
     ].join("\n") + "\n"
   );
 }
@@ -552,7 +617,7 @@ export async function main(argv = process.argv.slice(2)) {
 
   const rawInput = await readInput(parsed.input);
   const events = parseTelemetryEvents(rawInput);
-  const report = generatePilotRolloutReport(events);
+  const report = generatePilotRolloutReport(events, { allowInvalid: parsed.allowInvalid });
   const output = `${JSON.stringify(report, null, parsed.compact ? 0 : 2)}\n`;
 
   if (parsed.output) {

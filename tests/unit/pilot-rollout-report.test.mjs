@@ -176,6 +176,20 @@ test("pilot rollout report rejects telemetry events missing required fields", ()
       ]),
     /missing required field: team/i,
   );
+
+  assert.throws(
+    () =>
+      generatePilotRolloutReport([
+        {
+          timestamp: "2026-03-01T10:00:00.000Z",
+          team: "team-alpha",
+          project: "project-x",
+          operation: "context",
+          status: "ok",
+        },
+      ]),
+    /latency field/i,
+  );
 });
 
 test("pilot rollout report main creates parent output directories automatically", async () => {
@@ -195,4 +209,92 @@ test("pilot rollout report main creates parent output directories automatically"
   } finally {
     await rm(fixtureRoot, { recursive: true, force: true });
   }
+});
+
+test("pilot rollout report parses numeric status codes and compatible outcome tokens", () => {
+  const report = generatePilotRolloutReport([
+    {
+      timestamp: "2026-03-01T10:00:00.000Z",
+      team: "team-alpha",
+      project: "project-x",
+      operation: "policy_decision_update",
+      outcome: "pass",
+      latencyMs: 10,
+    },
+    {
+      timestamp: "2026-03-01T10:00:01.000Z",
+      team: "team-alpha",
+      project: "project-x",
+      operation: "policy_decision_update",
+      status: "denied",
+      latencyMs: 11,
+    },
+    {
+      timestamp: "2026-03-01T10:00:02.000Z",
+      team: "team-alpha",
+      project: "project-x",
+      operation: "recall_authorization",
+      status: "not_found",
+      latencyMs: 12,
+    },
+    {
+      timestamp: "2026-03-01T10:00:03.000Z",
+      team: "team-alpha",
+      project: "project-x",
+      operation: "context",
+      status: 500,
+      latencyMs: 13,
+      failureCode: "INTERNAL",
+    },
+  ]);
+
+  assert.equal(report.requestVolume, 4);
+  assert.equal(report.successCount, 3);
+  assert.equal(report.failureCount, 1);
+  assert.deepEqual(report.failureCodeHistogram, { INTERNAL: 1 });
+});
+
+test("pilot rollout report rejects ambiguous timestamp formats", () => {
+  assert.throws(
+    () =>
+      generatePilotRolloutReport([
+        {
+          timestamp: "2026-03-01 10:00:00",
+          team: "team-alpha",
+          project: "project-x",
+          operation: "context",
+          status: "ok",
+          latencyMs: 10,
+        },
+      ]),
+    /missing required field: timestamp/i,
+  );
+});
+
+test("pilot rollout report allow-invalid mode skips malformed events and reports invalid count", () => {
+  const report = generatePilotRolloutReport(
+    [
+      {
+        timestamp: "2026-03-01T10:00:00.000Z",
+        team: "team-alpha",
+        project: "project-x",
+        operation: "context",
+        status: "ok",
+        latencyMs: 10,
+      },
+      {
+        timestamp: "2026-03-01T10:00:01.000Z",
+        team: "team-alpha",
+        project: "project-x",
+        operation: "context",
+        latencyMs: 10,
+      },
+    ],
+    { allowInvalid: true },
+  );
+
+  assert.equal(report.requestVolume, 1);
+  assert.equal(report.invalidEventCount, 1);
+  assert.equal(report.successCount, 1);
+  assert.equal(report.failureCount, 0);
 });

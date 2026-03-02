@@ -177,9 +177,10 @@ npm run pilot:report -- \
 ```
 
 Report generator guarantees:
-1. Fails fast when required telemetry fields are missing (`timestamp`, `team`, `project`, `operation`, outcome indicator, latency).
-2. Creates missing parent output directories automatically.
-3. Emits deterministic per-operation latency/failure distributions for tuning workflows.
+1. Fails fast by default when required telemetry fields are missing (`timestamp`, `team`, `project`, `operation`, outcome indicator, latency).
+2. Supports legacy compatibility mode with `--allow-invalid` and reports skipped entries via `invalidEventCount`.
+3. Creates missing parent output directories automatically.
+4. Emits deterministic per-operation latency/failure distributions for tuning workflows.
 
 ## Handoff to n4m.2 and n4m.3
 - For `n4m.2` dashboards:
