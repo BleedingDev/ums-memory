@@ -340,6 +340,14 @@ test("ums-memory-hpl.11 lifecycle operations emit throughput/pass-rate/demotion/
     "manual_override",
     "policy_regression",
   ]);
+  assert.deepEqual(demoted.observability.lifecycleMetrics.demotionReasons.operationEventCounts, {
+    manual_override: 1,
+    policy_regression: 1,
+  });
+  assert.deepEqual(demoted.observability.lifecycleMetrics.demotionReasons.operationReasonHistoryCounts, {
+    manual_override: 1,
+    policy_regression: 1,
+  });
   assert.equal(demoted.observability.lifecycleMetrics.demotionReasons.profileCounts.manual_override, 1);
   assert.equal(demoted.observability.lifecycleMetrics.demotionReasons.profileCounts.policy_regression, 1);
   assert.equal(demoted.observability.lifecycleMetrics.candidateThroughput.mutatedCount, 1);
@@ -427,6 +435,52 @@ test("ums-memory-hpl.11 lifecycle observability remains deterministic across rep
   assert.equal(demoteNoopA.trace.traceId, demoteNoopB.trace.traceId);
   assert.deepEqual(demoteNoopA.observability.lifecycleMetrics, demoteNoopB.observability.lifecycleMetrics);
   assert.deepEqual(demoteNoopA.trace.payload, demoteNoopB.trace.payload);
+});
+
+test("ums-memory-hpl.11 replay auto-demotion emits demotion trace details and reason metrics", () => {
+  const storeId = "tenant-hpl11-auto-demotion-metrics";
+  const profile = "hpl11-auto-demotion-metrics";
+  const shadow = executeOperation("shadow_write", {
+    storeId,
+    profile,
+    statement: "Auto-demotion traces should include deterministic reason metrics.",
+    sourceEventIds: ["evt-hpl11-auto-demotion-1"],
+    evidenceEventIds: ["evt-hpl11-auto-demotion-1"],
+  });
+  const candidateId = shadow.applied[0].candidateId;
+
+  executeOperation("replay_eval", {
+    storeId,
+    profile,
+    candidateId,
+    successRateDelta: -0.1,
+    evaluatedAt: "2026-03-02T16:00:00.000Z",
+  });
+  const autoDemoted = executeOperation("replay_eval", {
+    storeId,
+    profile,
+    candidateId,
+    successRateDelta: -0.2,
+    evaluatedAt: "2026-03-02T16:10:00.000Z",
+  });
+
+  assert.equal(autoDemoted.autoDemotion.action, "demoted");
+  assert.equal(autoDemoted.trace.payload.details.autoDemotion.action, "demoted");
+  assert.deepEqual(autoDemoted.trace.payload.details.autoDemotion.reasonCodes, [
+    "sustained_negative_net_value",
+  ]);
+  assert.deepEqual(autoDemoted.observability.lifecycleMetrics.demotionReasons.reasonCodes, [
+    "sustained_negative_net_value",
+  ]);
+  assert.deepEqual(autoDemoted.observability.lifecycleMetrics.demotionReasons.operationEventCounts, {
+    sustained_negative_net_value: 1,
+  });
+  assert.equal(
+    autoDemoted.observability.lifecycleMetrics.demotionReasons.profileCounts.sustained_negative_net_value,
+    1,
+  );
+  assert.deepEqual(autoDemoted.trace.payload.metrics, autoDemoted.observability.lifecycleMetrics);
+  assert.deepEqual(autoDemoted.trace.payload, autoDemoted.observability.tracePayload);
 });
 
 test("ums-memory-hpl.4 replay_eval auto-demotes on sustained negative net value and remains replay-safe", () => {

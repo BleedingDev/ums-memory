@@ -2236,9 +2236,27 @@ function buildLifecycleDemotionReasonsMetric(state, reasonCodes = []) {
       profileCounts[reasonCode] = toNonNegativeInteger(profileCounts[reasonCode], 0) + 1;
     }
   }
+  const operationEventCounts = {};
+  for (const reasonCode of normalizedReasonCodes) {
+    operationEventCounts[reasonCode] = toNonNegativeInteger(operationEventCounts[reasonCode], 0) + 1;
+  }
+  const operationReasonHistoryCounts = {};
+  const operationReasonHistory = Array.isArray(state.policyAuditTrail) ? state.policyAuditTrail : [];
+  for (const entry of operationReasonHistory) {
+    const operation = normalizeBoundedString(entry?.operation, "policyAuditTrail.operation", 64);
+    if (operation !== "demote") {
+      continue;
+    }
+    const reasonHistoryCodes = asSortedUniqueStrings(entry?.reasonCodes);
+    for (const reasonCode of reasonHistoryCodes) {
+      operationReasonHistoryCounts[reasonCode] = toNonNegativeInteger(operationReasonHistoryCounts[reasonCode], 0) + 1;
+    }
+  }
   return {
     reasonCodes: normalizedReasonCodes,
     reasonCount: normalizedReasonCodes.length,
+    operationEventCounts: stableSortObject(operationEventCounts),
+    operationReasonHistoryCounts: stableSortObject(operationReasonHistoryCounts),
     profileCounts: stableSortObject(profileCounts),
   };
 }
@@ -3869,6 +3887,7 @@ function runDemote(request) {
   };
 
   if (!shouldDemote) {
+    const existingAudit = findPolicyAuditTrailByOperationEntity(state, "demote", candidateId);
     const lifecycleMetrics = buildLifecycleObservabilityMetrics(state, {
       requestDigest: meta.requestDigest,
       candidateIds: lifecycleCandidateIds,
@@ -3896,6 +3915,7 @@ function runDemote(request) {
       reasonCodes,
       threshold: netValueThreshold,
       trace: lifecycleTrace,
+      policyAuditEventId: existingAudit?.auditEventId ?? null,
       observability: {
         replaySafe: true,
         demotionApplied: false,
@@ -3907,6 +3927,27 @@ function runDemote(request) {
   }
 
   const demotion = applyCandidateDemotion(state, resolved, { demotedAt, reasonCodes });
+  const existingAudit = findPolicyAuditTrailByOperationEntity(state, "demote", candidateId);
+  const auditEvent =
+    demotion.action !== "demoted"
+      ? null
+      : appendPolicyAuditTrail(state, {
+          operation: "demote",
+          storeId,
+          profile,
+          entityId: candidateId,
+          outcome: "demoted",
+          reasonCodes,
+          details: {
+            threshold: netValueThreshold,
+            replayFailed,
+            belowThreshold,
+            force,
+            demotedAt,
+            removedRuleId: demotion.removedRuleId,
+          },
+          timestamp: demotedAt,
+        });
   const lifecycleMetrics = buildLifecycleObservabilityMetrics(state, {
     requestDigest: meta.requestDigest,
     candidateIds: lifecycleCandidateIds,
@@ -3938,6 +3979,7 @@ function runDemote(request) {
     reasonCodes,
     threshold: netValueThreshold,
     trace: lifecycleTrace,
+    policyAuditEventId: auditEvent?.auditEventId ?? existingAudit?.auditEventId ?? null,
     observability: {
       replaySafe: true,
       demotionApplied: demotion.action === "demoted",
