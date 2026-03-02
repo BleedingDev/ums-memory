@@ -135,6 +135,9 @@ const OUTCOME_UTILITY_SIGNAL_DELTA = Object.freeze({
   success: 0.08,
   failure: -0.2,
 });
+const DEFAULT_NEGATIVE_NET_VALUE_DEMOTION_STREAK = 2;
+const DEMOTION_REASON_SUSTAINED_NEGATIVE_NET_VALUE = "sustained_negative_net_value";
+const DEMOTION_REASON_EXPLICIT_HARMFUL_FEEDBACK = "explicit_harmful_feedback";
 const DEFAULT_REPLAY_SAFETY_DELTA_THRESHOLD = 0;
 const DEFAULT_CANARY_SAFETY_DELTA_THRESHOLD = 0;
 const DEFAULT_STORE_ID = "coding-agent";
@@ -1771,6 +1774,7 @@ function normalizeShadowCandidate(rawCandidate, request, storeId, profile, times
     latestReplayEvalId: null,
     latestReplayStatus: "unevaluated",
     latestNetValueScore: null,
+    negativeNetValueStreak: 0,
     promotedAt: null,
     demotedAt: null,
     latestDemotionReasonCodes: [],
@@ -1804,6 +1808,61 @@ function resolveMemoryCandidate(state, candidateId) {
   return {
     candidateIndex,
     candidate: candidates[candidateIndex],
+  };
+}
+
+function resolveDemotionTargetCandidateIds(state, targetRuleIds = [], targetCandidateIds = []) {
+  const normalizedRuleIds = asSortedUniqueStrings(targetRuleIds);
+  const normalizedCandidateIds = asSortedUniqueStrings(targetCandidateIds);
+  const candidates = Array.isArray(state.shadowCandidates) ? state.shadowCandidates : [];
+  const matchedCandidateIds = [];
+  for (const candidate of candidates) {
+    const candidateId = normalizeBoundedString(candidate?.candidateId, "shadowCandidates.candidateId", 64);
+    if (!candidateId) {
+      continue;
+    }
+    const matchesCandidate = normalizedCandidateIds.includes(candidateId);
+    const matchesRule = normalizedRuleIds.includes(candidate?.ruleId);
+    if (matchesCandidate || matchesRule) {
+      matchedCandidateIds.push(candidateId);
+    }
+  }
+  return asSortedUniqueStrings([...normalizedCandidateIds, ...matchedCandidateIds]);
+}
+
+function applyCandidateDemotion(state, resolved, { demotedAt, reasonCodes = [] }) {
+  const normalizedReasonCodes = asSortedUniqueStrings(reasonCodes);
+  const existingCandidate = resolved?.candidate ?? null;
+  if (!existingCandidate || existingCandidate.status === "demoted") {
+    return {
+      action: "noop",
+      candidate: existingCandidate,
+      removedRuleId: null,
+      reasonCodes: normalizedReasonCodes,
+    };
+  }
+
+  const nextCandidate = {
+    ...existingCandidate,
+    status: "demoted",
+    demotedAt,
+    updatedAt: demotedAt,
+    latestDemotionReasonCodes: normalizedReasonCodes,
+  };
+  state.shadowCandidates[resolved.candidateIndex] = nextCandidate;
+  state.shadowCandidates = sortByTimestampAndId(state.shadowCandidates, "updatedAt", "candidateId");
+
+  let removedRuleId = null;
+  const existingRuleIndex = state.rules.findIndex((rule) => rule.ruleId === existingCandidate.ruleId);
+  if (existingRuleIndex >= 0) {
+    removedRuleId = state.rules.splice(existingRuleIndex, 1)[0]?.ruleId ?? null;
+  }
+
+  return {
+    action: "demoted",
+    candidate: nextCandidate,
+    removedRuleId,
+    reasonCodes: normalizedReasonCodes,
   };
 }
 
@@ -3333,16 +3392,28 @@ function runReplayEval(request) {
     state.replayEvaluations.push(evaluation);
   }
   state.replayEvaluations = sortByTimestampAndId(state.replayEvaluations, "evaluatedAt", "replayEvalId");
+  const previousNegativeNetValueStreak = toNonNegativeInteger(resolved.candidate.negativeNetValueStreak, 0);
+  const negativeNetValueStreak =
+    action === "noop" ? previousNegativeNetValueStreak : netValueScore < 0 ? previousNegativeNetValueStreak + 1 : 0;
 
   const nextCandidate = {
     ...resolved.candidate,
     latestReplayEvalId: replayEvalId,
     latestReplayStatus: pass ? "pass" : "fail",
     latestNetValueScore: netValueScore,
+    negativeNetValueStreak,
     updatedAt: evaluatedAt,
   };
   state.shadowCandidates[resolved.candidateIndex] = nextCandidate;
   state.shadowCandidates = sortByTimestampAndId(state.shadowCandidates, "updatedAt", "candidateId");
+  const autoDemotionTriggerReached = negativeNetValueStreak >= DEFAULT_NEGATIVE_NET_VALUE_DEMOTION_STREAK;
+  const autoDemotion =
+    action !== "noop" && autoDemotionTriggerReached
+      ? applyCandidateDemotion(state, resolveMemoryCandidate(state, candidateId), {
+          demotedAt: evaluatedAt,
+          reasonCodes: [DEMOTION_REASON_SUSTAINED_NEGATIVE_NET_VALUE],
+        })
+      : null;
   const meta = buildMeta("replay_eval", storeId, profile, input);
 
   return {
@@ -3351,6 +3422,14 @@ function runReplayEval(request) {
     candidateId,
     replayEvalId,
     evaluation,
+    autoDemotion: autoDemotion
+      ? {
+          action: autoDemotion.action,
+          reasonCodes: autoDemotion.reasonCodes,
+          removedRuleId: autoDemotion.removedRuleId,
+          trigger: DEMOTION_REASON_SUSTAINED_NEGATIVE_NET_VALUE,
+        }
+      : null,
     gate: {
       pass,
       gateThreshold,
@@ -3364,6 +3443,9 @@ function runReplayEval(request) {
     },
     observability: {
       replaySafe: true,
+      negativeNetValueStreak,
+      negativeNetValueStreakThreshold: DEFAULT_NEGATIVE_NET_VALUE_DEMOTION_STREAK,
+      autoDemotionApplied: autoDemotion?.action === "demoted",
       hasSafetyRegression: safetyRegressionCount > 0,
       safetySeverity: safetyDeltas.severity,
       slo: buildSloObservability(meta.requestDigest, "replay_eval", 45),
@@ -3533,33 +3615,19 @@ function runDemote(request) {
     };
   }
 
-  const nextCandidate = {
-    ...resolved.candidate,
-    status: "demoted",
-    demotedAt,
-    updatedAt: demotedAt,
-    latestDemotionReasonCodes: reasonCodes,
-  };
-  state.shadowCandidates[resolved.candidateIndex] = nextCandidate;
-  state.shadowCandidates = sortByTimestampAndId(state.shadowCandidates, "updatedAt", "candidateId");
-
-  const existingRuleIndex = state.rules.findIndex((rule) => rule.ruleId === resolved.candidate.ruleId);
-  let removedRule = null;
-  if (existingRuleIndex >= 0) {
-    removedRule = state.rules.splice(existingRuleIndex, 1)[0];
-  }
+  const demotion = applyCandidateDemotion(state, resolved, { demotedAt, reasonCodes });
 
   return {
     ...meta,
-    action: "demoted",
-    candidate: nextCandidate,
-    removedRuleId: removedRule?.ruleId ?? null,
+    action: demotion.action,
+    candidate: demotion.candidate ?? resolved.candidate,
+    removedRuleId: demotion.removedRuleId,
     reasonCodes,
     threshold: netValueThreshold,
     observability: {
       replaySafe: true,
-      demotionApplied: true,
-      ruleRemoved: Boolean(removedRule),
+      demotionApplied: demotion.action === "demoted",
+      ruleRemoved: Boolean(demotion.removedRuleId),
       slo: buildSloObservability(meta.requestDigest, "demote", 40),
     },
   };
@@ -5739,6 +5807,36 @@ function runFeedback(request) {
           },
           timestamp: recordedAt,
         });
+  let autoDemotion = null;
+  if (action !== "noop" && signal === "harmful") {
+    const demotionTargetCandidateIds = resolveDemotionTargetCandidateIds(
+      state,
+      targetRuleId ? [targetRuleId] : [],
+      targetCandidateId ? [targetCandidateId] : [],
+    );
+    const demotedCandidateIds = [];
+    const removedRuleIds = [];
+    for (const demotionCandidateId of demotionTargetCandidateIds) {
+      const demotion = applyCandidateDemotion(state, resolveMemoryCandidate(state, demotionCandidateId), {
+        demotedAt: recordedAt,
+        reasonCodes: [DEMOTION_REASON_EXPLICIT_HARMFUL_FEEDBACK],
+      });
+      if (demotion.action === "demoted") {
+        demotedCandidateIds.push(demotionCandidateId);
+      }
+      if (demotion.removedRuleId) {
+        removedRuleIds.push(demotion.removedRuleId);
+      }
+    }
+    autoDemotion = {
+      action: demotedCandidateIds.length > 0 ? "demoted" : "noop",
+      trigger: DEMOTION_REASON_EXPLICIT_HARMFUL_FEEDBACK,
+      reasonCodes: [DEMOTION_REASON_EXPLICIT_HARMFUL_FEEDBACK],
+      candidateIds: demotionTargetCandidateIds,
+      demotedCandidateIds: asSortedUniqueStrings(demotedCandidateIds),
+      removedRuleIds: asSortedUniqueStrings(removedRuleIds),
+    };
+  }
 
   return {
     ...meta,
@@ -5752,10 +5850,12 @@ function runFeedback(request) {
     recordedAt,
     totalFeedback: state.feedback.length,
     mapping,
+    autoDemotion,
     policyAuditEventId: auditEvent?.auditEventId ?? existingAudit?.auditEventId ?? null,
     observability: {
       replaySafe: true,
       mappedUtilitySignals: mappingUpdatedCount,
+      autoDemotionApplied: autoDemotion?.action === "demoted",
       slo: buildSloObservability(meta.requestDigest, "feedback", 30),
     },
   };
@@ -6339,6 +6439,8 @@ function normalizeState(rawState) {
           normalizeBoundedString(candidate?.candidateId, "shadowCandidates.candidateId", 64) ??
           makeId("cand", hash(stableStringify(candidate))),
         updatedAt: normalizeIsoTimestampOrFallback(candidate?.updatedAt, DEFAULT_VERSION_TIMESTAMP),
+        latestDemotionReasonCodes: normalizeBoundedStringArrayLenient(candidate?.latestDemotionReasonCodes),
+        negativeNetValueStreak: toNonNegativeInteger(candidate?.negativeNetValueStreak, 0),
         metadata: isPlainObject(candidate?.metadata) ? { ...candidate.metadata } : {},
       })),
       "updatedAt",

@@ -266,6 +266,138 @@ test("ums-memory-hpl.3 promote rejects candidates with expired evidence even aft
   );
 });
 
+test("ums-memory-hpl.4 replay_eval auto-demotes on sustained negative net value and remains replay-safe", () => {
+  const storeId = "tenant-hpl4-replay-demote";
+  const profile = "hpl4-replay-demote";
+  const shadow = executeOperation("shadow_write", {
+    storeId,
+    profile,
+    statement: "Sustained negative replay value should demote deterministically.",
+    sourceEventIds: ["evt-hpl4-replay-1"],
+    evidenceEventIds: ["evt-hpl4-replay-1"],
+    createdAt: "2026-03-02T10:00:00.000Z",
+    expiresAt: "2026-04-02T10:00:00.000Z",
+  });
+  const candidateId = shadow.applied[0].candidateId;
+  executeOperation("replay_eval", {
+    storeId,
+    profile,
+    candidateId,
+    successRateDelta: 0.9,
+    evaluatedAt: "2026-03-02T10:10:00.000Z",
+  });
+  const promoted = executeOperation("promote", {
+    storeId,
+    profile,
+    candidateId,
+    promotedAt: "2026-03-02T10:20:00.000Z",
+  });
+  const promotedRuleId = promoted.rule.ruleId;
+
+  const firstNegative = executeOperation("replay_eval", {
+    storeId,
+    profile,
+    candidateId,
+    successRateDelta: -0.1,
+    evaluatedAt: "2026-03-02T11:00:00.000Z",
+  });
+  assert.equal(firstNegative.autoDemotion, null);
+  assert.equal(firstNegative.observability.negativeNetValueStreak, 1);
+
+  const secondNegativeRequest = {
+    storeId,
+    profile,
+    candidateId,
+    successRateDelta: -0.2,
+    evaluatedAt: "2026-03-02T11:30:00.000Z",
+  };
+  const secondNegative = executeOperation("replay_eval", secondNegativeRequest);
+  const secondNegativeReplay = executeOperation("replay_eval", {
+    ...secondNegativeRequest,
+    replayEvalId: secondNegative.replayEvalId,
+  });
+
+  assert.equal(secondNegative.action, "created");
+  assert.equal(secondNegative.autoDemotion.action, "demoted");
+  assert.equal(secondNegative.autoDemotion.removedRuleId, promotedRuleId);
+  assert.equal(secondNegativeReplay.action, "noop");
+  assert.equal(secondNegativeReplay.autoDemotion, null);
+
+  const beforeRoundTrip = snapshotProfile(profile, storeId);
+  const storedBeforeRoundTrip = beforeRoundTrip.shadowCandidates.find((entry) => entry.candidateId === candidateId);
+  assert.ok(storedBeforeRoundTrip);
+  assert.equal(storedBeforeRoundTrip.status, "demoted");
+  assert.equal(storedBeforeRoundTrip.negativeNetValueStreak, 2);
+  assert.deepEqual(storedBeforeRoundTrip.latestDemotionReasonCodes, ["sustained_negative_net_value"]);
+  assert.equal(beforeRoundTrip.rules.some((entry) => entry.ruleId === promotedRuleId), false);
+
+  const snapshot = exportStoreSnapshot();
+  resetStore();
+  importStoreSnapshot(snapshot);
+  const restored = snapshotProfile(profile, storeId);
+  const restoredCandidate = restored.shadowCandidates.find((entry) => entry.candidateId === candidateId);
+  assert.ok(restoredCandidate);
+  assert.equal(restoredCandidate.status, "demoted");
+  assert.equal(restoredCandidate.negativeNetValueStreak, 2);
+  assert.deepEqual(restoredCandidate.latestDemotionReasonCodes, ["sustained_negative_net_value"]);
+  assert.equal(restored.rules.some((entry) => entry.ruleId === promotedRuleId), false);
+});
+
+test("ums-memory-hpl.4 harmful feedback auto-demotes deterministically and noop replay does not duplicate side effects", () => {
+  const storeId = "tenant-hpl4-feedback-demote";
+  const profile = "hpl4-feedback-demote";
+  const shadow = executeOperation("shadow_write", {
+    storeId,
+    profile,
+    statement: "Explicit harmful feedback should demote candidate and promoted rule.",
+    sourceEventIds: ["evt-hpl4-feedback-1"],
+    evidenceEventIds: ["evt-hpl4-feedback-1"],
+    createdAt: "2026-03-02T12:00:00.000Z",
+    expiresAt: "2026-04-02T12:00:00.000Z",
+  });
+  const candidateId = shadow.applied[0].candidateId;
+  executeOperation("replay_eval", {
+    storeId,
+    profile,
+    candidateId,
+    successRateDelta: 0.8,
+    evaluatedAt: "2026-03-02T12:10:00.000Z",
+  });
+  const promoted = executeOperation("promote", {
+    storeId,
+    profile,
+    candidateId,
+    promotedAt: "2026-03-02T12:20:00.000Z",
+  });
+  const targetRuleId = promoted.rule.ruleId;
+  const harmfulRequest = {
+    storeId,
+    profile,
+    targetRuleId,
+    targetCandidateId: candidateId,
+    signal: "harmful",
+    note: "Operator reported this memory caused regressions.",
+    actor: "reviewer-hpl4",
+    timestamp: "2026-03-02T12:45:00.000Z",
+  };
+  const harmful = executeOperation("feedback", harmfulRequest);
+  const harmfulReplay = executeOperation("feedback", harmfulRequest);
+
+  assert.equal(harmful.action, "created");
+  assert.equal(harmful.autoDemotion.action, "demoted");
+  assert.deepEqual(harmful.autoDemotion.demotedCandidateIds, [candidateId]);
+  assert.deepEqual(harmful.autoDemotion.removedRuleIds, [targetRuleId]);
+  assert.equal(harmfulReplay.action, "noop");
+  assert.equal(harmfulReplay.autoDemotion, null);
+
+  const snapshot = snapshotProfile(profile, storeId);
+  const storedCandidate = snapshot.shadowCandidates.find((entry) => entry.candidateId === candidateId);
+  assert.ok(storedCandidate);
+  assert.equal(storedCandidate.status, "demoted");
+  assert.deepEqual(storedCandidate.latestDemotionReasonCodes, ["explicit_harmful_feedback"]);
+  assert.equal(snapshot.rules.some((entry) => entry.ruleId === targetRuleId), false);
+});
+
 test("shadow_write returns canonical candidate metadata and preserves it on deterministic noop replay", () => {
   const request = {
     storeId: "tenant-shadow-contract",
@@ -664,16 +796,16 @@ test("ums-memory-hpl.6 feedback ingestion maps helpful and harmful signals into 
   assert.equal(harmful.action, "created");
   assert.equal(harmful.mapping.updatedRuleIds.length, 1);
   assert.equal(harmful.mapping.updatedCandidateIds.length, 1);
+  assert.equal(harmful.autoDemotion.action, "demoted");
+  assert.deepEqual(harmful.autoDemotion.removedRuleIds, [targetRuleId]);
 
   const snapshot = snapshotProfile(profile, storeId);
   const storedRule = snapshot.rules.find((entry) => entry.ruleId === targetRuleId);
-  assert.ok(storedRule);
-  assert.equal(storedRule.utilitySignalSource, "feedback");
-  assert.equal(storedRule.utilitySignalType, "harmful");
-  assert.equal(storedRule.utilityScore, 0.44);
+  assert.equal(storedRule, undefined);
 
   const storedCandidate = snapshot.shadowCandidates.find((entry) => entry.candidateId === candidateId);
   assert.ok(storedCandidate);
+  assert.equal(storedCandidate.status, "demoted");
   assert.equal(storedCandidate.metadata.utilitySignal.source, "feedback");
   assert.equal(storedCandidate.metadata.utilitySignal.signalType, "harmful");
   assert.equal(storedCandidate.metadata.utilitySignal.score, 0.44);
