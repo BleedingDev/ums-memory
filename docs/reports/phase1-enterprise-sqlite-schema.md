@@ -21,6 +21,8 @@ The schema is normalized around tenant-bound entities:
 9. `evidence`
 10. `memory_evidence_links`
 11. `feedback`
+12. `audit_events`
+13. `storage_idempotency_ledger`
 
 ## Key Constraint Strategy
 
@@ -30,6 +32,8 @@ The schema is normalized around tenant-bound entities:
 - Memory payloads and evidence payloads require valid JSON via `json_valid(...)`.
 - Feedback lifecycle is constrained (`open` rows cannot be resolved; resolved/dismissed rows require `resolved_at_ms`).
 - Partial unique indexes enforce one common scope per tenant and one anchor per project/role/user scope.
+- Audit events are append-only with immutable update/delete triggers.
+- Storage idempotency ledger enforces deterministic replay by unique key + request-hash checks.
 
 ## Deterministic Export Contract
 
@@ -47,3 +51,8 @@ Ordering is validated by:
 
 - `tests/unit/enterprise-sqlite-schema-definition.test.mjs`
 - `tests/unit/enterprise-sqlite-migrations.test.mjs`
+
+## Follow-On Runbook
+
+For the Phase 7 scale path from SQLite to Postgres, see:
+[SQLite to Postgres Migration Strategy](../runbooks/sqlite-to-postgres-migration-strategy.md).
