@@ -1860,6 +1860,132 @@ test("ums-memory-d6q.5.4 policy_decision_update enforces policy checks and deter
   assert.deepEqual(replay.decision.provenanceEventIds, ["evt-pol-1", "evt-pol-2"]);
 });
 
+test("ums-memory-a9v.6 policy_audit_export replay-safe json exports include integrity checksums and deterministic signature metadata", () => {
+  const storeId = "tenant-policy-audit-export-json";
+  const profile = "policy-audit-export-json";
+  executeOperation("policy_decision_update", {
+    storeId,
+    profile,
+    policyKey: "cross_space_recall",
+    outcome: "deny",
+    reasonCodes: ["allowlist_missing"],
+    provenanceEventIds: ["evt-policy-export-1"],
+    timestamp: "2026-03-02T18:00:00.000Z",
+  });
+  executeOperation("policy_decision_update", {
+    storeId,
+    profile,
+    policyKey: "prompt_guard",
+    outcome: "review",
+    reasonCodes: ["prompt_override_detected"],
+    provenanceEventIds: ["evt-policy-export-2"],
+    timestamp: "2026-03-02T18:05:00.000Z",
+  });
+  const request = {
+    storeId,
+    profile,
+    timestamp: "2026-03-02T18:15:00.000Z",
+    limit: 16,
+  };
+
+  const first = executeOperation("policy_audit_export", request);
+  const replay = executeOperation("policy_audit_export", request);
+
+  assert.equal(first.action, "exported");
+  assert.equal(first.exportFormat, "json");
+  assert.equal(first.exportContentType, "application/json");
+  assert.equal(first.exportId, replay.exportId);
+  assert.equal(first.payloadDigest, replay.payloadDigest);
+  assert.equal(first.policyAuditEventId, replay.policyAuditEventId);
+  assert.equal(first.exportContent, replay.exportContent);
+  assert.equal(first.integrity.algorithm, "sha256");
+  assert.equal(first.integrity.payload.checksum, first.payloadDigest);
+  assert.equal(first.integrity.content.checksum, replay.integrity.content.checksum);
+  assert.equal(first.integrity.records.checksum, replay.integrity.records.checksum);
+  assert.equal(first.integrity.records.count > 0, true);
+  assert.equal(first.signature.algorithm, "sha256");
+  assert.equal(first.signature.deterministic, true);
+  assert.equal(first.signature.metadataDigest, replay.signature.metadataDigest);
+  assert.equal(first.signature.value, replay.signature.value);
+  assert.equal(first.signature.signedAt, "2026-03-02T18:15:00.000Z");
+  assert.equal(first.payload.auditTrail.some((entry) => entry.operation === "policy_audit_export"), false);
+  assert.equal(first.observability.replaySafe, true);
+  assert.equal(first.observability.integrityChecksums, true);
+  assert.equal(first.observability.deterministicSignature, true);
+});
+
+test("ums-memory-a9v.6 policy_audit_export emits deterministic ndjson and csv variants with per-format checksums", () => {
+  const storeId = "tenant-policy-audit-export-formats";
+  const profile = "policy-audit-export-formats";
+  executeOperation("policy_decision_update", {
+    storeId,
+    profile,
+    policyKey: "safety_output",
+    outcome: "deny",
+    reasonCodes: ["safety_risk"],
+    provenanceEventIds: ["evt-policy-format-1"],
+    timestamp: "2026-03-02T19:00:00.000Z",
+  });
+  const baseRequest = {
+    storeId,
+    profile,
+    timestamp: "2026-03-02T19:05:00.000Z",
+    limit: 16,
+  };
+
+  const ndjsonFirst = executeOperation("policy_audit_export", {
+    ...baseRequest,
+    format: "ndjson",
+  });
+  const ndjsonReplay = executeOperation("policy_audit_export", {
+    ...baseRequest,
+    format: "ndjson",
+  });
+
+  assert.equal(ndjsonFirst.exportFormat, "ndjson");
+  assert.equal(ndjsonFirst.exportContentType, "application/x-ndjson");
+  assert.equal(ndjsonFirst.exportContent, ndjsonReplay.exportContent);
+  assert.equal(ndjsonFirst.integrity.content.checksum, ndjsonReplay.integrity.content.checksum);
+  assert.equal(ndjsonFirst.signature.value, ndjsonReplay.signature.value);
+  const ndjsonLines = ndjsonFirst.exportContent.split("\n");
+  assert.equal(ndjsonLines.length, ndjsonFirst.integrity.content.lineCount);
+  const ndjsonRecords = ndjsonLines.map((line) => JSON.parse(line));
+  assert.equal(ndjsonRecords[0].recordType, "manifest");
+  assert.equal(ndjsonRecords.some((record) => record.recordType === "policy_decision"), true);
+  assert.equal(ndjsonRecords.some((record) => record.recordType === "policy_audit_event"), true);
+  assert.equal(ndjsonRecords.some((record) => record.recordType === "incident_check"), true);
+  assert.equal(
+    ndjsonRecords.length,
+    1 +
+      ndjsonFirst.payload.policyDecisions.length +
+      ndjsonFirst.payload.auditTrail.length +
+      ndjsonFirst.payload.incidentChecklist.length,
+  );
+
+  const csvFirst = executeOperation("policy_audit_export", {
+    ...baseRequest,
+    format: "csv",
+  });
+  const csvReplay = executeOperation("policy_audit_export", {
+    ...baseRequest,
+    format: "csv",
+  });
+
+  assert.equal(csvFirst.exportFormat, "csv");
+  assert.equal(csvFirst.exportContentType, "text/csv");
+  assert.equal(csvFirst.exportContent, csvReplay.exportContent);
+  assert.equal(csvFirst.integrity.content.checksum, csvReplay.integrity.content.checksum);
+  assert.equal(csvFirst.signature.value, csvReplay.signature.value);
+  const csvLines = csvFirst.exportContent.split("\n");
+  assert.equal(csvLines.length, csvFirst.integrity.content.lineCount);
+  assert.equal(csvLines[0], "recordType,recordId,storeId,profile,timestamp,outcome,policyKey,checkId,status,reasonCodes,provenanceEventIds,details,recordDigest");
+  assert.equal(csvLines.some((line) => line.includes("policy_decision")), true);
+  assert.equal(csvLines.some((line) => line.includes("policy_audit_event")), true);
+  assert.equal(csvLines.some((line) => line.includes("incident_check")), true);
+  assert.notEqual(ndjsonFirst.integrity.content.checksum, csvFirst.integrity.content.checksum);
+  assert.notEqual(ndjsonFirst.signature.value, csvFirst.signature.value);
+});
+
 test("ums-memory-d6q.2.5 core service drives misconception lifecycle with deterministic transitions", () => {
   const created = executeOperation("misconception_update", {
     storeId: "tenant-svc-mis",

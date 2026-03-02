@@ -153,6 +153,25 @@ const DEFAULT_REPLAY_SAFETY_DELTA_THRESHOLD = 0;
 const DEFAULT_CANARY_SAFETY_DELTA_THRESHOLD = 0;
 const SHADOW_CANDIDATE_CONFIDENCE_DECAY_PER_DAY = 0.01;
 const SHADOW_CANDIDATE_CONFIDENCE_FLOOR = 0.05;
+const POLICY_AUDIT_EXPORT_FORMATS = new Set(["json", "ndjson", "csv"]);
+const POLICY_AUDIT_EXPORT_CSV_COLUMNS = Object.freeze([
+  "recordType",
+  "recordId",
+  "storeId",
+  "profile",
+  "timestamp",
+  "outcome",
+  "policyKey",
+  "checkId",
+  "status",
+  "reasonCodes",
+  "provenanceEventIds",
+  "details",
+  "recordDigest",
+]);
+const POLICY_AUDIT_EXPORT_SIGNATURE_KEY_ID = "policy_audit_export_det_v1";
+const POLICY_AUDIT_EXPORT_SIGNATURE_ALGORITHM = "sha256";
+const POLICY_AUDIT_EXPORT_SIGNATURE_VERSION = "1.0.0";
 const DEFAULT_STORE_ID = "coding-agent";
 const INTERNAL_PROFILE_ID = "__store_default__";
 
@@ -6751,6 +6770,13 @@ function runPolicyAuditExport(request) {
     "policy_audit_export.timestamp",
     DEFAULT_VERSION_TIMESTAMP,
   );
+  const exportFormat = normalizeDeterministicEnum(
+    request.format ?? request.exportFormat,
+    "format",
+    "policy_audit_export",
+    POLICY_AUDIT_EXPORT_FORMATS,
+    "json",
+  );
   const limit = Math.min(Math.max(toPositiveInteger(request.limit, MAX_LIST_ITEMS), 1), MAX_LIST_ITEMS);
   const meta = buildMeta("policy_audit_export", storeId, profile, input);
   const policy = getOrCreateRecallAllowlistPolicy(state, storeId, profile);
@@ -6765,7 +6791,11 @@ function runPolicyAuditExport(request) {
       updatedAt: decision.updatedAt,
       digest: hash(stableStringify(decision)),
     }));
-  const auditTrail = sortByTimestampAndId(state.policyAuditTrail ?? [], "timestamp", "auditEventId").slice(-limit);
+  const auditTrail = sortByTimestampAndId(
+    (state.policyAuditTrail ?? []).filter((entry) => entry?.operation !== "policy_audit_export"),
+    "timestamp",
+    "auditEventId",
+  ).slice(-limit);
   const incidentChecklist = [
     {
       checkId: "policy_decision_traceability",
@@ -6818,6 +6848,59 @@ function runPolicyAuditExport(request) {
     ),
   );
   const payloadDigest = hash(stableStringify(payload));
+  const records = buildPolicyAuditExportRecords({
+    exportId,
+    payload,
+    payloadDigest,
+  });
+  const serializedExport = serializePolicyAuditExport(payload, records, exportFormat);
+  const recordChecksum = hash(stableStringify(records.map((record) => record.recordDigest)));
+  const sectionChecksums = {
+    policyDecisions: hash(stableStringify(payload.policyDecisions)),
+    auditTrail: hash(stableStringify(payload.auditTrail)),
+    incidentChecklist: hash(stableStringify(payload.incidentChecklist)),
+  };
+  const integrity = {
+    algorithm: "sha256",
+    payload: {
+      checksum: payloadDigest,
+    },
+    content: {
+      checksum: hash(serializedExport.content),
+      lineCount: serializedExport.lineCount,
+      byteLength: Buffer.byteLength(serializedExport.content, "utf8"),
+      contentType: serializedExport.contentType,
+    },
+    records: {
+      checksum: recordChecksum,
+      count: records.length,
+    },
+    sections: sectionChecksums,
+  };
+  const signatureMaterial = {
+    operation: "policy_audit_export",
+    version: POLICY_AUDIT_EXPORT_SIGNATURE_VERSION,
+    keyId: POLICY_AUDIT_EXPORT_SIGNATURE_KEY_ID,
+    algorithm: POLICY_AUDIT_EXPORT_SIGNATURE_ALGORITHM,
+    signedAt: generatedAt,
+    exportId,
+    format: exportFormat,
+    requestDigest: meta.requestDigest,
+    payloadChecksum: integrity.payload.checksum,
+    contentChecksum: integrity.content.checksum,
+    recordChecksum: integrity.records.checksum,
+    sectionChecksums,
+  };
+  const signatureMetadataDigest = hash(stableStringify(signatureMaterial));
+  const signature = {
+    version: POLICY_AUDIT_EXPORT_SIGNATURE_VERSION,
+    algorithm: POLICY_AUDIT_EXPORT_SIGNATURE_ALGORITHM,
+    keyId: POLICY_AUDIT_EXPORT_SIGNATURE_KEY_ID,
+    signedAt: generatedAt,
+    deterministic: true,
+    metadataDigest: signatureMetadataDigest,
+    value: hash(stableStringify({ scope: "policy_audit_export", metadataDigest: signatureMetadataDigest })),
+  };
   const auditEvent = appendPolicyAuditTrail(state, {
     operation: "policy_audit_export",
     storeId,
@@ -6837,18 +6920,155 @@ function runPolicyAuditExport(request) {
     ...meta,
     action: "exported",
     exportId,
+    exportFormat,
+    exportContentType: serializedExport.contentType,
+    exportContent: serializedExport.content,
     payloadDigest,
     payload,
+    integrity,
+    signature,
     policyAuditEventId: auditEvent.auditEventId,
     observability: {
       decisionCount: policyDecisions.length,
       auditEventCount: auditTrail.length,
       checklistCount: incidentChecklist.length,
+      exportFormat,
+      exportLineCount: serializedExport.lineCount,
+      integrityChecksums: true,
+      deterministicSignature: true,
       deterministicExport: true,
       replaySafe: true,
       slo: buildSloObservability(meta.requestDigest, "policy_audit_export", 50),
     },
   };
+}
+
+function buildPolicyAuditExportRecords({ exportId, payload, payloadDigest }) {
+  const records = [
+    {
+      recordType: "manifest",
+      recordId: exportId,
+      storeId: payload.storeId,
+      profile: payload.profile,
+      timestamp: payload.generatedAt,
+      outcome: "recorded",
+      policyKey: null,
+      checkId: null,
+      status: null,
+      reasonCodes: [],
+      provenanceEventIds: [],
+      details: {
+        exportVersion: payload.exportVersion,
+        policyId: payload.policy.policyId,
+        policyUpdatedAt: payload.policy.updatedAt,
+        allowStoreIds: payload.policy.allowStoreIds,
+        payloadDigest,
+        policyDecisionCount: payload.policyDecisions.length,
+        auditEventCount: payload.auditTrail.length,
+        checklistCount: payload.incidentChecklist.length,
+      },
+    },
+    ...payload.policyDecisions.map((decision) => ({
+      recordType: "policy_decision",
+      recordId: decision.decisionId,
+      storeId: payload.storeId,
+      profile: payload.profile,
+      timestamp: decision.updatedAt,
+      outcome: decision.outcome,
+      policyKey: decision.policyKey,
+      checkId: null,
+      status: null,
+      reasonCodes: decision.reasonCodes,
+      provenanceEventIds: decision.provenanceEventIds,
+      details: {
+        decisionDigest: decision.digest,
+      },
+    })),
+    ...payload.auditTrail.map((entry) => ({
+      recordType: "policy_audit_event",
+      recordId: entry.auditEventId,
+      storeId: payload.storeId,
+      profile: payload.profile,
+      timestamp: entry.timestamp,
+      outcome: entry.outcome,
+      policyKey: null,
+      checkId: null,
+      status: null,
+      reasonCodes: entry.reasonCodes,
+      provenanceEventIds: [],
+      details: {
+        operation: entry.operation,
+        entityId: entry.entityId,
+        details: entry.details,
+      },
+    })),
+    ...payload.incidentChecklist.map((checklistEntry) => ({
+      recordType: "incident_check",
+      recordId: checklistEntry.checkId,
+      storeId: payload.storeId,
+      profile: payload.profile,
+      timestamp: payload.generatedAt,
+      outcome: null,
+      policyKey: null,
+      checkId: checklistEntry.checkId,
+      status: checklistEntry.status,
+      reasonCodes: [],
+      provenanceEventIds: [],
+      details: checklistEntry.details,
+    })),
+  ];
+  return records.map((record) => {
+    const canonicalRecord = stableSortObject(record);
+    return {
+      ...canonicalRecord,
+      recordDigest: hash(stableStringify(canonicalRecord)),
+    };
+  });
+}
+
+function serializePolicyAuditExport(payload, records, format) {
+  if (format === "ndjson") {
+    return {
+      contentType: "application/x-ndjson",
+      content: records.map((record) => stableStringify(record)).join("\n"),
+      lineCount: records.length,
+    };
+  }
+  if (format === "csv") {
+    const rows = [POLICY_AUDIT_EXPORT_CSV_COLUMNS.join(",")];
+    for (const record of records) {
+      rows.push(
+        POLICY_AUDIT_EXPORT_CSV_COLUMNS.map((columnName) =>
+          escapeCsvCellValue(record[columnName] ?? null)).join(","),
+      );
+    }
+    return {
+      contentType: "text/csv",
+      content: rows.join("\n"),
+      lineCount: rows.length,
+    };
+  }
+  return {
+    contentType: "application/json",
+    content: stableStringify(payload),
+    lineCount: 1,
+  };
+}
+
+function escapeCsvCellValue(value) {
+  if (value === null || value === undefined) {
+    return "";
+  }
+  const raw =
+    typeof value === "string"
+      ? value
+      : typeof value === "number" || typeof value === "boolean"
+        ? String(value)
+        : stableStringify(value);
+  if (/[",\n\r]/.test(raw)) {
+    return `"${raw.replaceAll("\"", "\"\"")}"`;
+  }
+  return raw;
 }
 
 function findPolicyAuditTrailByOperationEntity(state, operation, entityId) {
