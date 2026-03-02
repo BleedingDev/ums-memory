@@ -146,6 +146,18 @@ function toErrorResponse(error) {
       },
     };
   }
+  if (error instanceof Error && error.message.startsWith("SERVICE_MISCONFIGURATION:")) {
+    return {
+      statusCode: 500,
+      body: {
+        ok: false,
+        error: {
+          code: "SERVICE_MISCONFIGURATION",
+          message: error.message,
+        },
+      },
+    };
+  }
   return {
     statusCode: 400,
     body: {

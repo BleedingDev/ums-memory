@@ -255,6 +255,54 @@ test("http server exposes deterministic JSON operation routes", async () => {
   }
 });
 
+test("policy_audit_export returns SERVICE_MISCONFIGURATION when signing env is missing", async () => {
+  resetStore();
+  const previousSecret = process.env.UMS_POLICY_AUDIT_EXPORT_SIGNING_SECRET;
+  const previousKeyId = process.env.UMS_POLICY_AUDIT_EXPORT_SIGNING_KEY_ID;
+  delete process.env.UMS_POLICY_AUDIT_EXPORT_SIGNING_SECRET;
+  delete process.env.UMS_POLICY_AUDIT_EXPORT_SIGNING_KEY_ID;
+
+  const { server, host, port } = await startApiServer({
+    host: "127.0.0.1",
+    port: 0,
+    stateFile: null,
+  });
+  const base = `http://${host}:${port}`;
+
+  try {
+    const response = await fetch(`${base}/v1/policy_audit_export`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-ums-store": "tenant-policy-audit-server" },
+      body: JSON.stringify({
+        profile: "policy-audit-server",
+        timestamp: "2026-03-02T20:30:00.000Z",
+      }),
+    });
+    assert.equal(response.status, 500);
+    const body = await response.json();
+    assert.equal(body.ok, false);
+    assert.equal(body.error.code, "SERVICE_MISCONFIGURATION");
+    assert.equal(
+      body.error.message,
+      "SERVICE_MISCONFIGURATION: policy_audit_export signing secret is not configured.",
+    );
+  } finally {
+    await new Promise((resolvePromise, rejectPromise) => {
+      server.close((error) => (error ? rejectPromise(error) : resolvePromise()));
+    });
+    if (previousSecret === undefined) {
+      delete process.env.UMS_POLICY_AUDIT_EXPORT_SIGNING_SECRET;
+    } else {
+      process.env.UMS_POLICY_AUDIT_EXPORT_SIGNING_SECRET = previousSecret;
+    }
+    if (previousKeyId === undefined) {
+      delete process.env.UMS_POLICY_AUDIT_EXPORT_SIGNING_KEY_ID;
+    } else {
+      process.env.UMS_POLICY_AUDIT_EXPORT_SIGNING_KEY_ID = previousKeyId;
+    }
+  }
+});
+
 test("ums-memory-d6q.2.4/3.4/4.4/5.4 http routes expose deterministic P3 contract handlers", async () => {
   resetStore();
   const { server, host } = await startApiServer({ host: "127.0.0.1", port: 0, stateFile: null });

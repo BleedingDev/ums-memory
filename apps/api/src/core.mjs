@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, createHmac } from "node:crypto";
 
 const OPS = [
   "ingest",
@@ -169,8 +169,7 @@ const POLICY_AUDIT_EXPORT_CSV_COLUMNS = Object.freeze([
   "details",
   "recordDigest",
 ]);
-const POLICY_AUDIT_EXPORT_SIGNATURE_KEY_ID = "policy_audit_export_det_v1";
-const POLICY_AUDIT_EXPORT_SIGNATURE_ALGORITHM = "sha256";
+const POLICY_AUDIT_EXPORT_SIGNATURE_ALGORITHM = "hmac-sha256";
 const POLICY_AUDIT_EXPORT_SIGNATURE_VERSION = "1.0.0";
 const DEFAULT_STORE_ID = "coding-agent";
 const INTERNAL_PROFILE_ID = "__store_default__";
@@ -195,6 +194,36 @@ function stableStringify(value) {
 
 function hash(value) {
   return createHash("sha256").update(value).digest("hex");
+}
+
+function hmacSha256(value, secret) {
+  return createHmac("sha256", secret).update(value).digest("hex");
+}
+
+function resolvePolicyAuditExportSigningConfig() {
+  const secret =
+    typeof process.env.UMS_POLICY_AUDIT_EXPORT_SIGNING_SECRET === "string"
+      ? process.env.UMS_POLICY_AUDIT_EXPORT_SIGNING_SECRET.trim()
+      : "";
+  if (!secret) {
+    throw new Error(
+      "SERVICE_MISCONFIGURATION: policy_audit_export signing secret is not configured.",
+    );
+  }
+  const configuredKeyId =
+    typeof process.env.UMS_POLICY_AUDIT_EXPORT_SIGNING_KEY_ID === "string"
+      ? process.env.UMS_POLICY_AUDIT_EXPORT_SIGNING_KEY_ID.trim()
+      : "";
+  if (!configuredKeyId) {
+    throw new Error(
+      "SERVICE_MISCONFIGURATION: policy_audit_export signing key id is not configured.",
+    );
+  }
+  const keyId = configuredKeyId;
+  return {
+    keyId,
+    secret,
+  };
 }
 
 function opSeed(operation, storeId, profile, input) {
@@ -6779,6 +6808,7 @@ function runPolicyAuditExport(request) {
   );
   const limit = Math.min(Math.max(toPositiveInteger(request.limit, MAX_LIST_ITEMS), 1), MAX_LIST_ITEMS);
   const meta = buildMeta("policy_audit_export", storeId, profile, input);
+  const signingConfig = resolvePolicyAuditExportSigningConfig();
   const policy = getOrCreateRecallAllowlistPolicy(state, storeId, profile);
   const policyDecisions = sortByTimestampAndId(state.policyDecisions, "updatedAt", "decisionId")
     .slice(-limit)
@@ -6842,6 +6872,7 @@ function runPolicyAuditExport(request) {
         storeId,
         profile,
         generatedAt,
+        format: exportFormat,
         policyDecisionIds: policyDecisions.map((decision) => decision.decisionId),
         auditEventIds: auditTrail.map((entry) => entry.auditEventId),
       }),
@@ -6880,12 +6911,17 @@ function runPolicyAuditExport(request) {
   const signatureMaterial = {
     operation: "policy_audit_export",
     version: POLICY_AUDIT_EXPORT_SIGNATURE_VERSION,
-    keyId: POLICY_AUDIT_EXPORT_SIGNATURE_KEY_ID,
+    keyId: signingConfig.keyId,
     algorithm: POLICY_AUDIT_EXPORT_SIGNATURE_ALGORITHM,
     signedAt: generatedAt,
     exportId,
     format: exportFormat,
-    requestDigest: meta.requestDigest,
+    normalizedInput: {
+      generatedAt,
+      format: exportFormat,
+      profile,
+      storeId,
+    },
     payloadChecksum: integrity.payload.checksum,
     contentChecksum: integrity.content.checksum,
     recordChecksum: integrity.records.checksum,
@@ -6895,11 +6931,17 @@ function runPolicyAuditExport(request) {
   const signature = {
     version: POLICY_AUDIT_EXPORT_SIGNATURE_VERSION,
     algorithm: POLICY_AUDIT_EXPORT_SIGNATURE_ALGORITHM,
-    keyId: POLICY_AUDIT_EXPORT_SIGNATURE_KEY_ID,
+    keyId: signingConfig.keyId,
     signedAt: generatedAt,
     deterministic: true,
     metadataDigest: signatureMetadataDigest,
-    value: hash(stableStringify({ scope: "policy_audit_export", metadataDigest: signatureMetadataDigest })),
+    value: hmacSha256(
+      stableStringify({
+        metadataDigest: signatureMetadataDigest,
+        scope: "policy_audit_export",
+      }),
+      signingConfig.secret,
+    ),
   };
   const auditEvent = appendPolicyAuditTrail(state, {
     operation: "policy_audit_export",
@@ -6909,9 +6951,12 @@ function runPolicyAuditExport(request) {
     outcome: "recorded",
     reasonCodes: ["policy_audit_export"],
     details: {
+      contentChecksum: integrity.content.checksum,
       decisionCount: policyDecisions.length,
       auditEventCount: auditTrail.length,
       checklistStatus: incidentChecklist.map((entry) => `${entry.checkId}:${entry.status}`),
+      exportFormat,
+      payloadChecksum: integrity.payload.checksum,
     },
     timestamp: generatedAt,
   });
@@ -7059,16 +7104,19 @@ function escapeCsvCellValue(value) {
   if (value === null || value === undefined) {
     return "";
   }
+  const isInputString = typeof value === "string";
   const raw =
     typeof value === "string"
       ? value
       : typeof value === "number" || typeof value === "boolean"
         ? String(value)
         : stableStringify(value);
-  if (/[",\n\r]/.test(raw)) {
-    return `"${raw.replaceAll("\"", "\"\"")}"`;
+  const normalizedRaw =
+    isInputString && /^\s*[=+\-@]/.test(raw) ? `'${raw}` : raw;
+  if (/[",\n\r]/.test(normalizedRaw)) {
+    return `"${normalizedRaw.replaceAll("\"", "\"\"")}"`;
   }
-  return raw;
+  return normalizedRaw;
 }
 
 function findPolicyAuditTrailByOperationEntity(state, operation, entityId) {

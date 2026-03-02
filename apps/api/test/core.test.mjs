@@ -1860,130 +1860,368 @@ test("ums-memory-d6q.5.4 policy_decision_update enforces policy checks and deter
   assert.deepEqual(replay.decision.provenanceEventIds, ["evt-pol-1", "evt-pol-2"]);
 });
 
+function withPolicyAuditSigningEnv(run) {
+  const previousSecret = process.env.UMS_POLICY_AUDIT_EXPORT_SIGNING_SECRET;
+  const previousKeyId = process.env.UMS_POLICY_AUDIT_EXPORT_SIGNING_KEY_ID;
+  process.env.UMS_POLICY_AUDIT_EXPORT_SIGNING_SECRET = "test-policy-audit-signing-secret-v1";
+  process.env.UMS_POLICY_AUDIT_EXPORT_SIGNING_KEY_ID = "test-policy-audit-signing-key-id-v1";
+  try {
+    return run();
+  } finally {
+    if (previousSecret === undefined) {
+      delete process.env.UMS_POLICY_AUDIT_EXPORT_SIGNING_SECRET;
+    } else {
+      process.env.UMS_POLICY_AUDIT_EXPORT_SIGNING_SECRET = previousSecret;
+    }
+    if (previousKeyId === undefined) {
+      delete process.env.UMS_POLICY_AUDIT_EXPORT_SIGNING_KEY_ID;
+    } else {
+      process.env.UMS_POLICY_AUDIT_EXPORT_SIGNING_KEY_ID = previousKeyId;
+    }
+  }
+}
+
 test("ums-memory-a9v.6 policy_audit_export replay-safe json exports include integrity checksums and deterministic signature metadata", () => {
-  const storeId = "tenant-policy-audit-export-json";
-  const profile = "policy-audit-export-json";
-  executeOperation("policy_decision_update", {
-    storeId,
-    profile,
-    policyKey: "cross_space_recall",
-    outcome: "deny",
-    reasonCodes: ["allowlist_missing"],
-    provenanceEventIds: ["evt-policy-export-1"],
-    timestamp: "2026-03-02T18:00:00.000Z",
-  });
-  executeOperation("policy_decision_update", {
-    storeId,
-    profile,
-    policyKey: "prompt_guard",
-    outcome: "review",
-    reasonCodes: ["prompt_override_detected"],
-    provenanceEventIds: ["evt-policy-export-2"],
-    timestamp: "2026-03-02T18:05:00.000Z",
-  });
-  const request = {
-    storeId,
-    profile,
-    timestamp: "2026-03-02T18:15:00.000Z",
-    limit: 16,
-  };
+  withPolicyAuditSigningEnv(() => {
+    const storeId = "tenant-policy-audit-export-json";
+    const profile = "policy-audit-export-json";
+    executeOperation("policy_decision_update", {
+      storeId,
+      profile,
+      policyKey: "cross_space_recall",
+      outcome: "deny",
+      reasonCodes: ["allowlist_missing"],
+      provenanceEventIds: ["evt-policy-export-1"],
+      timestamp: "2026-03-02T18:00:00.000Z",
+    });
+    executeOperation("policy_decision_update", {
+      storeId,
+      profile,
+      policyKey: "prompt_guard",
+      outcome: "review",
+      reasonCodes: ["prompt_override_detected"],
+      provenanceEventIds: ["evt-policy-export-2"],
+      timestamp: "2026-03-02T18:05:00.000Z",
+    });
+    const request = {
+      storeId,
+      profile,
+      timestamp: "2026-03-02T18:15:00.000Z",
+      limit: 16,
+    };
 
-  const first = executeOperation("policy_audit_export", request);
-  const replay = executeOperation("policy_audit_export", request);
+    const first = executeOperation("policy_audit_export", request);
+    const replay = executeOperation("policy_audit_export", request);
 
-  assert.equal(first.action, "exported");
-  assert.equal(first.exportFormat, "json");
-  assert.equal(first.exportContentType, "application/json");
-  assert.equal(first.exportId, replay.exportId);
-  assert.equal(first.payloadDigest, replay.payloadDigest);
-  assert.equal(first.policyAuditEventId, replay.policyAuditEventId);
-  assert.equal(first.exportContent, replay.exportContent);
-  assert.equal(first.integrity.algorithm, "sha256");
-  assert.equal(first.integrity.payload.checksum, first.payloadDigest);
-  assert.equal(first.integrity.content.checksum, replay.integrity.content.checksum);
-  assert.equal(first.integrity.records.checksum, replay.integrity.records.checksum);
-  assert.equal(first.integrity.records.count > 0, true);
-  assert.equal(first.signature.algorithm, "sha256");
-  assert.equal(first.signature.deterministic, true);
-  assert.equal(first.signature.metadataDigest, replay.signature.metadataDigest);
-  assert.equal(first.signature.value, replay.signature.value);
-  assert.equal(first.signature.signedAt, "2026-03-02T18:15:00.000Z");
-  assert.equal(first.payload.auditTrail.some((entry) => entry.operation === "policy_audit_export"), false);
-  assert.equal(first.observability.replaySafe, true);
-  assert.equal(first.observability.integrityChecksums, true);
-  assert.equal(first.observability.deterministicSignature, true);
+    assert.equal(first.action, "exported");
+    assert.equal(first.exportFormat, "json");
+    assert.equal(first.exportContentType, "application/json");
+    assert.equal(first.exportId, replay.exportId);
+    assert.equal(first.payloadDigest, replay.payloadDigest);
+    assert.equal(first.policyAuditEventId, replay.policyAuditEventId);
+    assert.equal(first.exportContent, replay.exportContent);
+    assert.equal(first.integrity.algorithm, "sha256");
+    assert.equal(first.integrity.payload.checksum, first.payloadDigest);
+    assert.equal(first.integrity.content.checksum, replay.integrity.content.checksum);
+    assert.equal(first.integrity.records.checksum, replay.integrity.records.checksum);
+    assert.equal(first.integrity.records.count > 0, true);
+    assert.equal(first.signature.algorithm, "hmac-sha256");
+    assert.equal(first.signature.keyId, "test-policy-audit-signing-key-id-v1");
+    assert.equal(first.signature.deterministic, true);
+    assert.equal(first.signature.metadataDigest, replay.signature.metadataDigest);
+    assert.equal(first.signature.value, replay.signature.value);
+    assert.equal(first.signature.signedAt, "2026-03-02T18:15:00.000Z");
+    assert.equal(first.payload.auditTrail.some((entry) => entry.operation === "policy_audit_export"), false);
+    assert.equal(first.observability.replaySafe, true);
+    assert.equal(first.observability.integrityChecksums, true);
+    assert.equal(first.observability.deterministicSignature, true);
+  });
 });
 
 test("ums-memory-a9v.6 policy_audit_export emits deterministic ndjson and csv variants with per-format checksums", () => {
-  const storeId = "tenant-policy-audit-export-formats";
-  const profile = "policy-audit-export-formats";
-  executeOperation("policy_decision_update", {
-    storeId,
-    profile,
-    policyKey: "safety_output",
-    outcome: "deny",
-    reasonCodes: ["safety_risk"],
-    provenanceEventIds: ["evt-policy-format-1"],
-    timestamp: "2026-03-02T19:00:00.000Z",
-  });
-  const baseRequest = {
-    storeId,
-    profile,
-    timestamp: "2026-03-02T19:05:00.000Z",
-    limit: 16,
-  };
+  withPolicyAuditSigningEnv(() => {
+    const storeId = "tenant-policy-audit-export-formats";
+    const profile = "policy-audit-export-formats";
+    executeOperation("policy_decision_update", {
+      storeId,
+      profile,
+      policyKey: "safety_output",
+      outcome: "deny",
+      reasonCodes: ["safety_risk"],
+      provenanceEventIds: ["evt-policy-format-1"],
+      timestamp: "2026-03-02T19:00:00.000Z",
+    });
+    const baseRequest = {
+      storeId,
+      profile,
+      timestamp: "2026-03-02T19:05:00.000Z",
+      limit: 16,
+    };
 
-  const ndjsonFirst = executeOperation("policy_audit_export", {
-    ...baseRequest,
-    format: "ndjson",
-  });
-  const ndjsonReplay = executeOperation("policy_audit_export", {
-    ...baseRequest,
-    format: "ndjson",
-  });
+    const ndjsonFirst = executeOperation("policy_audit_export", {
+      ...baseRequest,
+      format: "ndjson",
+    });
+    const ndjsonReplay = executeOperation("policy_audit_export", {
+      ...baseRequest,
+      format: "ndjson",
+    });
 
-  assert.equal(ndjsonFirst.exportFormat, "ndjson");
-  assert.equal(ndjsonFirst.exportContentType, "application/x-ndjson");
-  assert.equal(ndjsonFirst.exportContent, ndjsonReplay.exportContent);
-  assert.equal(ndjsonFirst.integrity.content.checksum, ndjsonReplay.integrity.content.checksum);
-  assert.equal(ndjsonFirst.signature.value, ndjsonReplay.signature.value);
-  const ndjsonLines = ndjsonFirst.exportContent.split("\n");
-  assert.equal(ndjsonLines.length, ndjsonFirst.integrity.content.lineCount);
-  const ndjsonRecords = ndjsonLines.map((line) => JSON.parse(line));
-  assert.equal(ndjsonRecords[0].recordType, "manifest");
-  assert.equal(ndjsonRecords.some((record) => record.recordType === "policy_decision"), true);
-  assert.equal(ndjsonRecords.some((record) => record.recordType === "policy_audit_event"), true);
-  assert.equal(ndjsonRecords.some((record) => record.recordType === "incident_check"), true);
-  assert.equal(
-    ndjsonRecords.length,
-    1 +
-      ndjsonFirst.payload.policyDecisions.length +
-      ndjsonFirst.payload.auditTrail.length +
-      ndjsonFirst.payload.incidentChecklist.length,
-  );
+    assert.equal(ndjsonFirst.exportFormat, "ndjson");
+    assert.equal(ndjsonFirst.exportContentType, "application/x-ndjson");
+    assert.equal(ndjsonFirst.exportContent, ndjsonReplay.exportContent);
+    assert.equal(ndjsonFirst.integrity.content.checksum, ndjsonReplay.integrity.content.checksum);
+    assert.equal(ndjsonFirst.signature.value, ndjsonReplay.signature.value);
+    const ndjsonLines = ndjsonFirst.exportContent.split("\n");
+    assert.equal(ndjsonLines.length, ndjsonFirst.integrity.content.lineCount);
+    const ndjsonRecords = ndjsonLines.map((line) => JSON.parse(line));
+    assert.equal(ndjsonRecords[0].recordType, "manifest");
+    assert.equal(ndjsonRecords.some((record) => record.recordType === "policy_decision"), true);
+    assert.equal(ndjsonRecords.some((record) => record.recordType === "policy_audit_event"), true);
+    assert.equal(ndjsonRecords.some((record) => record.recordType === "incident_check"), true);
+    assert.equal(
+      ndjsonRecords.length,
+      1 +
+        ndjsonFirst.payload.policyDecisions.length +
+        ndjsonFirst.payload.auditTrail.length +
+        ndjsonFirst.payload.incidentChecklist.length,
+    );
 
-  const csvFirst = executeOperation("policy_audit_export", {
-    ...baseRequest,
-    format: "csv",
-  });
-  const csvReplay = executeOperation("policy_audit_export", {
-    ...baseRequest,
-    format: "csv",
-  });
+    const csvFirst = executeOperation("policy_audit_export", {
+      ...baseRequest,
+      format: "csv",
+    });
+    const csvReplay = executeOperation("policy_audit_export", {
+      ...baseRequest,
+      format: "csv",
+    });
 
-  assert.equal(csvFirst.exportFormat, "csv");
-  assert.equal(csvFirst.exportContentType, "text/csv");
-  assert.equal(csvFirst.exportContent, csvReplay.exportContent);
-  assert.equal(csvFirst.integrity.content.checksum, csvReplay.integrity.content.checksum);
-  assert.equal(csvFirst.signature.value, csvReplay.signature.value);
-  const csvLines = csvFirst.exportContent.split("\n");
-  assert.equal(csvLines.length, csvFirst.integrity.content.lineCount);
-  assert.equal(csvLines[0], "recordType,recordId,storeId,profile,timestamp,outcome,policyKey,checkId,status,reasonCodes,provenanceEventIds,details,recordDigest");
-  assert.equal(csvLines.some((line) => line.includes("policy_decision")), true);
-  assert.equal(csvLines.some((line) => line.includes("policy_audit_event")), true);
-  assert.equal(csvLines.some((line) => line.includes("incident_check")), true);
-  assert.notEqual(ndjsonFirst.integrity.content.checksum, csvFirst.integrity.content.checksum);
-  assert.notEqual(ndjsonFirst.signature.value, csvFirst.signature.value);
+    assert.equal(csvFirst.exportFormat, "csv");
+    assert.equal(csvFirst.exportContentType, "text/csv");
+    assert.equal(csvFirst.exportContent, csvReplay.exportContent);
+    assert.equal(csvFirst.integrity.content.checksum, csvReplay.integrity.content.checksum);
+    assert.equal(csvFirst.signature.value, csvReplay.signature.value);
+    const csvLines = csvFirst.exportContent.split("\n");
+    assert.equal(csvLines.length, csvFirst.integrity.content.lineCount);
+    assert.equal(
+      csvLines[0],
+      "recordType,recordId,storeId,profile,timestamp,outcome,policyKey,checkId,status,reasonCodes,provenanceEventIds,details,recordDigest",
+    );
+    assert.equal(csvLines.some((line) => line.includes("policy_decision")), true);
+    assert.equal(csvLines.some((line) => line.includes("policy_audit_event")), true);
+    assert.equal(csvLines.some((line) => line.includes("incident_check")), true);
+    assert.notEqual(ndjsonFirst.integrity.content.checksum, csvFirst.integrity.content.checksum);
+    assert.notEqual(ndjsonFirst.signature.value, csvFirst.signature.value);
+    assert.notEqual(ndjsonFirst.policyAuditEventId, csvFirst.policyAuditEventId);
+    assert.notEqual(ndjsonFirst.exportId, csvFirst.exportId);
+  });
+});
+
+test("ums-memory-a9v.6 policy_audit_export signature remains stable for normalized equivalent requests", () => {
+  withPolicyAuditSigningEnv(() => {
+    const storeId = "tenant-policy-audit-export-signature-stability";
+    const profile = "policy-audit-export-signature-stability";
+    executeOperation("policy_decision_update", {
+      storeId,
+      profile,
+      policyKey: "signature_stability_guard",
+      outcome: "review",
+      reasonCodes: ["manual_review_required"],
+      provenanceEventIds: ["evt-policy-signature-stability-1"],
+      timestamp: "2026-03-02T20:00:00.000Z",
+    });
+
+    const canonical = executeOperation("policy_audit_export", {
+      storeId,
+      profile,
+      generatedAt: "2026-03-02T20:05:00.000Z",
+      format: "json",
+      limit: 128,
+    });
+    const alias = executeOperation("policy_audit_export", {
+      storeId,
+      profile,
+      timestamp: "2026-03-02T20:05:00.000Z",
+      exportFormat: "json",
+      limit: 1,
+      ignoredField: "ignored",
+    });
+
+    assert.equal(canonical.exportContent, alias.exportContent);
+    assert.equal(canonical.integrity.content.checksum, alias.integrity.content.checksum);
+    assert.equal(canonical.signature.metadataDigest, alias.signature.metadataDigest);
+    assert.equal(canonical.signature.value, alias.signature.value);
+  });
+});
+
+test("ums-memory-a9v.6 policy_audit_export csv neutralizes spreadsheet formulas", () => {
+  withPolicyAuditSigningEnv(() => {
+    const storeId = "tenant-policy-audit-export-csv-formula";
+    const profile = "policy-audit-export-csv-formula";
+    executeOperation("policy_decision_update", {
+      storeId,
+      profile,
+      policyKey: "=SUM(1,1)",
+      outcome: "deny",
+      reasonCodes: ["formula_injection_probe"],
+      provenanceEventIds: ["evt-policy-csv-formula-1"],
+      timestamp: "2026-03-02T20:10:00.000Z",
+    });
+    executeOperation("policy_decision_update", {
+      storeId,
+      profile,
+      policyKey: "@cmd|calc",
+      outcome: "review",
+      reasonCodes: ["formula_injection_probe"],
+      provenanceEventIds: ["evt-policy-csv-formula-2"],
+      timestamp: "2026-03-02T20:10:30.000Z",
+    });
+
+    const csv = executeOperation("policy_audit_export", {
+      storeId,
+      profile,
+      timestamp: "2026-03-02T20:11:00.000Z",
+      format: "csv",
+    });
+
+    assert.equal(csv.exportFormat, "csv");
+    assert.equal(csv.exportContentType, "text/csv");
+    assert.equal(csv.exportContent.includes("'=SUM(1,1)"), true);
+    assert.equal(csv.exportContent.includes("'@cmd|calc"), true);
+  });
+});
+
+test("ums-memory-a9v.6 policy_audit_export fails fast when signing secret is missing", () => {
+  const previousSecret = process.env.UMS_POLICY_AUDIT_EXPORT_SIGNING_SECRET;
+  const previousKeyId = process.env.UMS_POLICY_AUDIT_EXPORT_SIGNING_KEY_ID;
+  delete process.env.UMS_POLICY_AUDIT_EXPORT_SIGNING_SECRET;
+  delete process.env.UMS_POLICY_AUDIT_EXPORT_SIGNING_KEY_ID;
+  try {
+    let message = "";
+    try {
+      executeOperation("policy_audit_export", {
+        storeId: "tenant-policy-audit-export-missing-secret",
+        profile: "policy-audit-export-missing-secret",
+        timestamp: "2026-03-02T20:20:00.000Z",
+      });
+    } catch (error) {
+      message = error instanceof Error ? error.message : String(error);
+    }
+    assert.equal(
+      message,
+      "SERVICE_MISCONFIGURATION: policy_audit_export signing secret is not configured.",
+    );
+  } finally {
+    if (previousSecret === undefined) {
+      delete process.env.UMS_POLICY_AUDIT_EXPORT_SIGNING_SECRET;
+    } else {
+      process.env.UMS_POLICY_AUDIT_EXPORT_SIGNING_SECRET = previousSecret;
+    }
+    if (previousKeyId === undefined) {
+      delete process.env.UMS_POLICY_AUDIT_EXPORT_SIGNING_KEY_ID;
+    } else {
+      process.env.UMS_POLICY_AUDIT_EXPORT_SIGNING_KEY_ID = previousKeyId;
+    }
+  }
+});
+
+test("ums-memory-a9v.6 policy_audit_export fails fast when signing key id is missing", () => {
+  const previousSecret = process.env.UMS_POLICY_AUDIT_EXPORT_SIGNING_SECRET;
+  const previousKeyId = process.env.UMS_POLICY_AUDIT_EXPORT_SIGNING_KEY_ID;
+  process.env.UMS_POLICY_AUDIT_EXPORT_SIGNING_SECRET = "test-policy-audit-signing-secret-v1";
+  delete process.env.UMS_POLICY_AUDIT_EXPORT_SIGNING_KEY_ID;
+  try {
+    let message = "";
+    try {
+      executeOperation("policy_audit_export", {
+        storeId: "tenant-policy-audit-export-missing-key-id",
+        profile: "policy-audit-export-missing-key-id",
+        timestamp: "2026-03-02T20:21:00.000Z",
+      });
+    } catch (error) {
+      message = error instanceof Error ? error.message : String(error);
+    }
+    assert.equal(
+      message,
+      "SERVICE_MISCONFIGURATION: policy_audit_export signing key id is not configured.",
+    );
+  } finally {
+    if (previousSecret === undefined) {
+      delete process.env.UMS_POLICY_AUDIT_EXPORT_SIGNING_SECRET;
+    } else {
+      process.env.UMS_POLICY_AUDIT_EXPORT_SIGNING_SECRET = previousSecret;
+    }
+    if (previousKeyId === undefined) {
+      delete process.env.UMS_POLICY_AUDIT_EXPORT_SIGNING_KEY_ID;
+    } else {
+      process.env.UMS_POLICY_AUDIT_EXPORT_SIGNING_KEY_ID = previousKeyId;
+    }
+  }
+});
+
+test("ums-memory-a9v.6 policy_audit_export keeps audit event replay-safe across signing key rotation", () => {
+  const previousSecret = process.env.UMS_POLICY_AUDIT_EXPORT_SIGNING_SECRET;
+  const previousKeyId = process.env.UMS_POLICY_AUDIT_EXPORT_SIGNING_KEY_ID;
+  const storeId = "tenant-policy-audit-export-key-rotation";
+  const profile = "policy-audit-export-key-rotation";
+  try {
+    executeOperation("policy_decision_update", {
+      storeId,
+      profile,
+      policyKey: "key_rotation_policy",
+      outcome: "review",
+      reasonCodes: ["manual_review_required"],
+      provenanceEventIds: ["evt-policy-key-rotation-1"],
+      timestamp: "2026-03-02T20:22:00.000Z",
+    });
+
+    process.env.UMS_POLICY_AUDIT_EXPORT_SIGNING_SECRET = "test-policy-audit-signing-secret-v1";
+    process.env.UMS_POLICY_AUDIT_EXPORT_SIGNING_KEY_ID = "test-policy-audit-signing-key-id-v1";
+    const first = executeOperation("policy_audit_export", {
+      storeId,
+      profile,
+      timestamp: "2026-03-02T20:23:00.000Z",
+      format: "json",
+    });
+
+    process.env.UMS_POLICY_AUDIT_EXPORT_SIGNING_SECRET = "test-policy-audit-signing-secret-v2";
+    process.env.UMS_POLICY_AUDIT_EXPORT_SIGNING_KEY_ID = "test-policy-audit-signing-key-id-v2";
+    const rotated = executeOperation("policy_audit_export", {
+      storeId,
+      profile,
+      timestamp: "2026-03-02T20:23:00.000Z",
+      format: "json",
+    });
+
+    process.env.UMS_POLICY_AUDIT_EXPORT_SIGNING_SECRET = "test-policy-audit-signing-secret-v3";
+    process.env.UMS_POLICY_AUDIT_EXPORT_SIGNING_KEY_ID = "test-policy-audit-signing-key-id-v2";
+    const rotatedSecretOnly = executeOperation("policy_audit_export", {
+      storeId,
+      profile,
+      timestamp: "2026-03-02T20:23:00.000Z",
+      format: "json",
+    });
+
+    assert.equal(first.exportId, rotated.exportId);
+    assert.equal(first.policyAuditEventId, rotated.policyAuditEventId);
+    assert.equal(first.integrity.content.checksum, rotated.integrity.content.checksum);
+    assert.notEqual(first.signature.value, rotated.signature.value);
+    assert.notEqual(first.signature.keyId, rotated.signature.keyId);
+    assert.equal(rotated.policyAuditEventId, rotatedSecretOnly.policyAuditEventId);
+    assert.equal(rotated.signature.keyId, rotatedSecretOnly.signature.keyId);
+    assert.notEqual(rotated.signature.value, rotatedSecretOnly.signature.value);
+  } finally {
+    if (previousSecret === undefined) {
+      delete process.env.UMS_POLICY_AUDIT_EXPORT_SIGNING_SECRET;
+    } else {
+      process.env.UMS_POLICY_AUDIT_EXPORT_SIGNING_SECRET = previousSecret;
+    }
+    if (previousKeyId === undefined) {
+      delete process.env.UMS_POLICY_AUDIT_EXPORT_SIGNING_KEY_ID;
+    } else {
+      process.env.UMS_POLICY_AUDIT_EXPORT_SIGNING_KEY_ID = previousKeyId;
+    }
+  }
 });
 
 test("ums-memory-d6q.2.5 core service drives misconception lifecycle with deterministic transitions", () => {
