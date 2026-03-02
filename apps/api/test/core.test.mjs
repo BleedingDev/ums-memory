@@ -44,6 +44,10 @@ test("core exposes the full required operation surface", () => {
     "recall_authorization",
     "tutor_degraded",
     "policy_audit_export",
+    "memory_console_search",
+    "memory_console_timeline",
+    "memory_console_provenance",
+    "memory_console_policy_audit",
     "feedback",
     "outcome",
     "audit",
@@ -70,6 +74,119 @@ test("ingest is deterministic for identical request payload", () => {
   assert.equal(first.ledgerDigest, second.ledgerDigest);
   assert.equal(first.storeId, "coding-agent");
   assert.deepEqual(first.eventRefs, second.eventRefs);
+});
+
+test("ums-memory-yji.6 memory_console operations return deterministic bounded operator read models", () => {
+  const storeId = "tenant-yji6-core";
+  const profile = "operator-yji6-core";
+  const profileUpdate = executeOperation("learner_profile_update", {
+    storeId,
+    profile,
+    learnerId: "learner-yji6",
+    goals: ["timeline", "auditability"],
+    identityRefs: [{ namespace: "email", value: "yji6@example.com", isPrimary: true }],
+    evidenceEventIds: ["ep-profile-yji6-1"],
+    timestamp: "2026-03-01T10:00:00.000Z",
+  });
+  executeOperation("misconception_update", {
+    storeId,
+    profile,
+    misconceptionKey: "off-by-one",
+    signal: "harmful",
+    evidenceEventIds: ["evt-mis-yji6-1"],
+    timestamp: "2026-03-01T11:00:00.000Z",
+  });
+  const decision = executeOperation("policy_decision_update", {
+    storeId,
+    profile,
+    policyKey: "operator-safety",
+    outcome: "deny",
+    reasonCodes: ["safety-risk"],
+    provenanceEventIds: ["evt-pol-yji6-1"],
+    evidenceEventIds: ["ep-pol-yji6-1"],
+    timestamp: "2026-03-01T12:00:00.000Z",
+  });
+
+  const searchRequest = {
+    storeId,
+    profile,
+    query: "off-by-one",
+    types: ["misconception"],
+    limit: 5,
+  };
+  const search = executeOperation("memory_console_search", searchRequest);
+  const searchAlias = executeOperation("memory_search", searchRequest);
+  assert.equal(search.operation, "memory_console_search");
+  assert.equal(search.action, "listed");
+  assert.equal(search.totalMatches, 1);
+  assert.equal(search.results.length, 1);
+  assert.deepEqual(search.results, searchAlias.results);
+
+  const timelineRequest = {
+    storeId,
+    profile,
+    types: ["policy_decision", "policy_audit_event"],
+    since: "2026-03-01T00:00:00.000Z",
+    until: "2026-03-01T23:59:59.999Z",
+    limit: 8,
+  };
+  const timeline = executeOperation("memory_console_timeline", timelineRequest);
+  const timelineReplay = executeOperation("memory_console_timeline", timelineRequest);
+  assert.deepEqual(timeline, timelineReplay);
+  assert.equal(timeline.events.length >= 2, true);
+  assert.equal(
+    timeline.events.every(
+      (event) => event.timestamp >= timelineRequest.since && event.timestamp <= timelineRequest.until,
+    ),
+    true,
+  );
+  assert.equal(timeline.events.some((event) => event.entityType === "policy_decision"), true);
+
+  const provenance = executeOperation("memory_console_provenance", {
+    storeId,
+    profile,
+    entityRefs: [
+      { entityType: "learner_profile", entityId: profileUpdate.profileId },
+      { entityType: "policy_decision", entityId: decision.decisionId },
+      { entityType: "policy_audit_event", entityId: decision.policyAuditEventId },
+      { entityType: "policy_decision", entityId: "pol_missing" },
+    ],
+  });
+  assert.equal(provenance.operation, "memory_console_provenance");
+  assert.deepEqual(provenance.resolution, {
+    requested: 4,
+    resolved: 3,
+    unresolved: 1,
+    linkedSourceIdCount: provenance.linkedSourceIds.length,
+  });
+  const decisionRef = provenance.entities.find((entry) => entry.entityId === decision.decisionId);
+  assert.ok(decisionRef);
+  assert.equal(decisionRef.found, true);
+  assert.equal(decisionRef.linkedSourceIds.includes("evt-pol-yji6-1"), true);
+  const learnerRef = provenance.entities.find((entry) => entry.entityId === profileUpdate.profileId);
+  assert.ok(learnerRef);
+  assert.equal(
+    learnerRef.provenancePointers.some((pointer) => pointer.pointerId === "ep-profile-yji6-1"),
+    true,
+  );
+
+  const policyAuditRequest = {
+    storeId,
+    profile,
+    outcomes: ["deny"],
+    operations: ["policy_decision_update"],
+    reasonCodes: ["safety-risk"],
+    policyKey: "operator-safety",
+    limit: 4,
+  };
+  const policyAudit = executeOperation("memory_console_policy_audit", policyAuditRequest);
+  const policyAuditReplay = executeOperation("memory_console_policy_audit", policyAuditRequest);
+  assert.deepEqual(policyAudit, policyAuditReplay);
+  assert.equal(policyAudit.operation, "memory_console_policy_audit");
+  assert.equal(policyAudit.totalPolicyDecisions, 1);
+  assert.equal(policyAudit.policyDecisions[0].decisionId, decision.decisionId);
+  assert.equal(policyAudit.auditTrail.some((entry) => entry.operation === "policy_decision_update"), true);
+  assert.equal(policyAudit.summary.deniedDecisions, 1);
 });
 
 test("shadow candidates and replay evaluations survive export/import round-trips", () => {

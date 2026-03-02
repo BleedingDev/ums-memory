@@ -184,6 +184,10 @@ test("http server exposes deterministic JSON operation routes", async () => {
     assert.equal(rootBody.operations.includes("/v1/policy_decision_update"), true);
     assert.equal(rootBody.operations.includes("/v1/incident_escalation_signal"), true);
     assert.equal(rootBody.operations.includes("/v1/manual_quarantine_override"), true);
+    assert.equal(rootBody.operations.includes("/v1/memory_console_search"), true);
+    assert.equal(rootBody.operations.includes("/v1/memory_console_timeline"), true);
+    assert.equal(rootBody.operations.includes("/v1/memory_console_provenance"), true);
+    assert.equal(rootBody.operations.includes("/v1/memory_console_policy_audit"), true);
 
     const ingestRes = await fetch(`${base}/v1/ingest`, {
       method: "POST",
@@ -251,6 +255,176 @@ test("http server exposes deterministic JSON operation routes", async () => {
   } finally {
     await new Promise((resolve, reject) => {
       server.close((error) => (error ? reject(error) : resolve()));
+    });
+  }
+});
+
+test("ums-memory-yji.6 memory_console HTTP routes expose deterministic operator contracts", async () => {
+  resetStore();
+  const { server, host, port } = await startApiServer({
+    host: "127.0.0.1",
+    port: 0,
+    stateFile: null,
+  });
+  const base = `http://${host}:${port}`;
+
+  try {
+    const profileRes = await fetch(`${base}/v1/learner_profile_update`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-ums-store": "tenant-yji6-http" },
+      body: JSON.stringify({
+        profile: "operator-yji6-http",
+        learnerId: "learner-http-yji6",
+        identityRefs: [{ namespace: "email", value: "http-yji6@example.com", isPrimary: true }],
+        goals: ["incident-response"],
+        evidenceEventIds: ["ep-http-profile-yji6-1"],
+        timestamp: "2026-03-01T10:00:00.000Z",
+      }),
+    });
+    assert.equal(profileRes.status, 200);
+    const profileBody = await profileRes.json();
+    assert.equal(profileBody.ok, true);
+    const profileId = profileBody.data.profileId;
+
+    const misconceptionRes = await fetch(`${base}/v1/misconception_update`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-ums-store": "tenant-yji6-http" },
+      body: JSON.stringify({
+        profile: "operator-yji6-http",
+        misconceptionKey: "timeline-gap",
+        signal: "harmful",
+        evidenceEventIds: ["evt-http-mis-yji6-1"],
+        timestamp: "2026-03-01T11:00:00.000Z",
+      }),
+    });
+    assert.equal(misconceptionRes.status, 200);
+
+    const policyRes = await fetch(`${base}/v1/policy_decision_update`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-ums-store": "tenant-yji6-http" },
+      body: JSON.stringify({
+        profile: "operator-yji6-http",
+        policyKey: "operator-safety-http",
+        outcome: "deny",
+        reasonCodes: ["safety-risk-http"],
+        provenanceEventIds: ["evt-pol-http-yji6-1"],
+        evidenceEventIds: ["ep-pol-http-yji6-1"],
+        timestamp: "2026-03-01T12:00:00.000Z",
+      }),
+    });
+    assert.equal(policyRes.status, 200);
+    const policyBody = await policyRes.json();
+    assert.equal(policyBody.ok, true);
+    const decisionId = policyBody.data.decisionId;
+    const policyAuditEventId = policyBody.data.policyAuditEventId;
+
+    const searchRequest = {
+      profile: "operator-yji6-http",
+      query: "timeline-gap",
+      type: "misconception",
+      limit: 3,
+    };
+    const searchRes = await fetch(`${base}/v1/memory_console_search`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-ums-store": "tenant-yji6-http" },
+      body: JSON.stringify(searchRequest),
+    });
+    const searchReplayRes = await fetch(`${base}/v1/memory_console_search`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-ums-store": "tenant-yji6-http" },
+      body: JSON.stringify(searchRequest),
+    });
+    assert.equal(searchRes.status, 200);
+    assert.equal(searchReplayRes.status, 200);
+    const searchBody = await searchRes.json();
+    const searchReplayBody = await searchReplayRes.json();
+    assert.equal(searchBody.ok, true);
+    assert.equal(searchBody.data.operation, "memory_console_search");
+    assert.equal(searchBody.data.totalMatches, 1);
+    assert.deepEqual(searchBody.data.results, searchReplayBody.data.results);
+
+    const timelineRequest = {
+      profile: "operator-yji6-http",
+      types: ["policy_decision", "policy_audit_event"],
+      since: "2026-03-01T00:00:00.000Z",
+      until: "2026-03-01T23:59:59.999Z",
+      limit: 6,
+    };
+    const timelineRes = await fetch(`${base}/v1/memory_console_timeline`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-ums-store": "tenant-yji6-http" },
+      body: JSON.stringify(timelineRequest),
+    });
+    assert.equal(timelineRes.status, 200);
+    const timelineBody = await timelineRes.json();
+    assert.equal(timelineBody.ok, true);
+    assert.equal(timelineBody.data.operation, "memory_console_timeline");
+    assert.equal(
+      timelineBody.data.events.every(
+        (event) => event.timestamp >= timelineRequest.since && event.timestamp <= timelineRequest.until,
+      ),
+      true,
+    );
+    assert.equal(timelineBody.data.events.some((event) => event.entityType === "policy_decision"), true);
+
+    const provenanceRes = await fetch(`${base}/v1/memory_console_provenance`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-ums-store": "tenant-yji6-http" },
+      body: JSON.stringify({
+        profile: "operator-yji6-http",
+        entityRefs: [
+          { entityType: "learner_profile", entityId: profileId },
+          { entityType: "policy_decision", entityId: decisionId },
+          { entityType: "policy_audit_event", entityId: policyAuditEventId },
+          { entityType: "policy_decision", entityId: "pol_missing_http" },
+        ],
+      }),
+    });
+    assert.equal(provenanceRes.status, 200);
+    const provenanceBody = await provenanceRes.json();
+    assert.equal(provenanceBody.ok, true);
+    assert.equal(provenanceBody.data.operation, "memory_console_provenance");
+    assert.equal(provenanceBody.data.resolution.resolved, 3);
+    assert.equal(
+      provenanceBody.data.entities.some(
+        (entity) =>
+          entity.entityType === "policy_decision" &&
+          entity.entityId === decisionId &&
+          entity.linkedSourceIds.includes("evt-pol-http-yji6-1"),
+      ),
+      true,
+    );
+
+    const policyAuditRequest = {
+      profile: "operator-yji6-http",
+      outcomes: ["deny"],
+      operations: ["policy_decision_update"],
+      reasonCodes: ["safety-risk-http"],
+      policyKey: "operator-safety-http",
+      limit: 5,
+    };
+    const policyAuditRes = await fetch(`${base}/v1/memory_console_policy_audit`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-ums-store": "tenant-yji6-http" },
+      body: JSON.stringify(policyAuditRequest),
+    });
+    const policyAuditReplayRes = await fetch(`${base}/v1/memory_console_policy_audit`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-ums-store": "tenant-yji6-http" },
+      body: JSON.stringify(policyAuditRequest),
+    });
+    assert.equal(policyAuditRes.status, 200);
+    assert.equal(policyAuditReplayRes.status, 200);
+    const policyAuditBody = await policyAuditRes.json();
+    const policyAuditReplayBody = await policyAuditReplayRes.json();
+    assert.equal(policyAuditBody.ok, true);
+    assert.equal(policyAuditBody.data.operation, "memory_console_policy_audit");
+    assert.equal(policyAuditBody.data.totalPolicyDecisions, 1);
+    assert.equal(policyAuditBody.data.policyDecisions[0].decisionId, decisionId);
+    assert.deepEqual(policyAuditBody.data.policyDecisions, policyAuditReplayBody.data.policyDecisions);
+  } finally {
+    await new Promise((resolvePromise, rejectPromise) => {
+      server.close((error) => (error ? rejectPromise(error) : resolvePromise()));
     });
   }
 });

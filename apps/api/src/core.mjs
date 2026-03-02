@@ -28,6 +28,10 @@ const OPS = [
   "recall_authorization",
   "tutor_degraded",
   "policy_audit_export",
+  "memory_console_search",
+  "memory_console_timeline",
+  "memory_console_provenance",
+  "memory_console_policy_audit",
   "feedback",
   "outcome",
   "audit",
@@ -55,6 +59,7 @@ const DEFAULT_RECOMMENDATION_TOKEN_BUDGET = 1024;
 const DEFAULT_FRESHNESS_WARNING_DAYS = 14;
 const DEFAULT_DECAY_WARNING_DAYS = 30;
 const DEFAULT_MAX_CONFLICT_NOTES = 8;
+const DEFAULT_MEMORY_CONSOLE_LIMIT = 25;
 const PROFILE_EVIDENCE_CONTRACT_ERROR =
   "EVIDENCE_POINTER_CONTRACT_VIOLATION: learner_profile_update requires at least one evidence pointer or an explicit policy exception.";
 const MISCONCEPTION_EVIDENCE_CONTRACT_ERROR =
@@ -173,6 +178,41 @@ const POLICY_AUDIT_EXPORT_SIGNATURE_ALGORITHM = "hmac-sha256";
 const POLICY_AUDIT_EXPORT_SIGNATURE_VERSION = "1.0.0";
 const DEFAULT_STORE_ID = "coding-agent";
 const INTERNAL_PROFILE_ID = "__store_default__";
+const MEMORY_CONSOLE_ENTITY_TYPES = Object.freeze([
+  "learner_profile",
+  "identity_graph_edge",
+  "misconception",
+  "curriculum_plan_item",
+  "review_schedule_entry",
+  "pain_signal",
+  "failure_signal",
+  "incident_escalation",
+  "manual_override_control",
+  "policy_decision",
+  "policy_audit_event",
+  "shadow_candidate",
+  "replay_evaluation",
+  "feedback",
+  "outcome",
+  "degraded_tutor_session",
+]);
+const MEMORY_CONSOLE_ENTITY_TYPE_SET = new Set(MEMORY_CONSOLE_ENTITY_TYPES);
+const MEMORY_CONSOLE_PROVENANCE_ARRAY_KEYS = new Set([
+  "evidenceeventids",
+  "sourceeventids",
+  "provenanceeventids",
+  "provenancesignalids",
+  "sourcesignalids",
+  "conflicteventids",
+]);
+const MEMORY_CONSOLE_PROVENANCE_SCALAR_KEYS = new Set([
+  "evidenceeventid",
+  "sourceeventid",
+  "provenanceeventid",
+  "provenancesignalid",
+  "signalid",
+]);
+const MEMORY_CONSOLE_PROVENANCE_MAX_DEPTH = 4;
 
 function stableSortObject(value) {
   if (Array.isArray(value)) {
@@ -7494,6 +7534,1213 @@ function runOutcome(request) {
   };
 }
 
+function getReadonlyProfileState(storeId, profile) {
+  const profiles = stores.get(storeId);
+  if (!(profiles instanceof Map)) {
+    return null;
+  }
+  return profiles.get(profile) ?? null;
+}
+
+function normalizeMemoryConsoleLimit(value, fallback = DEFAULT_MEMORY_CONSOLE_LIMIT) {
+  return Math.min(Math.max(toPositiveInteger(value, fallback), 1), MAX_LIST_ITEMS);
+}
+
+function flattenMemoryConsoleFilterValues(value, target = []) {
+  if (Array.isArray(value)) {
+    for (const entry of value) {
+      flattenMemoryConsoleFilterValues(entry, target);
+    }
+    return target;
+  }
+  if (value !== undefined && value !== null) {
+    target.push(value);
+  }
+  return target;
+}
+
+function normalizeMemoryConsoleStringFilters(
+  values,
+  fieldName,
+  { allowedValues = null, maxLength = 64, lowerCase = true } = {},
+) {
+  const rawEntries = flattenMemoryConsoleFilterValues(values, []);
+  if (rawEntries.length === 0) {
+    return [];
+  }
+  const normalized = [];
+  const seen = new Set();
+  for (const rawEntry of rawEntries) {
+    if (typeof rawEntry !== "string") {
+      throw new Error(`${fieldName} entries must be non-empty strings.`);
+    }
+    const chunks = rawEntry.split(",");
+    for (const chunk of chunks) {
+      const compact = normalizeBoundedString(chunk, fieldName, maxLength);
+      if (!compact) {
+        continue;
+      }
+      const candidate = lowerCase ? compact.toLowerCase() : compact;
+      if (allowedValues && !allowedValues.has(candidate)) {
+        throw new Error(`${fieldName} must be one of: ${[...allowedValues].sort().join(", ")}.`);
+      }
+      if (seen.has(candidate)) {
+        continue;
+      }
+      seen.add(candidate);
+      normalized.push(candidate);
+    }
+  }
+  return normalized.sort((left, right) => left.localeCompare(right));
+}
+
+function normalizeMemoryConsoleTypeFilters(request, operationName) {
+  return normalizeMemoryConsoleStringFilters(
+    [request.type, request.types, request.entityType, request.entityTypes],
+    `${operationName}.types`,
+    {
+      allowedValues: MEMORY_CONSOLE_ENTITY_TYPE_SET,
+      maxLength: 64,
+      lowerCase: true,
+    },
+  );
+}
+
+function normalizeMemoryConsoleTimestampRange(request, operationName) {
+  const since = normalizeIsoTimestamp(
+    request.since ?? request.startAt ?? request.from,
+    `${operationName}.since`,
+    null,
+  );
+  const until = normalizeIsoTimestamp(
+    request.until ?? request.endAt ?? request.to,
+    `${operationName}.until`,
+    null,
+  );
+  if (since && until && since.localeCompare(until) > 0) {
+    throw new Error(`${operationName}.since must be <= ${operationName}.until.`);
+  }
+  return { since, until };
+}
+
+function parseMemoryConsoleEntityRef(rawRef, fieldName) {
+  if (typeof rawRef === "string") {
+    const compact = normalizeBoundedString(rawRef, fieldName, 256);
+    if (!compact) {
+      throw new Error(`${fieldName} entries must include "entityType:entityId".`);
+    }
+    const separatorIndex = compact.indexOf(":");
+    if (separatorIndex <= 0 || separatorIndex >= compact.length - 1) {
+      throw new Error(`${fieldName} entries must include "entityType:entityId".`);
+    }
+    const entityType = compact.slice(0, separatorIndex).trim().toLowerCase();
+    const entityId = compact.slice(separatorIndex + 1).trim();
+    if (!MEMORY_CONSOLE_ENTITY_TYPE_SET.has(entityType)) {
+      throw new Error(`${fieldName} entityType must be one of: ${MEMORY_CONSOLE_ENTITY_TYPES.join(", ")}.`);
+    }
+    const normalizedEntityId = normalizeBoundedString(entityId, `${fieldName}.entityId`, 128);
+    if (!normalizedEntityId) {
+      throw new Error(`${fieldName}.entityId must be a non-empty string.`);
+    }
+    return {
+      entityType,
+      entityId: normalizedEntityId,
+    };
+  }
+  if (!isPlainObject(rawRef)) {
+    throw new Error(`${fieldName} entries must be strings or objects.`);
+  }
+  const entityType = normalizeBoundedString(
+    rawRef.entityType ?? rawRef.type ?? rawRef.kind,
+    `${fieldName}.entityType`,
+    64,
+  );
+  const entityId = normalizeBoundedString(
+    rawRef.entityId ?? rawRef.id ?? rawRef.refId ?? rawRef.recordId,
+    `${fieldName}.entityId`,
+    128,
+  );
+  if (!entityType || !entityId) {
+    throw new Error(`${fieldName} object entries require entityType and entityId.`);
+  }
+  const normalizedType = entityType.toLowerCase();
+  if (!MEMORY_CONSOLE_ENTITY_TYPE_SET.has(normalizedType)) {
+    throw new Error(`${fieldName} entityType must be one of: ${MEMORY_CONSOLE_ENTITY_TYPES.join(", ")}.`);
+  }
+  return {
+    entityType: normalizedType,
+    entityId,
+  };
+}
+
+function normalizeMemoryConsoleEntityRefs(request) {
+  const rawRefs = request.entityRefs ?? request.entities ?? request.references;
+  const normalizedRefs = [];
+  const seen = new Set();
+
+  const appendRef = (rawRef, fieldName) => {
+    const nextRef = parseMemoryConsoleEntityRef(rawRef, fieldName);
+    const key = `${nextRef.entityType}:${nextRef.entityId}`;
+    if (seen.has(key)) {
+      return;
+    }
+    seen.add(key);
+    normalizedRefs.push(nextRef);
+  };
+
+  if (rawRefs !== undefined) {
+    const entries = Array.isArray(rawRefs) ? rawRefs : [rawRefs];
+    for (const entry of entries) {
+      appendRef(entry, "memory_console_provenance.entityRefs");
+    }
+  } else {
+    const singleType = request.entityType ?? request.type;
+    const singleId = request.entityId ?? request.id;
+    const manyIds = request.entityIds ?? request.ids;
+    if (singleType && manyIds !== undefined) {
+      if (!Array.isArray(manyIds)) {
+        throw new Error("memory_console_provenance.entityIds must be an array.");
+      }
+      for (const entityId of manyIds) {
+        appendRef(
+          { entityType: singleType, entityId },
+          "memory_console_provenance.entityRefs",
+        );
+      }
+    } else if (singleType || singleId) {
+      appendRef(
+        { entityType: singleType, entityId: singleId },
+        "memory_console_provenance.entityRefs",
+      );
+    }
+  }
+
+  ensureBoundedCount(normalizedRefs, "memory_console_provenance.entityRefs");
+  return normalizedRefs.sort((left, right) => {
+    const typeDiff = left.entityType.localeCompare(right.entityType);
+    if (typeDiff !== 0) {
+      return typeDiff;
+    }
+    return left.entityId.localeCompare(right.entityId);
+  });
+}
+
+function collectMemoryConsoleLinkedSourceIds(record) {
+  const collected = [];
+  const visited = new Set();
+  const visit = (value, depth = 0) => {
+    if (!value || depth > MEMORY_CONSOLE_PROVENANCE_MAX_DEPTH) {
+      return;
+    }
+    if (typeof value !== "object") {
+      return;
+    }
+    if (visited.has(value)) {
+      return;
+    }
+    visited.add(value);
+
+    if (Array.isArray(value)) {
+      for (const entry of value) {
+        visit(entry, depth + 1);
+      }
+      return;
+    }
+
+    for (const [key, nested] of Object.entries(value)) {
+      const normalizedKey = key.toLowerCase();
+      if (MEMORY_CONSOLE_PROVENANCE_SCALAR_KEYS.has(normalizedKey)) {
+        const sourceId = normalizeBoundedStringLenient(nested, MAX_SIGNAL_ITEM_LENGTH);
+        if (sourceId) {
+          collected.push(sourceId);
+        }
+      }
+      if (MEMORY_CONSOLE_PROVENANCE_ARRAY_KEYS.has(normalizedKey) && Array.isArray(nested)) {
+        for (const sourceIdValue of nested) {
+          const sourceId = normalizeBoundedStringLenient(sourceIdValue, MAX_SIGNAL_ITEM_LENGTH);
+          if (sourceId) {
+            collected.push(sourceId);
+          }
+        }
+      }
+      if (normalizedKey === "evidencepointers" && Array.isArray(nested)) {
+        for (const pointer of nested) {
+          if (!isPlainObject(pointer)) {
+            continue;
+          }
+          const sourceId = normalizeBoundedStringLenient(
+            pointer.pointerId ?? pointer.id ?? pointer.eventId ?? pointer.signalId,
+            MAX_SIGNAL_ITEM_LENGTH,
+          );
+          if (sourceId) {
+            collected.push(sourceId);
+          }
+        }
+      }
+      if (normalizedKey === "sourcesignals" && Array.isArray(nested)) {
+        for (const signal of nested) {
+          if (!isPlainObject(signal)) {
+            continue;
+          }
+          const signalId = normalizeBoundedStringLenient(
+            signal.signalId ?? signal.id,
+            MAX_SIGNAL_ITEM_LENGTH,
+          );
+          if (signalId) {
+            collected.push(signalId);
+          }
+        }
+      }
+      if (Array.isArray(nested) || isPlainObject(nested)) {
+        visit(nested, depth + 1);
+      }
+    }
+  };
+
+  visit(record);
+  return asSortedUniqueStrings(collected);
+}
+
+function collectMemoryConsoleProvenancePointers(record) {
+  const pointers = new Map();
+  const visited = new Set();
+  const visit = (value, depth = 0) => {
+    if (!value || depth > MEMORY_CONSOLE_PROVENANCE_MAX_DEPTH) {
+      return;
+    }
+    if (typeof value !== "object") {
+      return;
+    }
+    if (visited.has(value)) {
+      return;
+    }
+    visited.add(value);
+
+    if (Array.isArray(value)) {
+      for (const entry of value) {
+        visit(entry, depth + 1);
+      }
+      return;
+    }
+
+    for (const [key, nested] of Object.entries(value)) {
+      const normalizedKey = key.toLowerCase();
+      if (normalizedKey === "evidencepointers" && Array.isArray(nested)) {
+        for (const pointer of nested) {
+          if (!isPlainObject(pointer)) {
+            continue;
+          }
+          const pointerId = normalizeBoundedStringLenient(
+            pointer.pointerId ?? pointer.id ?? pointer.eventId ?? pointer.signalId,
+            MAX_SIGNAL_ITEM_LENGTH,
+          );
+          if (!pointerId) {
+            continue;
+          }
+          const kind =
+            normalizeBoundedStringLenient(
+              typeof pointer.kind === "string" ? pointer.kind.toLowerCase() : pointer.kind,
+              32,
+            ) ?? "event";
+          const source =
+            normalizeBoundedStringLenient(pointer.source ?? pointer.namespace, 64) ?? "unspecified";
+          const observedAt = normalizeIsoTimestampOrFallback(
+            pointer.observedAt ?? pointer.timestamp ?? pointer.createdAt,
+            null,
+          );
+          const pointerKey = `${kind}:${source}:${pointerId}`;
+          const existing = pointers.get(pointerKey);
+          if (!existing) {
+            pointers.set(pointerKey, {
+              pointerId,
+              kind,
+              source,
+              observedAt,
+            });
+            continue;
+          }
+          const nextObservedAt =
+            existing.observedAt && observedAt
+              ? existing.observedAt >= observedAt
+                ? existing.observedAt
+                : observedAt
+              : existing.observedAt ?? observedAt ?? null;
+          pointers.set(pointerKey, {
+            ...existing,
+            observedAt: nextObservedAt,
+          });
+        }
+      }
+      if (Array.isArray(nested) || isPlainObject(nested)) {
+        visit(nested, depth + 1);
+      }
+    }
+  };
+
+  visit(record);
+  return [...pointers.values()].sort((left, right) => {
+    const kindDiff = left.kind.localeCompare(right.kind);
+    if (kindDiff !== 0) {
+      return kindDiff;
+    }
+    const sourceDiff = left.source.localeCompare(right.source);
+    if (sourceDiff !== 0) {
+      return sourceDiff;
+    }
+    return left.pointerId.localeCompare(right.pointerId);
+  });
+}
+
+function toMemoryConsoleTimestamp(value) {
+  return normalizeIsoTimestampOrFallback(value, DEFAULT_VERSION_TIMESTAMP);
+}
+
+function summarizeMemoryConsoleParts(values, fallback) {
+  const summaryParts = [];
+  for (const value of values) {
+    const compact = normalizeBoundedStringLenient(value, 160);
+    if (compact) {
+      summaryParts.push(compact);
+    }
+  }
+  return summaryParts.length > 0 ? summaryParts.join(" | ") : fallback;
+}
+
+function makeMemoryConsoleEntityRow({
+  entityType,
+  entityId,
+  timestamp,
+  summaryParts = [],
+  searchParts = [],
+  record = null,
+}) {
+  const normalizedType =
+    normalizeBoundedStringLenient(
+      typeof entityType === "string" ? entityType.toLowerCase() : entityType,
+      64,
+    ) ?? "";
+  if (!MEMORY_CONSOLE_ENTITY_TYPE_SET.has(normalizedType)) {
+    return null;
+  }
+  const normalizedEntityId = normalizeBoundedStringLenient(entityId, 128);
+  if (!normalizedEntityId) {
+    return null;
+  }
+  const normalizedTimestamp = toMemoryConsoleTimestamp(timestamp);
+  const summary = summarizeMemoryConsoleParts(
+    summaryParts,
+    `${normalizedType}:${normalizedEntityId}`,
+  );
+  const sourceIds = collectMemoryConsoleLinkedSourceIds(record);
+  const provenancePointers = collectMemoryConsoleProvenancePointers(record);
+  const searchableParts = [
+    normalizedType,
+    normalizedEntityId,
+    summary,
+    ...searchParts,
+    ...sourceIds,
+    ...provenancePointers.flatMap((pointer) => [pointer.pointerId, pointer.kind, pointer.source]),
+  ];
+  const searchableText = searchableParts
+    .map((part) => normalizeBoundedStringLenient(part, 512))
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+
+  return {
+    entityType: normalizedType,
+    entityId: normalizedEntityId,
+    timestamp: normalizedTimestamp,
+    summary,
+    sourceIds,
+    provenancePointers,
+    searchableText,
+  };
+}
+
+function compareMemoryConsoleRows(left, right) {
+  const timestampDiff = String(right?.timestamp ?? "").localeCompare(String(left?.timestamp ?? ""));
+  if (timestampDiff !== 0) {
+    return timestampDiff;
+  }
+  const typeDiff = String(left?.entityType ?? "").localeCompare(String(right?.entityType ?? ""));
+  if (typeDiff !== 0) {
+    return typeDiff;
+  }
+  return String(left?.entityId ?? "").localeCompare(String(right?.entityId ?? ""));
+}
+
+function buildMemoryConsoleEntityRows(state) {
+  if (!state || typeof state !== "object") {
+    return [];
+  }
+  const rows = [];
+  const appendRow = (row) => {
+    if (row) {
+      rows.push(row);
+    }
+  };
+
+  for (const learnerProfile of Array.isArray(state.learnerProfiles) ? state.learnerProfiles : []) {
+    const identityRefs = Array.isArray(learnerProfile?.identityRefs) ? learnerProfile.identityRefs : [];
+    const identityRefSummary = identityRefs
+      .slice(0, 3)
+      .map((identityRef) =>
+        `${normalizeBoundedStringLenient(identityRef?.namespace, 64) ?? "unknown"}:${
+          normalizeBoundedStringLenient(identityRef?.value, 128) ?? "unknown"
+        }`);
+    appendRow(
+      makeMemoryConsoleEntityRow({
+        entityType: "learner_profile",
+        entityId: learnerProfile?.profileId,
+        timestamp: learnerProfile?.updatedAt ?? learnerProfile?.createdAt,
+        summaryParts: [
+          `learner=${learnerProfile?.learnerId ?? "unknown"}`,
+          `goals=${(Array.isArray(learnerProfile?.goals) ? learnerProfile.goals.slice(0, 2) : []).join(",") || "none"}`,
+        ],
+        searchParts: [
+          learnerProfile?.learnerId,
+          learnerProfile?.displayName,
+          learnerProfile?.email,
+          ...(Array.isArray(learnerProfile?.goals) ? learnerProfile.goals : []),
+          ...(Array.isArray(learnerProfile?.interestTags) ? learnerProfile.interestTags : []),
+          ...(Array.isArray(learnerProfile?.misconceptionIds) ? learnerProfile.misconceptionIds : []),
+          ...identityRefSummary,
+        ],
+        record: learnerProfile,
+      }),
+    );
+  }
+
+  for (const edge of Array.isArray(state.identityGraphEdges) ? state.identityGraphEdges : []) {
+    const fromRef = `${normalizeBoundedStringLenient(edge?.fromRef?.namespace, 64) ?? "unknown"}:${
+      normalizeBoundedStringLenient(edge?.fromRef?.value, 128) ?? "unknown"
+    }`;
+    const toRef = `${normalizeBoundedStringLenient(edge?.toRef?.namespace, 64) ?? "unknown"}:${
+      normalizeBoundedStringLenient(edge?.toRef?.value, 128) ?? "unknown"
+    }`;
+    appendRow(
+      makeMemoryConsoleEntityRow({
+        entityType: "identity_graph_edge",
+        entityId: edge?.edgeId,
+        timestamp: edge?.updatedAt ?? edge?.createdAt,
+        summaryParts: [
+          `relation=${edge?.relation ?? "alias_of"}`,
+          `${fromRef} -> ${toRef}`,
+        ],
+        searchParts: [
+          edge?.relation,
+          fromRef,
+          toRef,
+          ...(Array.isArray(edge?.evidenceEventIds) ? edge.evidenceEventIds : []),
+        ],
+        record: edge,
+      }),
+    );
+  }
+
+  for (const misconception of Array.isArray(state.misconceptions) ? state.misconceptions : []) {
+    appendRow(
+      makeMemoryConsoleEntityRow({
+        entityType: "misconception",
+        entityId: misconception?.misconceptionId,
+        timestamp: misconception?.updatedAt ?? misconception?.createdAt,
+        summaryParts: [
+          `key=${misconception?.misconceptionKey ?? "unknown"}`,
+          `status=${misconception?.status ?? "active"}`,
+          `signal=${misconception?.signal ?? "harmful"}`,
+        ],
+        searchParts: [
+          misconception?.misconceptionKey,
+          misconception?.status,
+          misconception?.signal,
+          ...(Array.isArray(misconception?.sourceSignalIds) ? misconception.sourceSignalIds : []),
+          ...(Array.isArray(misconception?.evidenceEventIds) ? misconception.evidenceEventIds : []),
+        ],
+        record: misconception,
+      }),
+    );
+  }
+
+  for (const planItem of Array.isArray(state.curriculumPlanItems) ? state.curriculumPlanItems : []) {
+    appendRow(
+      makeMemoryConsoleEntityRow({
+        entityType: "curriculum_plan_item",
+        entityId: planItem?.planItemId,
+        timestamp: planItem?.updatedAt ?? planItem?.createdAt,
+        summaryParts: [
+          `objective=${planItem?.objectiveId ?? "unknown"}`,
+          `status=${planItem?.status ?? "proposed"}`,
+          `rank=${toPositiveInteger(planItem?.recommendationRank, 1)}`,
+        ],
+        searchParts: [
+          planItem?.objectiveId,
+          planItem?.status,
+          ...(Array.isArray(planItem?.sourceMisconceptionIds) ? planItem.sourceMisconceptionIds : []),
+          ...(Array.isArray(planItem?.interestTags) ? planItem.interestTags : []),
+          ...(Array.isArray(planItem?.provenanceSignalIds) ? planItem.provenanceSignalIds : []),
+        ],
+        record: planItem,
+      }),
+    );
+  }
+
+  for (const reviewEntry of Array.isArray(state.reviewScheduleEntries) ? state.reviewScheduleEntries : []) {
+    appendRow(
+      makeMemoryConsoleEntityRow({
+        entityType: "review_schedule_entry",
+        entityId: reviewEntry?.scheduleEntryId,
+        timestamp: reviewEntry?.updatedAt ?? reviewEntry?.createdAt,
+        summaryParts: [
+          `target=${reviewEntry?.targetId ?? "unknown"}`,
+          `status=${reviewEntry?.status ?? "scheduled"}`,
+          `dueAt=${toMemoryConsoleTimestamp(reviewEntry?.dueAt)}`,
+        ],
+        searchParts: [
+          reviewEntry?.targetId,
+          reviewEntry?.status,
+          ...(Array.isArray(reviewEntry?.sourceEventIds) ? reviewEntry.sourceEventIds : []),
+          ...(Array.isArray(reviewEntry?.evidenceEventIds) ? reviewEntry.evidenceEventIds : []),
+        ],
+        record: reviewEntry,
+      }),
+    );
+  }
+
+  for (const painSignal of Array.isArray(state.painSignals) ? state.painSignals : []) {
+    appendRow(
+      makeMemoryConsoleEntityRow({
+        entityType: "pain_signal",
+        entityId: painSignal?.painSignalId,
+        timestamp: painSignal?.recordedAt,
+        summaryParts: [
+          `misconception=${painSignal?.misconceptionKey ?? "unknown"}`,
+          `type=${painSignal?.signalType ?? "harmful"}`,
+          `severity=${roundNumber(stableScore(painSignal?.severity, 0), 4)}`,
+        ],
+        searchParts: [
+          painSignal?.misconceptionKey,
+          painSignal?.signalType,
+          painSignal?.note,
+          ...(Array.isArray(painSignal?.sourceEventIds) ? painSignal.sourceEventIds : []),
+          ...(Array.isArray(painSignal?.evidenceEventIds) ? painSignal.evidenceEventIds : []),
+        ],
+        record: painSignal,
+      }),
+    );
+  }
+
+  for (const failureSignal of Array.isArray(state.failureSignals) ? state.failureSignals : []) {
+    appendRow(
+      makeMemoryConsoleEntityRow({
+        entityType: "failure_signal",
+        entityId: failureSignal?.failureSignalId,
+        timestamp: failureSignal?.recordedAt,
+        summaryParts: [
+          `misconception=${failureSignal?.misconceptionKey ?? "unknown"}`,
+          `type=${failureSignal?.failureType ?? "test_failure"}`,
+          `count=${toPositiveInteger(failureSignal?.failureCount, 1)}`,
+        ],
+        searchParts: [
+          failureSignal?.misconceptionKey,
+          failureSignal?.failureType,
+          failureSignal?.outcomeRef,
+          ...(Array.isArray(failureSignal?.sourceEventIds) ? failureSignal.sourceEventIds : []),
+          ...(Array.isArray(failureSignal?.evidenceEventIds) ? failureSignal.evidenceEventIds : []),
+        ],
+        record: failureSignal,
+      }),
+    );
+  }
+
+  for (const incident of Array.isArray(state.incidentEscalations) ? state.incidentEscalations : []) {
+    appendRow(
+      makeMemoryConsoleEntityRow({
+        entityType: "incident_escalation",
+        entityId: incident?.escalationSignalId,
+        timestamp: incident?.recordedAt,
+        summaryParts: [
+          `incident=${incident?.incidentRef ?? "unspecified_incident"}`,
+          `severity=${incident?.severity ?? "high"}`,
+          `type=${incident?.escalationType ?? "failure_event"}`,
+        ],
+        searchParts: [
+          incident?.incidentRef,
+          incident?.severity,
+          incident?.escalationType,
+          ...(Array.isArray(incident?.reasonCodes) ? incident.reasonCodes : []),
+          ...(Array.isArray(incident?.sourceEventIds) ? incident.sourceEventIds : []),
+          ...(Array.isArray(incident?.evidenceEventIds) ? incident.evidenceEventIds : []),
+        ],
+        record: incident,
+      }),
+    );
+  }
+
+  for (const control of Array.isArray(state.manualOverrideControls) ? state.manualOverrideControls : []) {
+    appendRow(
+      makeMemoryConsoleEntityRow({
+        entityType: "manual_override_control",
+        entityId: control?.overrideControlId,
+        timestamp: control?.recordedAt,
+        summaryParts: [
+          `action=${control?.overrideAction ?? "suppress"}`,
+          `actor=${control?.actor ?? "unknown"}`,
+        ],
+        searchParts: [
+          control?.overrideAction,
+          control?.actor,
+          control?.reason,
+          ...(Array.isArray(control?.reasonCodes) ? control.reasonCodes : []),
+          ...(Array.isArray(control?.targetCandidateIds) ? control.targetCandidateIds : []),
+          ...(Array.isArray(control?.targetRuleIds) ? control.targetRuleIds : []),
+          ...(Array.isArray(control?.sourceEventIds) ? control.sourceEventIds : []),
+        ],
+        record: control,
+      }),
+    );
+  }
+
+  for (const decision of Array.isArray(state.policyDecisions) ? state.policyDecisions : []) {
+    appendRow(
+      makeMemoryConsoleEntityRow({
+        entityType: "policy_decision",
+        entityId: decision?.decisionId,
+        timestamp: decision?.updatedAt ?? decision?.createdAt,
+        summaryParts: [
+          `policy=${decision?.policyKey ?? "unknown"}`,
+          `outcome=${decision?.outcome ?? "review"}`,
+        ],
+        searchParts: [
+          decision?.policyKey,
+          decision?.outcome,
+          ...(Array.isArray(decision?.reasonCodes) ? decision.reasonCodes : []),
+          ...(Array.isArray(decision?.provenanceEventIds) ? decision.provenanceEventIds : []),
+        ],
+        record: decision,
+      }),
+    );
+  }
+
+  for (const auditEntry of Array.isArray(state.policyAuditTrail) ? state.policyAuditTrail : []) {
+    appendRow(
+      makeMemoryConsoleEntityRow({
+        entityType: "policy_audit_event",
+        entityId: auditEntry?.auditEventId,
+        timestamp: auditEntry?.timestamp,
+        summaryParts: [
+          `operation=${auditEntry?.operation ?? "unknown"}`,
+          `outcome=${auditEntry?.outcome ?? "recorded"}`,
+        ],
+        searchParts: [
+          auditEntry?.operation,
+          auditEntry?.outcome,
+          auditEntry?.entityId,
+          ...(Array.isArray(auditEntry?.reasonCodes) ? auditEntry.reasonCodes : []),
+        ],
+        record: auditEntry,
+      }),
+    );
+  }
+
+  for (const candidate of Array.isArray(state.shadowCandidates) ? state.shadowCandidates : []) {
+    const statementSnippet = normalizeBoundedStringLenient(candidate?.statement, 96) ?? "";
+    const status =
+      normalizeBoundedStringLenient(candidate?.status, 32) ??
+      (candidate?.demotedAt ? "demoted" : "active");
+    appendRow(
+      makeMemoryConsoleEntityRow({
+        entityType: "shadow_candidate",
+        entityId: candidate?.candidateId,
+        timestamp: candidate?.updatedAt ?? candidate?.createdAt,
+        summaryParts: [
+          `status=${status}`,
+          statementSnippet ? `statement=${statementSnippet}` : "",
+        ],
+        searchParts: [
+          candidate?.ruleId,
+          candidate?.statement,
+          status,
+          ...(Array.isArray(candidate?.latestDemotionReasonCodes) ? candidate.latestDemotionReasonCodes : []),
+          ...(Array.isArray(candidate?.sourceEventIds) ? candidate.sourceEventIds : []),
+          ...(Array.isArray(candidate?.evidenceEventIds) ? candidate.evidenceEventIds : []),
+        ],
+        record: candidate,
+      }),
+    );
+  }
+
+  for (const evaluation of Array.isArray(state.replayEvaluations) ? state.replayEvaluations : []) {
+    const replayStatus =
+      evaluation?.pass === true
+        ? "pass"
+        : evaluation?.pass === false
+          ? "fail"
+          : "unknown";
+    appendRow(
+      makeMemoryConsoleEntityRow({
+        entityType: "replay_evaluation",
+        entityId: evaluation?.replayEvalId,
+        timestamp: evaluation?.evaluatedAt,
+        summaryParts: [
+          `candidate=${evaluation?.candidateId ?? "unknown"}`,
+          `status=${replayStatus}`,
+        ],
+        searchParts: [
+          evaluation?.candidateId,
+          replayStatus,
+          ...(Array.isArray(evaluation?.reasonCodes) ? evaluation.reasonCodes : []),
+        ],
+        record: evaluation,
+      }),
+    );
+  }
+
+  for (const feedbackEntry of Array.isArray(state.feedback) ? state.feedback : []) {
+    appendRow(
+      makeMemoryConsoleEntityRow({
+        entityType: "feedback",
+        entityId: feedbackEntry?.feedbackId,
+        timestamp: feedbackEntry?.recordedAt,
+        summaryParts: [
+          `signal=${feedbackEntry?.signal ?? "helpful"}`,
+          `target=${feedbackEntry?.targetRuleId ?? feedbackEntry?.targetCandidateId ?? "none"}`,
+        ],
+        searchParts: [
+          feedbackEntry?.signal,
+          feedbackEntry?.targetRuleId,
+          feedbackEntry?.targetCandidateId,
+          feedbackEntry?.note,
+        ],
+        record: feedbackEntry,
+      }),
+    );
+  }
+
+  for (const outcomeEntry of Array.isArray(state.outcomes) ? state.outcomes : []) {
+    appendRow(
+      makeMemoryConsoleEntityRow({
+        entityType: "outcome",
+        entityId: outcomeEntry?.outcomeId,
+        timestamp: outcomeEntry?.recordedAt,
+        summaryParts: [
+          `task=${outcomeEntry?.task ?? "unknown"}`,
+          `outcome=${outcomeEntry?.outcome ?? "success"}`,
+        ],
+        searchParts: [
+          outcomeEntry?.task,
+          outcomeEntry?.outcome,
+          ...(Array.isArray(outcomeEntry?.usedRuleIds) ? outcomeEntry.usedRuleIds : []),
+        ],
+        record: outcomeEntry,
+      }),
+    );
+  }
+
+  for (const session of Array.isArray(state.degradedTutorSessions) ? state.degradedTutorSessions : []) {
+    appendRow(
+      makeMemoryConsoleEntityRow({
+        entityType: "degraded_tutor_session",
+        entityId: session?.sessionId,
+        timestamp: session?.timestamp,
+        summaryParts: [
+          `degradedMode=${Boolean(session?.degradedMode)}`,
+          `query=${normalizeBoundedStringLenient(session?.query, 96) ?? "unknown"}`,
+        ],
+        searchParts: [
+          session?.query,
+          ...(Array.isArray(session?.warnings) ? session.warnings : []),
+          ...(Array.isArray(session?.suggestionIds) ? session.suggestionIds : []),
+        ],
+        record: session,
+      }),
+    );
+  }
+
+  return rows.sort(compareMemoryConsoleRows);
+}
+
+function scoreMemoryConsoleSearchRow(row, query) {
+  if (!query) {
+    return 0;
+  }
+  let score = 0;
+  const queryLower = query.toLowerCase();
+  const entityIdLower = row.entityId.toLowerCase();
+  const summaryLower = row.summary.toLowerCase();
+  if (entityIdLower === queryLower) {
+    score += 200;
+  } else if (entityIdLower.includes(queryLower)) {
+    score += 120;
+  }
+  if (summaryLower.includes(queryLower)) {
+    score += 80;
+  }
+  if (row.sourceIds.some((sourceId) => sourceId.toLowerCase() === queryLower)) {
+    score += 70;
+  } else if (row.sourceIds.some((sourceId) => sourceId.toLowerCase().includes(queryLower))) {
+    score += 50;
+  }
+  if (row.searchableText.includes(queryLower)) {
+    score += 20;
+  }
+  return score;
+}
+
+function hasMatchingReasonCode(reasonCodes, reasonCodeFilters) {
+  if (reasonCodeFilters.length === 0) {
+    return true;
+  }
+  const normalizedCodes = new Set(
+    asSortedUniqueStrings(reasonCodes).map((reasonCode) => reasonCode.toLowerCase()),
+  );
+  return reasonCodeFilters.some((reasonCode) => normalizedCodes.has(reasonCode));
+}
+
+function runMemoryConsoleSearch(request) {
+  const { storeId, profile, input } = normalizeRequest("memory_console_search", request);
+  const state = getReadonlyProfileState(storeId, profile);
+  const limit = normalizeMemoryConsoleLimit(request.limit, DEFAULT_MEMORY_CONSOLE_LIMIT);
+  const query = normalizeBoundedString(
+    request.query ?? request.q ?? request.text,
+    "memory_console_search.query",
+    256,
+  );
+  const queryLower = query ? query.toLowerCase() : null;
+  const typeFilters = normalizeMemoryConsoleTypeFilters(request, "memory_console_search");
+  const rows = buildMemoryConsoleEntityRows(state);
+  const matches = rows.filter((row) => {
+    if (typeFilters.length > 0 && !typeFilters.includes(row.entityType)) {
+      return false;
+    }
+    if (queryLower && !row.searchableText.includes(queryLower)) {
+      return false;
+    }
+    return true;
+  });
+  const results = matches
+    .map((row) => ({
+      row,
+      score: scoreMemoryConsoleSearchRow(row, queryLower),
+    }))
+    .sort((left, right) => {
+      const scoreDiff = right.score - left.score;
+      if (scoreDiff !== 0) {
+        return scoreDiff;
+      }
+      return compareMemoryConsoleRows(left.row, right.row);
+    })
+    .slice(0, limit)
+    .map(({ row }) => ({
+      entityType: row.entityType,
+      entityId: row.entityId,
+      timestamp: row.timestamp,
+      summary: row.summary,
+      sourceIds: row.sourceIds,
+    }));
+
+  return {
+    ...buildMeta("memory_console_search", storeId, profile, input),
+    action: "listed",
+    query: query ?? null,
+    filters: {
+      types: typeFilters,
+      limit,
+    },
+    totalMatches: matches.length,
+    results,
+  };
+}
+
+function runMemoryConsoleTimeline(request) {
+  const { storeId, profile, input } = normalizeRequest("memory_console_timeline", request);
+  const state = getReadonlyProfileState(storeId, profile);
+  const limit = normalizeMemoryConsoleLimit(request.limit, DEFAULT_MEMORY_CONSOLE_LIMIT);
+  const typeFilters = normalizeMemoryConsoleTypeFilters(request, "memory_console_timeline");
+  const { since, until } = normalizeMemoryConsoleTimestampRange(
+    request,
+    "memory_console_timeline",
+  );
+  const rows = buildMemoryConsoleEntityRows(state);
+  const matches = rows.filter((row) => {
+    if (typeFilters.length > 0 && !typeFilters.includes(row.entityType)) {
+      return false;
+    }
+    if (since && row.timestamp.localeCompare(since) < 0) {
+      return false;
+    }
+    if (until && row.timestamp.localeCompare(until) > 0) {
+      return false;
+    }
+    return true;
+  });
+  const events = matches.slice(0, limit).map((row) => ({
+    eventType: row.entityType,
+    entityType: row.entityType,
+    entityId: row.entityId,
+    timestamp: row.timestamp,
+    summary: row.summary,
+    sourceIds: row.sourceIds,
+  }));
+
+  return {
+    ...buildMeta("memory_console_timeline", storeId, profile, input),
+    action: "listed",
+    filters: {
+      types: typeFilters,
+      since,
+      until,
+      limit,
+    },
+    totalEvents: matches.length,
+    events,
+  };
+}
+
+function runMemoryConsoleProvenance(request) {
+  const { storeId, profile, input } = normalizeRequest("memory_console_provenance", request);
+  const state = getReadonlyProfileState(storeId, profile);
+  const limit = normalizeMemoryConsoleLimit(request.limit, MAX_LIST_ITEMS);
+  const refs = normalizeMemoryConsoleEntityRefs(request).slice(0, limit);
+  const rows = buildMemoryConsoleEntityRows(state);
+  const index = new Map(rows.map((row) => [`${row.entityType}:${row.entityId}`, row]));
+  const entities = refs.map((ref) => {
+    const key = `${ref.entityType}:${ref.entityId}`;
+    const row = index.get(key);
+    if (!row) {
+      return {
+        entityType: ref.entityType,
+        entityId: ref.entityId,
+        found: false,
+        timestamp: null,
+        summary: null,
+        linkedSourceIds: [],
+        provenancePointers: [],
+      };
+    }
+    return {
+      entityType: row.entityType,
+      entityId: row.entityId,
+      found: true,
+      timestamp: row.timestamp,
+      summary: row.summary,
+      linkedSourceIds: row.sourceIds,
+      provenancePointers: row.provenancePointers,
+    };
+  });
+  const resolvedCount = entities.reduce(
+    (count, entity) => count + (entity.found ? 1 : 0),
+    0,
+  );
+  const linkedSourceIds = asSortedUniqueStrings(
+    entities.flatMap((entity) => entity.linkedSourceIds),
+  );
+
+  return {
+    ...buildMeta("memory_console_provenance", storeId, profile, input),
+    action: "listed",
+    filters: {
+      limit,
+    },
+    resolution: {
+      requested: refs.length,
+      resolved: resolvedCount,
+      unresolved: Math.max(refs.length - resolvedCount, 0),
+      linkedSourceIdCount: linkedSourceIds.length,
+    },
+    linkedSourceIds,
+    entities,
+  };
+}
+
+function runMemoryConsolePolicyAudit(request) {
+  const { storeId, profile, input } = normalizeRequest(
+    "memory_console_policy_audit",
+    request,
+  );
+  const state = getReadonlyProfileState(storeId, profile);
+  const limit = normalizeMemoryConsoleLimit(request.limit, DEFAULT_MEMORY_CONSOLE_LIMIT);
+  const { since, until } = normalizeMemoryConsoleTimestampRange(
+    request,
+    "memory_console_policy_audit",
+  );
+  const outcomeFilters = normalizeMemoryConsoleStringFilters(
+    [request.outcome, request.outcomes],
+    "memory_console_policy_audit.outcomes",
+    {
+      allowedValues: POLICY_OUTCOMES,
+      maxLength: 16,
+      lowerCase: true,
+    },
+  );
+  const operationFilters = normalizeMemoryConsoleStringFilters(
+    [request.operation, request.operations],
+    "memory_console_policy_audit.operations",
+    {
+      maxLength: 64,
+      lowerCase: true,
+    },
+  );
+  const reasonCodeFilters = normalizeMemoryConsoleStringFilters(
+    [request.reasonCode, request.reasonCodes],
+    "memory_console_policy_audit.reasonCodes",
+    {
+      maxLength: 64,
+      lowerCase: true,
+    },
+  );
+  const policyKey = normalizeBoundedString(
+    request.policyKey,
+    "memory_console_policy_audit.policyKey",
+    128,
+  );
+  const policyKeyLower = policyKey ? policyKey.toLowerCase() : null;
+
+  const decisions = sortByTimestampAndId(
+    Array.isArray(state?.policyDecisions) ? state.policyDecisions : [],
+    "updatedAt",
+    "decisionId",
+  )
+    .reverse()
+    .filter((decision) => {
+      const timestamp = toMemoryConsoleTimestamp(decision?.updatedAt ?? decision?.createdAt);
+      if (since && timestamp.localeCompare(since) < 0) {
+        return false;
+      }
+      if (until && timestamp.localeCompare(until) > 0) {
+        return false;
+      }
+      const outcome = normalizeBoundedStringLenient(decision?.outcome, 16)?.toLowerCase() ?? "review";
+      if (outcomeFilters.length > 0 && !outcomeFilters.includes(outcome)) {
+        return false;
+      }
+      const decisionPolicyKey =
+        normalizeBoundedStringLenient(decision?.policyKey, 128)?.toLowerCase() ?? null;
+      if (policyKeyLower && decisionPolicyKey !== policyKeyLower) {
+        return false;
+      }
+      if (!hasMatchingReasonCode(decision?.reasonCodes, reasonCodeFilters)) {
+        return false;
+      }
+      return true;
+    });
+
+  const auditTrail = sortByTimestampAndId(
+    Array.isArray(state?.policyAuditTrail) ? state.policyAuditTrail : [],
+    "timestamp",
+    "auditEventId",
+  )
+    .reverse()
+    .filter((entry) => {
+      const timestamp = toMemoryConsoleTimestamp(entry?.timestamp);
+      if (since && timestamp.localeCompare(since) < 0) {
+        return false;
+      }
+      if (until && timestamp.localeCompare(until) > 0) {
+        return false;
+      }
+      const operation =
+        normalizeBoundedStringLenient(entry?.operation, 64)?.toLowerCase() ?? "unknown";
+      if (operationFilters.length > 0 && !operationFilters.includes(operation)) {
+        return false;
+      }
+      const entryPolicyKey =
+        normalizeBoundedStringLenient(entry?.details?.policyKey, 128)?.toLowerCase() ?? null;
+      if (policyKeyLower && entryPolicyKey !== policyKeyLower) {
+        return false;
+      }
+      if (outcomeFilters.length > 0) {
+        const outcome =
+          normalizeBoundedStringLenient(entry?.outcome, 16)?.toLowerCase() ?? "recorded";
+        if (!outcomeFilters.includes(outcome)) {
+          return false;
+        }
+      }
+      if (!hasMatchingReasonCode(entry?.reasonCodes, reasonCodeFilters)) {
+        return false;
+      }
+      return true;
+    });
+
+  const decisionRows = decisions.slice(0, limit).map((decision) => ({
+    decisionId: decision.decisionId,
+    policyKey: decision.policyKey,
+    outcome: decision.outcome,
+    reasonCodes: asSortedUniqueStrings(decision.reasonCodes),
+    provenanceEventIds: asSortedUniqueStrings(decision.provenanceEventIds),
+    updatedAt: toMemoryConsoleTimestamp(decision.updatedAt ?? decision.createdAt),
+  }));
+  const auditRows = auditTrail.slice(0, limit).map((entry) => ({
+    auditEventId: entry.auditEventId,
+    operation: entry.operation,
+    entityId: entry.entityId ?? null,
+    outcome: entry.outcome ?? null,
+    reasonCodes: asSortedUniqueStrings(entry.reasonCodes),
+    timestamp: toMemoryConsoleTimestamp(entry.timestamp),
+    summary: summarizeMemoryConsoleParts(
+      [
+        `operation=${entry.operation ?? "unknown"}`,
+        `outcome=${entry.outcome ?? "recorded"}`,
+        `entity=${entry.entityId ?? "none"}`,
+      ],
+      `operation=${entry.operation ?? "unknown"}`,
+    ),
+  }));
+
+  const decisionOutcomeCounts = {
+    allow: 0,
+    review: 0,
+    deny: 0,
+  };
+  for (const decision of decisions) {
+    const outcome = normalizeBoundedStringLenient(decision?.outcome, 16)?.toLowerCase();
+    if (outcome && hasOwn(decisionOutcomeCounts, outcome)) {
+      decisionOutcomeCounts[outcome] += 1;
+    }
+  }
+  const auditOperationCounts = {};
+  for (const entry of auditTrail) {
+    const operation =
+      normalizeBoundedStringLenient(entry?.operation, 64)?.toLowerCase() ?? "unknown";
+    auditOperationCounts[operation] = toNonNegativeInteger(auditOperationCounts[operation], 0) + 1;
+  }
+  const reasonCodeCounts = {};
+  for (const decision of decisions) {
+    for (const reasonCode of asSortedUniqueStrings(decision?.reasonCodes)) {
+      reasonCodeCounts[reasonCode] = toNonNegativeInteger(reasonCodeCounts[reasonCode], 0) + 1;
+    }
+  }
+  for (const entry of auditTrail) {
+    for (const reasonCode of asSortedUniqueStrings(entry?.reasonCodes)) {
+      reasonCodeCounts[reasonCode] = toNonNegativeInteger(reasonCodeCounts[reasonCode], 0) + 1;
+    }
+  }
+
+  return {
+    ...buildMeta("memory_console_policy_audit", storeId, profile, input),
+    action: "listed",
+    filters: {
+      outcomes: outcomeFilters,
+      operations: operationFilters,
+      reasonCodes: reasonCodeFilters,
+      policyKey: policyKey ?? null,
+      since,
+      until,
+      limit,
+    },
+    totalPolicyDecisions: decisions.length,
+    totalAuditTrailEvents: auditTrail.length,
+    policyDecisions: decisionRows,
+    auditTrail: auditRows,
+    summary: {
+      deniedDecisions: decisionOutcomeCounts.deny,
+      outcomeCounts: stableSortObject(decisionOutcomeCounts),
+      operationCounts: stableSortObject(auditOperationCounts),
+      reasonCodeCounts: stableSortObject(reasonCodeCounts),
+    },
+  };
+}
+
 function runAudit(request) {
   const { storeId, profile, input } = normalizeRequest("audit", request);
   const state = getProfileState(storeId, profile);
@@ -7633,6 +8880,18 @@ const runners = {
   tutor_degraded: runTutorDegraded,
   degraded_tutor: runTutorDegraded,
   policy_audit_export: runPolicyAuditExport,
+  memory_console_search: runMemoryConsoleSearch,
+  memory_search: runMemoryConsoleSearch,
+  console_search: runMemoryConsoleSearch,
+  memory_console_timeline: runMemoryConsoleTimeline,
+  memory_timeline: runMemoryConsoleTimeline,
+  console_timeline: runMemoryConsoleTimeline,
+  memory_console_provenance: runMemoryConsoleProvenance,
+  memory_provenance: runMemoryConsoleProvenance,
+  console_provenance: runMemoryConsoleProvenance,
+  memory_console_policy_audit: runMemoryConsolePolicyAudit,
+  memory_policy_audit: runMemoryConsolePolicyAudit,
+  console_policy_audit: runMemoryConsolePolicyAudit,
   feedback: runFeedback,
   outcome: runOutcome,
   audit: runAudit,
