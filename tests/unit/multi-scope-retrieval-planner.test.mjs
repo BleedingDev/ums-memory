@@ -177,6 +177,8 @@ const estimateActionablePackTokens = (actionablePack) => {
   return tokenCount;
 };
 
+const roundRetrievalScore = (value) => Math.min(1, Math.max(0, Math.round(value * 1_000_000) / 1_000_000));
+
 test("ums-memory-8as.2: retrieval planner merges common/project/job_role/user scopes deterministically", async () => {
   const { retrievalServiceModule, storageServiceModule } = await loadModules();
   const db = new DatabaseSync(":memory:");
@@ -1232,4 +1234,229 @@ test("ums-memory-8as.6: annotation warning helper remains deterministic for stal
   assert.deepEqual(firstWarnings, secondWarnings);
   assert.ok(firstWarnings.some((warning) => /stale guidance/i.test(warning)));
   assert.ok(firstWarnings.some((warning) => /low-confidence guidance/i.test(warning)));
+});
+
+test("ums-memory-8as.7: explainability returns ranking signals and weighted contributions for selected hits", async () => {
+  const { retrievalServiceModule, storageServiceModule } = await loadModules();
+  const db = new DatabaseSync(":memory:");
+
+  try {
+    const tenantId = "tenant-explainability-signals";
+    const storageService = storageServiceModule.makeSqliteStorageService(db);
+
+    upsertMemorySync(storageService, {
+      spaceId: tenantId,
+      memoryId: "memory-explainability-rich-signals",
+      layer: "working",
+      payload: {
+        title: "explainability signal token rich profile",
+        updatedAtMillis: 400,
+        expiresAtMillis: 1_400,
+        evidencePointers: [
+          { sourceRef: "event://explainability-rich-1", relationKind: "supports" },
+          { sourceRef: "event://explainability-rich-2", relationKind: "supports" },
+        ],
+        humanWeight: 0.9,
+        utilityScore: 0.8,
+      },
+    });
+    upsertMemorySync(storageService, {
+      spaceId: tenantId,
+      memoryId: "memory-explainability-low-signals",
+      layer: "working",
+      payload: {
+        title: "explainability signal token lean profile",
+        updatedAtMillis: 200,
+        expiresAtMillis: 205,
+        humanWeight: 0.1,
+        utilityScore: 0.2,
+      },
+    });
+
+    const retrievalService = retrievalServiceModule.makeRetrievalService(
+      storageService,
+      makePolicyService(),
+    );
+    const request = {
+      spaceId: tenantId,
+      query: "explainability signal token",
+      limit: 10,
+      ranking_weights: {
+        relevance: 0.5,
+        evidence_strength: 0.2,
+        decay: 0.15,
+        human_weight: 0.1,
+        utility_score: 0.05,
+      },
+    };
+    const retrievalResponse = await Effect.runPromise(retrievalService.retrieve(request));
+    const explainabilityResponse = await Effect.runPromise(
+      retrievalService.retrieveExplainability(request),
+    );
+
+    assert.equal(explainabilityResponse.totalHits, retrievalResponse.totalHits);
+    assert.equal(explainabilityResponse.nextCursor, retrievalResponse.nextCursor);
+    assert.deepEqual(
+      explainabilityResponse.hits.map((hit) => hit.memoryId),
+      retrievalResponse.hits.map((hit) => hit.memoryId),
+    );
+    assert.equal(explainabilityResponse.hits.length, 2);
+
+    for (const hit of explainabilityResponse.hits) {
+      assert.deepEqual(Object.keys(hit.rankingSignals), [
+        "relevance",
+        "evidenceStrength",
+        "decay",
+        "humanWeight",
+        "utility",
+      ]);
+      assert.deepEqual(
+        hit.weightedContributions.map((entry) => entry.signal),
+        ["relevance", "evidenceStrength", "decay", "humanWeight", "utility"],
+      );
+      for (const contribution of hit.weightedContributions) {
+        assert.ok(contribution.signalScore >= 0 && contribution.signalScore <= 1);
+        assert.ok(contribution.weight >= 0 && contribution.weight <= 1);
+        assert.equal(
+          contribution.weightedContribution,
+          roundRetrievalScore(contribution.weight * contribution.signalScore),
+        );
+      }
+    }
+  } finally {
+    db.close();
+  }
+});
+
+test("ums-memory-8as.7: explainability response is deterministic across repeated calls", async () => {
+  const { retrievalServiceModule, storageServiceModule } = await loadModules();
+  const db = new DatabaseSync(":memory:");
+
+  try {
+    const tenantId = "tenant-explainability-deterministic";
+    const storageService = storageServiceModule.makeSqliteStorageService(db);
+    for (let index = 1; index <= 4; index += 1) {
+      upsertMemorySync(storageService, {
+        spaceId: tenantId,
+        memoryId: `memory-explainability-deterministic-${index}`,
+        layer: "working",
+        payload: {
+          title: `explainability deterministic token ${index}`,
+          updatedAtMillis: 100 + index,
+        },
+      });
+    }
+
+    const retrievalService = retrievalServiceModule.makeRetrievalService(
+      storageService,
+      makePolicyService(),
+    );
+    const firstPageRequest = {
+      spaceId: tenantId,
+      query: "explainability deterministic token",
+      limit: 2,
+    };
+
+    const firstResponse = await Effect.runPromise(
+      retrievalService.retrieveExplainability(firstPageRequest),
+    );
+    const firstReplay = await Effect.runPromise(
+      retrievalService.retrieveExplainability(firstPageRequest),
+    );
+    assert.deepEqual(firstResponse, firstReplay);
+    assert.deepEqual(
+      firstResponse.hits.map((hit) => hit.rank),
+      [1, 2],
+    );
+    assert.ok(firstResponse.nextCursor);
+
+    const secondPageRequest = {
+      ...firstPageRequest,
+      cursor: firstResponse.nextCursor,
+    };
+    const secondResponse = await Effect.runPromise(
+      retrievalService.retrieveExplainability(secondPageRequest),
+    );
+    const secondReplay = await Effect.runPromise(
+      retrievalService.retrieveExplainability(secondPageRequest),
+    );
+    assert.deepEqual(secondResponse, secondReplay);
+    assert.deepEqual(
+      secondResponse.hits.map((hit) => hit.rank),
+      [3, 4],
+    );
+  } finally {
+    db.close();
+  }
+});
+
+test("ums-memory-8as.7: explainability reason codes include scope ranking and policy factors", async () => {
+  const { retrievalServiceModule, storageServiceModule } = await loadModules();
+  const db = new DatabaseSync(":memory:");
+
+  try {
+    const tenantId = "tenant-explainability-reason-codes";
+    const projectId = "project-reason-codes";
+    const roleId = "role-reason-codes";
+    const userId = "user-reason-codes";
+    const storageService = storageServiceModule.makeSqliteStorageService(db);
+
+    seedScopeLatticeAnchors(db, tenantId, {
+      projectIds: [projectId],
+      roleIds: [roleId],
+      userIds: [userId],
+    });
+
+    upsertMemorySync(storageService, {
+      spaceId: tenantId,
+      memoryId: "memory-common-scope-reason",
+      layer: "working",
+      payload: {
+        title: "explainability reason token common",
+        updatedAtMillis: 300,
+      },
+    });
+    upsertMemorySync(storageService, {
+      spaceId: tenantId,
+      memoryId: "memory-user-scope-reason",
+      layer: "working",
+      payload: {
+        title: "explainability reason token user",
+        scope: { projectId, roleId, userId },
+        updatedAtMillis: 300,
+      },
+    });
+
+    const retrievalService = retrievalServiceModule.makeRetrievalService(
+      storageService,
+      makePolicyService(),
+    );
+    const response = await Effect.runPromise(
+      retrievalService.retrieveExplainability({
+        spaceId: tenantId,
+        query: "explainability reason token",
+        limit: 10,
+        scope: { projectId, roleId, userId },
+        policy: {
+          actorId: userId,
+          action: "memory.retrieve",
+          evidenceIds: ["evidence-reason-codes-1"],
+          context: {
+            requestId: "req-reason-codes-1",
+          },
+        },
+      }),
+    );
+
+    assert.equal(response.totalHits, 2);
+    assert.equal(response.hits[0]?.memoryId, "memory-user-scope-reason");
+    assert.ok(response.hits[0]?.reasonCodes.includes("QUERY_TOKEN_MATCH"));
+    assert.ok(response.hits[0]?.reasonCodes.includes("SCOPE_FILTER_MATCH"));
+    assert.ok(response.hits[0]?.reasonCodes.includes("SCOPE_SELECTOR_APPLIED"));
+    assert.ok(response.hits[0]?.reasonCodes.includes("SCOPE_LEVEL_USER"));
+    assert.ok(response.hits[0]?.reasonCodes.includes("POLICY_ALLOW"));
+    assert.ok(response.hits[0]?.reasonCodes.includes("RANKING_WEIGHTED_SIGNALS"));
+  } finally {
+    db.close();
+  }
 });

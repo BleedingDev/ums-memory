@@ -4,11 +4,15 @@ import { Context, Effect, Layer } from "effect";
 import type {
   ActionableRetrievalPack,
   PolicyRequest,
+  RetrievalExplainabilityHit,
+  RetrievalExplainabilityReasonCode,
+  RetrievalExplainabilityResponse,
   RetrievalHit,
   RetrievalPolicyInput,
   RetrievalRankingWeights,
   RetrievalRequest,
   RetrievalResponse,
+  RetrievalScopeLevel,
   RetrievalScopeSelectors,
 } from "../contracts/index.js";
 import { decodeRetrievalRequestEffect } from "../contracts/validators.js";
@@ -21,11 +25,15 @@ import type { PolicyService } from "./policy-service.js";
 import type { StorageService } from "./storage-service.js";
 
 export type {
+  RetrievalExplainabilityHit,
+  RetrievalExplainabilityReasonCode,
+  RetrievalExplainabilityResponse,
   RetrievalHit,
   RetrievalPolicyInput,
   RetrievalRankingWeights,
   RetrievalRequest,
   RetrievalResponse,
+  RetrievalScopeLevel,
   RetrievalScopeSelectors,
 } from "../contracts/index.js";
 
@@ -33,6 +41,9 @@ export interface RetrievalService {
   readonly retrieve: (
     request: RetrievalRequest,
   ) => Effect.Effect<RetrievalResponse, RetrievalServiceError>;
+  readonly retrieveExplainability: (
+    request: RetrievalRequest,
+  ) => Effect.Effect<RetrievalExplainabilityResponse, RetrievalServiceError>;
 }
 
 export const RetrievalServiceTag = Context.GenericTag<RetrievalService>(
@@ -106,7 +117,7 @@ const defaultRankingWeights: NormalizedRankingWeights = Object.freeze({
   utility: 0.075,
 });
 
-type ScopeLevel = "common" | "project" | "job_role" | "user";
+type ScopeLevel = RetrievalScopeLevel;
 
 interface ParsedScopeRow {
   readonly scopeId: string;
@@ -143,6 +154,7 @@ interface PlannedHit {
   readonly scopeLevel: ScopeLevel;
   readonly scopeRank: number;
   readonly updatedAtMillis: number;
+  readonly rankingSignals: RankingSignals;
   readonly chronology: HitChronology;
   readonly reconciledMemoryIds: readonly RetrievalHit["memoryId"][];
 }
@@ -194,6 +206,13 @@ interface CursorPayload {
   readonly v: 1;
   readonly o: number;
   readonly d: string;
+}
+
+interface PaginatedPlannedHits {
+  readonly pageHits: readonly PlannedHit[];
+  readonly totalHits: number;
+  readonly nextCursor: string | null;
+  readonly offset: number;
 }
 
 export interface RetrievalPlannerOptions {
@@ -1005,6 +1024,7 @@ const createPlannedHit = (
     scopeLevel: candidate.scopeLevel,
     scopeRank: candidate.scopeRank,
     updatedAtMillis: candidate.updatedAtMillis,
+    rankingSignals,
     chronology: candidate.chronology,
     reconciledMemoryIds: Object.freeze([]),
   };
@@ -1511,6 +1531,106 @@ const toRetrievalHit = (hit: PlannedHit): RetrievalHit => {
   };
 };
 
+type RankingSignalKey = keyof RankingSignals;
+const rankingSignalOrder: readonly RankingSignalKey[] = Object.freeze([
+  "relevance",
+  "evidenceStrength",
+  "decay",
+  "humanWeight",
+  "utility",
+]);
+
+const hasExplicitScopeSelectors = (selectors: NormalizedScopeSelectors): boolean =>
+  selectors.projectId !== null || selectors.roleId !== null || selectors.userId !== null;
+
+const toScopeLevelReasonCode = (scopeLevel: ScopeLevel): RetrievalExplainabilityReasonCode => {
+  switch (scopeLevel) {
+    case "common":
+      return "SCOPE_LEVEL_COMMON";
+    case "project":
+      return "SCOPE_LEVEL_PROJECT";
+    case "job_role":
+      return "SCOPE_LEVEL_JOB_ROLE";
+    case "user":
+      return "SCOPE_LEVEL_USER";
+    default:
+      return "SCOPE_LEVEL_COMMON";
+  }
+};
+
+const toExplainabilityReasonCodes = (
+  normalized: NormalizedRetrievalRequest,
+  hit: PlannedHit,
+): readonly RetrievalExplainabilityReasonCode[] => {
+  const reasonCodes: RetrievalExplainabilityReasonCode[] = [];
+  reasonCodes.push(
+    normalized.queryTokens.length > 0 ? "QUERY_TOKEN_MATCH" : "QUERY_EMPTY_FALLBACK",
+  );
+  reasonCodes.push("SCOPE_FILTER_MATCH");
+  if (hasExplicitScopeSelectors(normalized.selectors)) {
+    reasonCodes.push("SCOPE_SELECTOR_APPLIED");
+  }
+  reasonCodes.push(toScopeLevelReasonCode(hit.scopeLevel));
+  reasonCodes.push("POLICY_ALLOW");
+  reasonCodes.push("RANKING_WEIGHTED_SIGNALS");
+  if (hit.reconciledMemoryIds.length > 0) {
+    reasonCodes.push("CHRONOLOGY_RECONCILED");
+  }
+  return Object.freeze(reasonCodes);
+};
+
+const toExplainabilityWeightedContributions = (
+  rankingWeights: NormalizedRankingWeights,
+  rankingSignals: RankingSignals,
+): RetrievalExplainabilityHit["weightedContributions"] =>
+  Object.freeze(
+    rankingSignalOrder.map((signal) => ({
+      signal,
+      signalScore: rankingSignals[signal],
+      weight: rankingWeights[signal],
+      weightedContribution: clampScore(rankingWeights[signal] * rankingSignals[signal]),
+    })),
+  );
+
+const toRetrievalExplainabilityHit = (
+  normalized: NormalizedRetrievalRequest,
+  hit: PlannedHit,
+  rank: number,
+): RetrievalExplainabilityHit => ({
+  memoryId: hit.memoryId,
+  layer: hit.layer,
+  score: hit.score,
+  excerpt: hit.excerpt,
+  rank,
+  scopeId: hit.scopeId,
+  scopeLevel: hit.scopeLevel,
+  reasonCodes: toExplainabilityReasonCodes(normalized, hit),
+  rankingSignals: {
+    relevance: hit.rankingSignals.relevance,
+    evidenceStrength: hit.rankingSignals.evidenceStrength,
+    decay: hit.rankingSignals.decay,
+    humanWeight: hit.rankingSignals.humanWeight,
+    utility: hit.rankingSignals.utility,
+  },
+  weightedContributions: toExplainabilityWeightedContributions(
+    normalized.rankingWeights,
+    hit.rankingSignals,
+  ),
+});
+
+const toRetrievalExplainabilityResponse = (
+  normalized: NormalizedRetrievalRequest,
+  pagination: PaginatedPlannedHits,
+): RetrievalExplainabilityResponse => ({
+  hits: Object.freeze(
+    pagination.pageHits.map((hit, pageIndex) =>
+      toRetrievalExplainabilityHit(normalized, hit, pagination.offset + pageIndex + 1),
+    ),
+  ),
+  totalHits: pagination.totalHits,
+  nextCursor: pagination.nextCursor,
+});
+
 const actionablePackCategoryOrder: readonly ActionablePackCategory[] = Object.freeze([
   "do",
   "dont",
@@ -1815,7 +1935,7 @@ const compileActionablePack = (hits: readonly PlannedHit[]): ActionableRetrieval
 const paginateHits = (
   normalized: NormalizedRetrievalRequest,
   hits: readonly PlannedHit[],
-): RetrievalResponse => {
+): PaginatedPlannedHits => {
   const digest = toCursorDigest(
     normalized.request,
     normalized.selectors,
@@ -1829,9 +1949,7 @@ const paginateHits = (
   const limit = normalized.request.limit;
   const pageHits =
     limit === 0 ? [] : hits.slice(boundedOffset, Math.min(totalHits, boundedOffset + limit));
-  const retrievalHits = pageHits.map(toRetrievalHit);
-
-  const nextOffset = boundedOffset + retrievalHits.length;
+  const nextOffset = boundedOffset + pageHits.length;
   const nextCursor =
     limit > 0 && nextOffset < totalHits
       ? encodeCursor({
@@ -1842,18 +1960,25 @@ const paginateHits = (
       : null;
 
   return {
-    hits: retrievalHits,
+    pageHits: Object.freeze(pageHits),
     totalHits,
     nextCursor,
-    actionablePack: compileActionablePack(pageHits),
+    offset: boundedOffset,
   };
 };
+
+const toRetrievalResponse = (pagination: PaginatedPlannedHits): RetrievalResponse => ({
+  hits: pagination.pageHits.map(toRetrievalHit),
+  totalHits: pagination.totalHits,
+  nextCursor: pagination.nextCursor,
+  actionablePack: compileActionablePack(pagination.pageHits),
+});
 
 const planRetrieval = (
   normalized: NormalizedRetrievalRequest,
   policyService: PolicyService,
   snapshot: SqliteStorageSnapshotData,
-): Effect.Effect<RetrievalResponse, RetrievalQueryError> =>
+): Effect.Effect<PaginatedPlannedHits, RetrievalQueryError> =>
   Effect.try({
     try: () => ({
       scopeRows: parseScopeRows(snapshot, normalized.request.spaceId),
@@ -1889,13 +2014,64 @@ const planRetrieval = (
     ),
   );
 
+interface PlannedRetrievalResult {
+  readonly normalized: NormalizedRetrievalRequest;
+  readonly pagination: PaginatedPlannedHits;
+}
+
+const executeRetrievalPlan = (
+  request: RetrievalRequest,
+  storageService: StorageService,
+  policyService: PolicyService,
+  snapshotSignatureSecret: string,
+): Effect.Effect<PlannedRetrievalResult, RetrievalServiceError> =>
+  decodeRetrievalRequestEffect(request).pipe(
+    Effect.flatMap((decodedRequest) => {
+      const normalized = normalizeRetrievalRequest(decodedRequest);
+      return storageService
+        .exportSnapshot({
+          signatureSecret: snapshotSignatureSecret,
+        })
+        .pipe(
+          Effect.mapError((error) =>
+            toRetrievalQueryError(
+              decodedRequest,
+              `Storage snapshot export failed for retrieval planner: ${describeFailure(error)}`,
+            ),
+          ),
+          Effect.flatMap((snapshotExport) =>
+            Effect.try({
+              try: () => parseSqliteStorageSnapshotPayload(snapshotExport.payload),
+              catch: (cause) =>
+                toRetrievalQueryError(
+                  decodedRequest,
+                  `Snapshot payload parsing failed for retrieval planner: ${describeFailure(cause)}`,
+                ),
+            }),
+          ),
+          Effect.flatMap((snapshot) => planRetrieval(normalized, policyService, snapshot)),
+          Effect.map((pagination) => ({
+            normalized,
+            pagination,
+          })),
+        );
+    }),
+  );
+
+const emptyPaginatedPlannedHits: PaginatedPlannedHits = Object.freeze({
+  pageHits: Object.freeze([]),
+  totalHits: 0,
+  nextCursor: null,
+  offset: 0,
+});
+
 export const makeNoopRetrievalService = (): RetrievalService => ({
-  retrieve: () =>
+  retrieve: () => Effect.succeed(toRetrievalResponse(emptyPaginatedPlannedHits)),
+  retrieveExplainability: () =>
     Effect.succeed({
       hits: [],
       totalHits: 0,
       nextCursor: null,
-      actionablePack: compileActionablePack([]),
     }),
 });
 
@@ -1908,33 +2084,14 @@ export const makeRetrievalService = (
 
   return {
     retrieve: (request) =>
-      decodeRetrievalRequestEffect(request).pipe(
-        Effect.flatMap((decodedRequest) => {
-          const normalized = normalizeRetrievalRequest(decodedRequest);
-          return storageService
-            .exportSnapshot({
-              signatureSecret: snapshotSignatureSecret,
-            })
-            .pipe(
-              Effect.mapError((error) =>
-                toRetrievalQueryError(
-                  decodedRequest,
-                  `Storage snapshot export failed for retrieval planner: ${describeFailure(error)}`,
-                ),
-              ),
-              Effect.flatMap((snapshotExport) =>
-                Effect.try({
-                  try: () => parseSqliteStorageSnapshotPayload(snapshotExport.payload),
-                  catch: (cause) =>
-                    toRetrievalQueryError(
-                      decodedRequest,
-                      `Snapshot payload parsing failed for retrieval planner: ${describeFailure(cause)}`,
-                    ),
-                }),
-              ),
-              Effect.flatMap((snapshot) => planRetrieval(normalized, policyService, snapshot)),
-            );
-        }),
+      executeRetrievalPlan(request, storageService, policyService, snapshotSignatureSecret).pipe(
+        Effect.map(({ pagination }) => toRetrievalResponse(pagination)),
+      ),
+    retrieveExplainability: (request) =>
+      executeRetrievalPlan(request, storageService, policyService, snapshotSignatureSecret).pipe(
+        Effect.map(({ normalized, pagination }) =>
+          toRetrievalExplainabilityResponse(normalized, pagination),
+        ),
       ),
   };
 };

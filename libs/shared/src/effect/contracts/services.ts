@@ -79,6 +79,7 @@ export const StorageSnapshotImportResponseSchema = Schema.Struct({
 });
 
 const RetrievalScoreSchema = Schema.Number.pipe(Schema.between(0, 1));
+const RetrievalScopeLevelSchema = Schema.Literal("common", "project", "job_role", "user");
 
 export const RetrievalScopeSelectorsSchema = Schema.Struct({
   projectId: Schema.optional(ProjectIdSchema),
@@ -143,6 +144,56 @@ export const RetrievalHitSchema = Schema.Struct({
   ),
 });
 
+export const RetrievalExplainabilityReasonCodeSchema = Schema.Literal(
+  "QUERY_TOKEN_MATCH",
+  "QUERY_EMPTY_FALLBACK",
+  "SCOPE_FILTER_MATCH",
+  "SCOPE_SELECTOR_APPLIED",
+  "SCOPE_LEVEL_COMMON",
+  "SCOPE_LEVEL_PROJECT",
+  "SCOPE_LEVEL_JOB_ROLE",
+  "SCOPE_LEVEL_USER",
+  "POLICY_ALLOW",
+  "RANKING_WEIGHTED_SIGNALS",
+  "CHRONOLOGY_RECONCILED",
+);
+
+export const RetrievalExplainabilityRankingSignalSchema = Schema.Literal(
+  "relevance",
+  "evidenceStrength",
+  "decay",
+  "humanWeight",
+  "utility",
+);
+
+export const RetrievalExplainabilityRankingSignalsSchema = Schema.Struct({
+  relevance: RetrievalScoreSchema,
+  evidenceStrength: RetrievalScoreSchema,
+  decay: RetrievalScoreSchema,
+  humanWeight: RetrievalScoreSchema,
+  utility: RetrievalScoreSchema,
+});
+
+export const RetrievalExplainabilityWeightedContributionSchema = Schema.Struct({
+  signal: RetrievalExplainabilityRankingSignalSchema,
+  signalScore: RetrievalScoreSchema,
+  weight: RetrievalRankingWeightSchema,
+  weightedContribution: RetrievalScoreSchema,
+});
+
+export const RetrievalExplainabilityHitSchema = Schema.Struct({
+  memoryId: MemoryIdSchema,
+  layer: MemoryLayerSchema,
+  score: RetrievalScoreSchema,
+  excerpt: Schema.String,
+  rank: NonNegativeIntSchema,
+  scopeId: Schema.String,
+  scopeLevel: RetrievalScopeLevelSchema,
+  reasonCodes: Schema.Array(RetrievalExplainabilityReasonCodeSchema),
+  rankingSignals: RetrievalExplainabilityRankingSignalsSchema,
+  weightedContributions: Schema.Array(RetrievalExplainabilityWeightedContributionSchema),
+});
+
 const ActionableRetrievalLineSchema = Schema.NonEmptyTrimmedString;
 
 export const ActionableRetrievalPackSourceMetadataSchema = Schema.Struct({
@@ -170,6 +221,12 @@ export const RetrievalResponseSchema = Schema.Struct({
   totalHits: NonNegativeIntSchema,
   nextCursor: Schema.NullOr(Schema.String),
   actionablePack: Schema.optional(ActionableRetrievalPackSchema),
+});
+
+export const RetrievalExplainabilityResponseSchema = Schema.Struct({
+  hits: Schema.Array(RetrievalExplainabilityHitSchema),
+  totalHits: NonNegativeIntSchema,
+  nextCursor: Schema.NullOr(Schema.String),
 });
 
 export const EvaluationRequestSchema = Schema.Struct({
@@ -247,7 +304,23 @@ export type RetrievalScopeSelectors = Schema.Schema.Type<typeof RetrievalScopeSe
 export type RetrievalPolicyInput = Schema.Schema.Type<typeof RetrievalPolicyInputSchema>;
 export type RetrievalRankingWeights = Schema.Schema.Type<typeof RetrievalRankingWeightsSchema>;
 export type RetrievalRequest = Schema.Schema.Type<typeof RetrievalRequestSchema>;
+export type RetrievalScopeLevel = Schema.Schema.Type<typeof RetrievalScopeLevelSchema>;
 export type RetrievalHit = Schema.Schema.Type<typeof RetrievalHitSchema>;
+export type RetrievalExplainabilityReasonCode = Schema.Schema.Type<
+  typeof RetrievalExplainabilityReasonCodeSchema
+>;
+export type RetrievalExplainabilityRankingSignal = Schema.Schema.Type<
+  typeof RetrievalExplainabilityRankingSignalSchema
+>;
+export type RetrievalExplainabilityRankingSignals = Schema.Schema.Type<
+  typeof RetrievalExplainabilityRankingSignalsSchema
+>;
+export type RetrievalExplainabilityWeightedContribution = Schema.Schema.Type<
+  typeof RetrievalExplainabilityWeightedContributionSchema
+>;
+export type RetrievalExplainabilityHit = Schema.Schema.Type<
+  typeof RetrievalExplainabilityHitSchema
+>;
 export type ActionableRetrievalPackSourceMetadata = Schema.Schema.Type<
   typeof ActionableRetrievalPackSourceMetadataSchema
 >;
@@ -256,6 +329,9 @@ export type ActionableRetrievalPackSource = Schema.Schema.Type<
 >;
 export type ActionableRetrievalPack = Schema.Schema.Type<typeof ActionableRetrievalPackSchema>;
 export type RetrievalResponse = Schema.Schema.Type<typeof RetrievalResponseSchema>;
+export type RetrievalExplainabilityResponse = Schema.Schema.Type<
+  typeof RetrievalExplainabilityResponseSchema
+>;
 export type EvaluationRequest = Schema.Schema.Type<typeof EvaluationRequestSchema>;
 export type EvaluationResult = Schema.Schema.Type<typeof EvaluationResultSchema>;
 export type EvaluationResponse = Schema.Schema.Type<typeof EvaluationResponseSchema>;
