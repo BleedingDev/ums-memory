@@ -42,7 +42,8 @@
     "ingest:coding-history": "node scripts/ingest-coding-history.mjs",
     "pilot:report": "node scripts/generate-pilot-rollout-report.mjs",
     "pilot:dashboard": "node scripts/generate-pilot-kpi-dashboard.mjs",
-    "pilot:tune": "node scripts/generate-ranking-decay-tuning.mjs"
+    "pilot:tune": "node scripts/generate-ranking-decay-tuning.mjs",
+    "pilot:slo": "node scripts/evaluate-production-slos.mjs"
   },
   "devDependencies": {
     "@types/node": "22.13.10",

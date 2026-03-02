@@ -4,6 +4,7 @@
 Run a controlled UMS pilot for one team and one project, produce deterministic rollout artifacts, and create data that directly unblocks:
 - `ums-memory-n4m.2` (adoption and quality KPI dashboards)
 - `ums-memory-n4m.3` (ranking and decay tuning)
+- `ums-memory-n4m.4` (production SLO enforcement)
 
 ## Pilot Scope (fill before start)
 - Pilot ID: `pilot-<team>-<project>-<YYYYMMDD>`
@@ -22,6 +23,7 @@ Create these artifacts exactly once per pilot day:
 - Final summary report: `docs/reports/pilot-rollout/<pilot-id>-final-summary.json`
 - KPI dashboard report: `docs/reports/pilot-rollout/<pilot-id>-kpi-dashboard.json`
 - Ranking/decay tuning report: `docs/reports/pilot-rollout/<pilot-id>-ranking-decay-tuning.json`
+- Production SLO evaluation report: `docs/reports/pilot-rollout/<pilot-id>-production-slo-evaluation.json`
 - Rollout decision log: `docs/reports/pilot-rollout/<pilot-id>-decision-log.md`
 
 All artifacts are append-only, committed to git, and sorted/normalized before aggregation.
@@ -81,7 +83,8 @@ Rollback Trigger:
 Actions:
 1. Hold at 100% pilot-team coverage.
 2. Run final summary generation from complete telemetry set.
-3. Publish decision log and tuning recommendations.
+3. Publish dashboard, tuning, and production SLO evaluation artifacts.
+4. Publish decision log with rollout verdict and links to all artifacts.
 
 Exit Criteria:
 1. All global success criteria met for 3 consecutive days.
@@ -195,18 +198,30 @@ npm run pilot:tune -- \
   --output docs/reports/pilot-rollout/<pilot-id>-ranking-decay-tuning.json
 ```
 
+Production SLO evaluation:
+```bash
+npm run pilot:slo -- \
+  --dashboard docs/reports/pilot-rollout/<pilot-id>-kpi-dashboard.json \
+  --tuning docs/reports/pilot-rollout/<pilot-id>-ranking-decay-tuning.json \
+  --evaluated-at 2026-03-02T18:30:00Z \
+  --output docs/reports/pilot-rollout/<pilot-id>-production-slo-evaluation.json
+```
+
 Report generator guarantees:
 1. Fails fast by default when required telemetry fields are missing (`timestamp`, `team`, `project`, `operation`, outcome indicator, latency).
 2. Supports legacy compatibility mode with `--allow-invalid` and reports skipped entries via `invalidEventCount`.
 3. Creates missing parent output directories automatically.
 4. Emits deterministic per-operation latency/failure distributions for tuning workflows.
 
-## Handoff to n4m.2 and n4m.3
+## Handoff to n4m.2, n4m.3, and n4m.4
 - For `n4m.2` dashboards:
   - Use `requestVolume`, `successRate`, `failureRate`, `p95LatencyMs`, `operationHistogram`, `failureCodeHistogram`, `policyDecisionHistogram`, and `anomalyHistogram`.
   - Generate and publish `docs/reports/pilot-rollout/<pilot-id>-kpi-dashboard.json` using `npm run pilot:dashboard` and the phase 6 KPI runbook (`docs/runbooks/phase6-kpi-dashboard-operations.md`).
 - For `n4m.3` tuning:
   - Use per-operation failure and latency distributions plus anomaly/policy slices and linked feedback categories.
   - Generate and publish `docs/reports/pilot-rollout/<pilot-id>-ranking-decay-tuning.json` with `npm run pilot:tune` and the tuning runbook (`docs/runbooks/phase6-ranking-decay-tuning.md`).
+- For `n4m.4` production SLO enforcement:
+  - Evaluate final pilot KPI dashboards against production SLO thresholds and include optional tuning guardrails.
+  - Generate and publish `docs/reports/pilot-rollout/<pilot-id>-production-slo-evaluation.json` using `npm run pilot:slo` and the SLO runbook (`docs/runbooks/phase6-production-slo-enforcement.md`).
 
 Attach final summary + decision log links when closing `ums-memory-n4m.1`.
