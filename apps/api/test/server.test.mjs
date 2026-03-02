@@ -52,6 +52,7 @@ test("http server exposes deterministic JSON operation routes", async () => {
     assert.equal(rootBody.operations.includes("/v1/review_schedule_update"), true);
     assert.equal(rootBody.operations.includes("/v1/policy_decision_update"), true);
     assert.equal(rootBody.operations.includes("/v1/incident_escalation_signal"), true);
+    assert.equal(rootBody.operations.includes("/v1/manual_quarantine_override"), true);
 
     const ingestRes = await fetch(`${base}/v1/ingest`, {
       method: "POST",
@@ -67,6 +68,55 @@ test("http server exposes deterministic JSON operation routes", async () => {
     assert.equal(ingestBody.data.operation, "ingest");
     assert.equal(ingestBody.data.storeId, "coding-agent");
     assert.equal(ingestBody.data.accepted, 1);
+
+    const shadowRes = await fetch(`${base}/v1/shadow_write`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-ums-store": "coding-agent" },
+      body: JSON.stringify({
+        profile: "api-manual-override",
+        statement: "Manual override should be reachable via HTTP route.",
+        sourceEventIds: ["evt-api-manual-shadow-1"],
+        evidenceEventIds: ["evt-api-manual-shadow-1"],
+      }),
+    });
+    assert.equal(shadowRes.status, 200);
+    const shadowBody = await shadowRes.json();
+    const candidateId = shadowBody.data.applied[0].candidateId;
+
+    const manualRequest = {
+      profile: "api-manual-override",
+      overrideControlId: "movr-api-route-1",
+      action: "promote",
+      actor: "api-oncall",
+      reasonCodes: ["http_manual_restore"],
+      targetCandidateIds: [candidateId],
+      evidenceEventIds: ["evt-api-manual-override-1"],
+      sourceEventIds: ["evt-api-manual-override-2"],
+      timestamp: "2026-03-02T22:00:00.000Z",
+    };
+    const manualFirstRes = await fetch(`${base}/v1/manual_quarantine_override`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-ums-store": "coding-agent" },
+      body: JSON.stringify(manualRequest),
+    });
+    assert.equal(manualFirstRes.status, 200);
+    const manualFirstBody = await manualFirstRes.json();
+    assert.equal(manualFirstBody.ok, true);
+    assert.equal(manualFirstBody.data.operation, "manual_quarantine_override");
+    assert.equal(manualFirstBody.data.action, "created");
+    assert.equal(manualFirstBody.data.override.action, "promote");
+    assert.equal(manualFirstBody.data.override.changed, true);
+
+    const manualReplayRes = await fetch(`${base}/v1/manual_quarantine_override`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-ums-store": "coding-agent" },
+      body: JSON.stringify(manualRequest),
+    });
+    assert.equal(manualReplayRes.status, 200);
+    const manualReplayBody = await manualReplayRes.json();
+    assert.equal(manualReplayBody.ok, true);
+    assert.equal(manualReplayBody.data.action, "noop");
+    assert.equal(manualReplayBody.data.override.changed, false);
   } finally {
     await new Promise((resolve, reject) => {
       server.close((error) => (error ? reject(error) : resolve()));

@@ -20,6 +20,7 @@ const OPS = [
   "pain_signal_ingest",
   "failure_signal_ingest",
   "incident_escalation_signal",
+  "manual_quarantine_override",
   "curriculum_recommendation",
   "review_schedule_clock",
   "review_set_rebalance",
@@ -68,6 +69,12 @@ const FAILURE_SIGNAL_EVIDENCE_CONTRACT_ERROR =
   "EVIDENCE_POINTER_CONTRACT_VIOLATION: failure_signal_ingest requires at least one evidenceEventId.";
 const INCIDENT_ESCALATION_EVIDENCE_CONTRACT_ERROR =
   "EVIDENCE_POINTER_CONTRACT_VIOLATION: incident_escalation_signal requires at least one evidenceEventId.";
+const MANUAL_OVERRIDE_TARGET_CONTRACT_ERROR =
+  "VALIDATION_CONTRACT_VIOLATION: manual_quarantine_override requires at least one targetCandidateId or targetRuleId.";
+const MANUAL_OVERRIDE_REASON_CONTRACT_ERROR =
+  "VALIDATION_CONTRACT_VIOLATION: manual_quarantine_override requires reasonCodes or a reason.";
+const MANUAL_OVERRIDE_ACTOR_CONTRACT_ERROR =
+  "VALIDATION_CONTRACT_VIOLATION: manual_quarantine_override requires actor.";
 const GUARDED_CURATION_EVIDENCE_CONTRACT_ERROR =
   "VALIDATION_CONTRACT_VIOLATION: curate_guarded candidate promotion requires evidence-backed validation.";
 const RECALL_AUTHORIZATION_REQUESTER_ERROR =
@@ -1124,6 +1131,7 @@ const FAILURE_SIGNAL_DEFAULT_SEVERITY = Object.freeze({
 });
 const INCIDENT_ESCALATION_SEVERITIES = new Set(["low", "medium", "high", "severe", "critical"]);
 const INCIDENT_ESCALATION_IMMEDIATE_QUARANTINE_SEVERITIES = new Set(["severe", "critical"]);
+const MANUAL_OVERRIDE_ACTIONS = new Set(["suppress", "promote"]);
 const CLOCK_MODES = new Set(["auto", "interaction", "sleep"]);
 const RECALL_AUTH_MODES = new Set(["check", "grant", "revoke", "replace"]);
 const DEGRADATION_WARNINGS = Object.freeze([
@@ -1623,6 +1631,7 @@ function getProfileState(storeId, profile) {
     painSignals: [],
     failureSignals: [],
     incidentEscalations: [],
+    manualOverrideControls: [],
     schedulerClocks: {
       interactionTick: 0,
       sleepTick: 0,
@@ -3071,6 +3080,105 @@ function normalizeIncidentEscalationSignalRequest(request, storeId, profile) {
     sourceEventIds,
     reasonCodes,
     quarantineRequired,
+    metadata,
+    recordedAt,
+  };
+}
+
+function normalizeManualQuarantineOverrideRequest(request, storeId, profile) {
+  const overrideAction = normalizeDeterministicEnum(
+    request.action ?? request.overrideAction ?? request.controlAction,
+    "action",
+    "manual_quarantine_override",
+    MANUAL_OVERRIDE_ACTIONS,
+    "suppress",
+  );
+  const targetCandidateIds = normalizeGuardedStringArray(
+    request.targetCandidateIds ??
+      (request.targetCandidateId ? [request.targetCandidateId] : null) ??
+      request.candidateIds ??
+      (request.candidateId ? [request.candidateId] : null),
+    "targetCandidateIds",
+  );
+  const targetRuleIds = normalizeGuardedStringArray(
+    request.targetRuleIds ??
+      (request.targetRuleId ? [request.targetRuleId] : null) ??
+      request.ruleIds ??
+      (request.ruleId ? [request.ruleId] : null),
+    "targetRuleIds",
+  );
+  if (targetCandidateIds.length === 0 && targetRuleIds.length === 0) {
+    throw new Error(MANUAL_OVERRIDE_TARGET_CONTRACT_ERROR);
+  }
+  const actor = normalizeBoundedString(
+    request.actor ?? request.operator ?? request.requestedBy,
+    "manual_quarantine_override.actor",
+    128,
+  );
+  if (!actor) {
+    throw new Error(MANUAL_OVERRIDE_ACTOR_CONTRACT_ERROR);
+  }
+  const reason = normalizeBoundedString(
+    request.reason ?? request.note ?? request.summary,
+    "manual_quarantine_override.reason",
+    512,
+  );
+  const providedReasonCodes = normalizeGuardedStringArray(request.reasonCodes, "reasonCodes");
+  if (providedReasonCodes.length === 0 && !reason) {
+    throw new Error(MANUAL_OVERRIDE_REASON_CONTRACT_ERROR);
+  }
+  const reasonCodes = mergeStringLists(providedReasonCodes, [
+    "manual_quarantine_override",
+    `manual_override_action_${overrideAction}`,
+  ]);
+  const evidenceEventIds = normalizeGuardedStringArray(
+    request.evidenceEventIds ?? request.evidenceEpisodeIds,
+    "evidenceEventIds",
+  );
+  const sourceEventIds = normalizeGuardedStringArray(
+    request.sourceEventIds ?? request.provenanceEventIds,
+    "sourceEventIds",
+  );
+  const recordedAt = normalizeIsoTimestamp(
+    request.timestamp ?? request.recordedAt ?? request.createdAt,
+    "manual_quarantine_override.timestamp",
+    DEFAULT_VERSION_TIMESTAMP,
+  );
+  const metadata = normalizeMetadata(request.metadata);
+  const idempotencyDigest = hash(
+    stableStringify({
+      storeId,
+      profile,
+      overrideAction,
+      actor,
+      reason: reason ?? null,
+      reasonCodes,
+      targetCandidateIds,
+      targetRuleIds,
+      evidenceEventIds,
+      sourceEventIds,
+      metadata,
+      recordedAt,
+    }),
+  );
+  const overrideControlId =
+    normalizeBoundedString(
+      request.overrideControlId ?? request.controlId ?? request.overrideId ?? request.signalId,
+      "overrideControlId",
+      64,
+    ) ?? makeId("movr", idempotencyDigest);
+
+  return {
+    overrideControlId,
+    idempotencyDigest,
+    overrideAction,
+    actor,
+    reason,
+    reasonCodes,
+    targetCandidateIds,
+    targetRuleIds,
+    evidenceEventIds,
+    sourceEventIds,
     metadata,
     recordedAt,
   };
@@ -4848,6 +4956,137 @@ function runFailureSignalIngest(request) {
   };
 }
 
+function applyManualPromotionOverride(
+  state,
+  {
+    overrideControlId,
+    reasonCodes = [],
+    targetCandidateIds = [],
+    targetRuleIds = [],
+    recordedAt = DEFAULT_VERSION_TIMESTAMP,
+  } = {},
+) {
+  const normalizedReasonCodes = mergeStringLists(reasonCodes, ["manual_override_promote"]);
+  const resolvedCandidateIds = resolveDemotionTargetCandidateIds(state, targetRuleIds, targetCandidateIds);
+  const explicitRuleIds = asSortedUniqueStrings(targetRuleIds);
+  const unresolvedRuleIds = new Set(explicitRuleIds);
+  const candidateActions = [];
+  const promotedCandidateIds = [];
+  const promotedRuleIds = [];
+  const alreadyPromotedCandidateIds = [];
+  const missingCandidateIds = [];
+
+  for (const candidateId of resolvedCandidateIds) {
+    const resolved = resolveMemoryCandidate(state, candidateId);
+    if (!resolved.candidate) {
+      missingCandidateIds.push(candidateId);
+      candidateActions.push({
+        candidateId,
+        action: "missing",
+      });
+      continue;
+    }
+
+    const previousCandidate = resolved.candidate;
+    const previousStatus = previousCandidate.status ?? "shadow";
+    unresolvedRuleIds.delete(previousCandidate.ruleId);
+
+    const nextCandidate =
+      previousStatus === "promoted"
+        ? previousCandidate
+        : {
+            ...previousCandidate,
+            status: "promoted",
+            promotedAt: previousCandidate.promotedAt ?? recordedAt,
+            demotedAt: null,
+            latestDemotionReasonCodes: [],
+            updatedAt: recordedAt,
+          };
+    if (previousStatus !== "promoted") {
+      state.shadowCandidates[resolved.candidateIndex] = nextCandidate;
+      promotedCandidateIds.push(candidateId);
+    }
+
+    const nextRule = {
+      ruleId: nextCandidate.ruleId,
+      statement: nextCandidate.statement,
+      confidence: roundNumber(clamp01(nextCandidate.confidence, 0.5), 6),
+      scope: nextCandidate.scope,
+      sourceEventIds: mergeStringLists([], nextCandidate.sourceEventIds),
+      evidenceEventIds: mergeStringLists([], nextCandidate.evidenceEventIds),
+      promotedFromCandidateId: nextCandidate.candidateId,
+      promotedByReplayEvalId: nextCandidate.latestReplayEvalId,
+      promotedAt: nextCandidate.promotedAt ?? recordedAt,
+      updatedAt: recordedAt,
+    };
+
+    let ruleAction = "created";
+    const existingRuleIndex = state.rules.findIndex((rule) => rule?.ruleId === nextCandidate.ruleId);
+    if (existingRuleIndex >= 0) {
+      const existingRule = state.rules[existingRuleIndex];
+      if (stableStringify(existingRule) === stableStringify(nextRule)) {
+        ruleAction = "noop";
+      } else {
+        ruleAction = "updated";
+        state.rules[existingRuleIndex] = nextRule;
+      }
+    } else {
+      state.rules.push(nextRule);
+    }
+
+    if (ruleAction !== "noop") {
+      promotedRuleIds.push(nextCandidate.ruleId);
+    }
+    if (previousStatus === "promoted" && ruleAction === "noop") {
+      alreadyPromotedCandidateIds.push(candidateId);
+    }
+    candidateActions.push({
+      candidateId,
+      action: previousStatus === "promoted" && ruleAction === "noop" ? "already_promoted" : "promoted",
+      previousStatus,
+      nextStatus: "promoted",
+      ruleId: nextCandidate.ruleId,
+      ruleAction,
+    });
+  }
+
+  state.shadowCandidates = sortByTimestampAndId(state.shadowCandidates, "updatedAt", "candidateId");
+  state.rules = sortByTimestampAndId(state.rules, "updatedAt", "ruleId");
+
+  const missingRuleIds = asSortedUniqueStrings([...unresolvedRuleIds]);
+  const promotedCandidateIdsSorted = asSortedUniqueStrings(promotedCandidateIds);
+  const promotedRuleIdsSorted = asSortedUniqueStrings(promotedRuleIds);
+  const overridePathId = makeId(
+    "mpath",
+    hash(
+      stableStringify({
+        overrideControlId,
+        targetCandidateIds: asSortedUniqueStrings(targetCandidateIds),
+        targetRuleIds: explicitRuleIds,
+        resolvedCandidateIds,
+        promotedCandidateIds: promotedCandidateIdsSorted,
+        promotedRuleIds: promotedRuleIdsSorted,
+        recordedAt,
+      }),
+    ),
+  );
+
+  return {
+    overridePathId,
+    targetCandidateIds: asSortedUniqueStrings(targetCandidateIds),
+    targetRuleIds: explicitRuleIds,
+    resolvedCandidateIds,
+    promotedCandidateIds: promotedCandidateIdsSorted,
+    promotedRuleIds: promotedRuleIdsSorted,
+    alreadyPromotedCandidateIds: asSortedUniqueStrings(alreadyPromotedCandidateIds),
+    missingCandidateIds: asSortedUniqueStrings(missingCandidateIds),
+    missingRuleIds,
+    candidateActions,
+    changed: promotedCandidateIdsSorted.length > 0 || promotedRuleIdsSorted.length > 0,
+    reasonCodes: normalizedReasonCodes,
+  };
+}
+
 function applyIncidentEscalationQuarantine(
   state,
   {
@@ -4856,10 +5095,11 @@ function applyIncidentEscalationQuarantine(
     reasonCodes = [],
     targetCandidateIds = [],
     targetRuleIds = [],
+    triggerReasonCode = "incident_quarantine_triggered",
     recordedAt = DEFAULT_VERSION_TIMESTAMP,
   } = {},
 ) {
-  const normalizedReasonCodes = mergeStringLists(reasonCodes, ["incident_quarantine_triggered"]);
+  const normalizedReasonCodes = mergeStringLists(reasonCodes, [triggerReasonCode]);
   const resolvedCandidateIds = resolveDemotionTargetCandidateIds(state, targetRuleIds, targetCandidateIds);
   const candidateActions = [];
   const demotedCandidateIds = [];
@@ -4961,6 +5201,147 @@ function applyIncidentEscalationQuarantine(
     missingRuleIds: asSortedUniqueStrings(missingRuleIds),
     changed: demotedCandidateIds.length > 0 || directlyQuarantinedRuleIds.length > 0,
     reasonCodes: normalizedReasonCodes,
+  };
+}
+
+function runManualQuarantineOverride(request) {
+  const { storeId, profile, input } = normalizeRequest("manual_quarantine_override", request);
+  const state = getProfileState(storeId, profile);
+  const normalized = normalizeManualQuarantineOverrideRequest(request, storeId, profile);
+  const meta = buildMeta("manual_quarantine_override", storeId, profile, input);
+  const record = {
+    overrideControlId: normalized.overrideControlId,
+    idempotencyDigest: normalized.idempotencyDigest,
+    overrideAction: normalized.overrideAction,
+    actor: normalized.actor,
+    reason: normalized.reason,
+    reasonCodes: normalized.reasonCodes,
+    targetCandidateIds: normalized.targetCandidateIds,
+    targetRuleIds: normalized.targetRuleIds,
+    evidenceEventIds: normalized.evidenceEventIds,
+    sourceEventIds: normalized.sourceEventIds,
+    metadata: normalized.metadata,
+    recordedAt: normalized.recordedAt,
+  };
+  const overrideUpsert = upsertDeterministicRecord(
+    state.manualOverrideControls,
+    "overrideControlId",
+    record,
+    "recordedAt",
+  );
+  state.manualOverrideControls = overrideUpsert.nextRecords;
+
+  const operationReasonCodes = mergeStringLists(normalized.reasonCodes, [
+    normalized.overrideAction === "promote" ? "manual_override_promote" : "manual_override_suppress",
+  ]);
+  const overrideExecution =
+    normalized.overrideAction === "promote"
+      ? applyManualPromotionOverride(state, {
+          overrideControlId: normalized.overrideControlId,
+          reasonCodes: operationReasonCodes,
+          targetCandidateIds: normalized.targetCandidateIds,
+          targetRuleIds: normalized.targetRuleIds,
+          recordedAt: normalized.recordedAt,
+        })
+      : applyIncidentEscalationQuarantine(state, {
+          escalationSignalId: normalized.overrideControlId,
+          severity: "critical",
+          reasonCodes: operationReasonCodes,
+          targetCandidateIds: normalized.targetCandidateIds,
+          targetRuleIds: normalized.targetRuleIds,
+          triggerReasonCode: "manual_quarantine_triggered",
+          recordedAt: normalized.recordedAt,
+        });
+  const action =
+    overrideUpsert.action === "noop" && !overrideExecution.changed
+      ? "noop"
+      : overrideUpsert.action === "created"
+        ? "created"
+        : "updated";
+  const existingAudit = findPolicyAuditTrailByOperationEntity(
+    state,
+    "manual_quarantine_override",
+    normalized.overrideControlId,
+  );
+  const auditEvent =
+    action === "noop"
+      ? null
+      : appendPolicyAuditTrail(state, {
+          operation: "manual_quarantine_override",
+          storeId,
+          profile,
+          entityId: normalized.overrideControlId,
+          outcome:
+            normalized.overrideAction === "promote"
+              ? overrideExecution.changed
+                ? "allow"
+                : "review"
+              : "deny",
+          reasonCodes: overrideExecution.reasonCodes,
+          details: {
+            overrideAction: normalized.overrideAction,
+            actor: normalized.actor,
+            reason: normalized.reason,
+            idempotencyDigest: normalized.idempotencyDigest,
+            targetCandidateIds: overrideExecution.targetCandidateIds,
+            targetRuleIds: overrideExecution.targetRuleIds,
+            resolvedCandidateIds: overrideExecution.resolvedCandidateIds,
+            changed: overrideExecution.changed,
+            demotedCandidateIds: overrideExecution.demotedCandidateIds ?? [],
+            quarantinedRuleIds: overrideExecution.quarantinedRuleIds ?? [],
+            promotedCandidateIds: overrideExecution.promotedCandidateIds ?? [],
+            promotedRuleIds: overrideExecution.promotedRuleIds ?? [],
+            missingCandidateIds: overrideExecution.missingCandidateIds ?? [],
+            missingRuleIds: overrideExecution.missingRuleIds ?? [],
+            evidenceEventIds: normalized.evidenceEventIds,
+            sourceEventIds: normalized.sourceEventIds,
+          },
+          timestamp: normalized.recordedAt,
+        });
+  const isPromoteAction = normalized.overrideAction === "promote";
+
+  return {
+    ...meta,
+    action,
+    overrideControlId: normalized.overrideControlId,
+    controlDigest: hash(stableStringify(overrideUpsert.record)),
+    controlRecord: overrideUpsert.record,
+    override: {
+      action: normalized.overrideAction,
+      actor: normalized.actor,
+      pathId: overrideExecution.overridePathId ?? overrideExecution.quarantinePathId,
+      targetCandidateIds: overrideExecution.targetCandidateIds,
+      targetRuleIds: overrideExecution.targetRuleIds,
+      resolvedCandidateIds: overrideExecution.resolvedCandidateIds,
+      changed: overrideExecution.changed,
+      reasonCodes: overrideExecution.reasonCodes,
+      candidateActions: overrideExecution.candidateActions,
+      ruleActions: overrideExecution.ruleActions ?? [],
+      demotedCandidateIds: overrideExecution.demotedCandidateIds ?? [],
+      quarantinedRuleIds: overrideExecution.quarantinedRuleIds ?? [],
+      alreadyQuarantinedCandidateIds: overrideExecution.alreadyQuarantinedCandidateIds ?? [],
+      promotedCandidateIds: overrideExecution.promotedCandidateIds ?? [],
+      promotedRuleIds: overrideExecution.promotedRuleIds ?? [],
+      alreadyPromotedCandidateIds: overrideExecution.alreadyPromotedCandidateIds ?? [],
+      missingCandidateIds: overrideExecution.missingCandidateIds ?? [],
+      missingRuleIds: overrideExecution.missingRuleIds ?? [],
+    },
+    policyAuditEventId: auditEvent?.auditEventId ?? existingAudit?.auditEventId ?? null,
+    observability: {
+      overrideAction: normalized.overrideAction,
+      promoteOverrideApplied: isPromoteAction && overrideExecution.changed,
+      quarantineOverrideApplied: !isPromoteAction && overrideExecution.changed,
+      mutationCount:
+        (overrideExecution.demotedCandidateIds?.length ?? 0) +
+        (overrideExecution.quarantinedRuleIds?.length ?? 0) +
+        (overrideExecution.promotedCandidateIds?.length ?? 0) +
+        (overrideExecution.promotedRuleIds?.length ?? 0),
+      evidenceCount: normalized.evidenceEventIds.length,
+      provenanceCount: normalized.sourceEventIds.length,
+      totalManualOverrideControls: state.manualOverrideControls.length,
+      replaySafe: true,
+      slo: buildSloObservability(meta.requestDigest, "manual_quarantine_override", 35),
+    },
   };
 }
 
@@ -6918,6 +7299,7 @@ function runDoctor(request) {
     painSignals: state.painSignals.length,
     failureSignals: state.failureSignals.length,
     incidentEscalations: Array.isArray(state.incidentEscalations) ? state.incidentEscalations.length : 0,
+    manualOverrideControls: Array.isArray(state.manualOverrideControls) ? state.manualOverrideControls.length : 0,
     curriculumPlanItems: state.curriculumPlanItems.length,
     curriculumRecommendationSnapshots: state.curriculumRecommendationSnapshots.length,
     reviewScheduleEntries: state.reviewScheduleEntries.length,
@@ -6967,6 +7349,9 @@ const runners = {
   incident_escalation_signal: runIncidentEscalationSignal,
   incident_escalation_ingest: runIncidentEscalationSignal,
   escalation_signal_ingest: runIncidentEscalationSignal,
+  manual_quarantine_override: runManualQuarantineOverride,
+  manual_override_control: runManualQuarantineOverride,
+  quarantine_override_control: runManualQuarantineOverride,
   curriculum_plan_update: runCurriculumPlanUpdate,
   curriculum_recommendation: runCurriculumRecommendation,
   curriculum_recommend: runCurriculumRecommendation,
@@ -7079,6 +7464,10 @@ export function snapshotProfile(profile = INTERNAL_PROFILE_ID, storeId = DEFAULT
       ...escalation,
       metadata: cloneStable(escalation.metadata ?? {}, {}),
     })),
+    manualOverrideControls: state.manualOverrideControls.map((control) => ({
+      ...control,
+      metadata: cloneStable(control.metadata ?? {}, {}),
+    })),
     schedulerClocks: cloneStable(state.schedulerClocks ?? {}, {}),
     reviewArchivalTiers: cloneStable(state.reviewArchivalTiers ?? {}, {}),
     recallAllowlistPolicy: cloneStable(state.recallAllowlistPolicy ?? {}, {}),
@@ -7131,6 +7520,10 @@ function serializeState(state) {
       ...escalation,
       metadata: cloneStable(escalation.metadata ?? {}, {}),
     })),
+    manualOverrideControls: state.manualOverrideControls.map((control) => ({
+      ...control,
+      metadata: cloneStable(control.metadata ?? {}, {}),
+    })),
     schedulerClocks: cloneStable(state.schedulerClocks ?? {}, {}),
     reviewArchivalTiers: cloneStable(state.reviewArchivalTiers ?? {}, {}),
     recallAllowlistPolicy: cloneStable(state.recallAllowlistPolicy ?? {}, {}),
@@ -7178,6 +7571,7 @@ function normalizeState(rawState) {
   const painSignals = Array.isArray(state.painSignals) ? state.painSignals : [];
   const failureSignals = Array.isArray(state.failureSignals) ? state.failureSignals : [];
   const incidentEscalations = Array.isArray(state.incidentEscalations) ? state.incidentEscalations : [];
+  const manualOverrideControls = Array.isArray(state.manualOverrideControls) ? state.manualOverrideControls : [];
   const degradedTutorSessions = Array.isArray(state.degradedTutorSessions) ? state.degradedTutorSessions : [];
   const policyDecisions = Array.isArray(state.policyDecisions) ? state.policyDecisions : [];
   const policyAuditTrail = Array.isArray(state.policyAuditTrail) ? state.policyAuditTrail : [];
@@ -7341,6 +7735,57 @@ function normalizeState(rawState) {
       })),
       "recordedAt",
       "escalationSignalId",
+    ),
+    manualOverrideControls: sortByTimestampAndId(
+      manualOverrideControls.map((control) => {
+        const overrideControlId =
+          normalizeBoundedString(control?.overrideControlId, "manualOverrideControls.overrideControlId", 64) ??
+          makeId("movr", hash(stableStringify(control)));
+        const overrideActionRaw = normalizeBoundedStringLenient(control?.overrideAction, 32);
+        const overrideAction = MANUAL_OVERRIDE_ACTIONS.has(overrideActionRaw) ? overrideActionRaw : "suppress";
+        const actor = normalizeBoundedStringLenient(control?.actor, 128) ?? "human_unspecified";
+        const reason = normalizeBoundedStringLenient(control?.reason, 512);
+        const reasonCodes = normalizeBoundedStringArrayLenient(control?.reasonCodes);
+        const targetCandidateIds = normalizeBoundedStringArrayLenient(control?.targetCandidateIds);
+        const targetRuleIds = normalizeBoundedStringArrayLenient(control?.targetRuleIds);
+        const evidenceEventIds = normalizeBoundedStringArrayLenient(control?.evidenceEventIds);
+        const sourceEventIds = normalizeBoundedStringArrayLenient(control?.sourceEventIds);
+        const metadata = isPlainObject(control?.metadata) ? { ...control.metadata } : {};
+        const recordedAt = normalizeIsoTimestampOrFallback(control?.recordedAt, DEFAULT_VERSION_TIMESTAMP);
+        const idempotencyDigest =
+          normalizeBoundedString(control?.idempotencyDigest, "manualOverrideControls.idempotencyDigest", 128) ??
+          hash(
+            stableStringify({
+              overrideControlId,
+              overrideAction,
+              actor,
+              reason,
+              reasonCodes,
+              targetCandidateIds,
+              targetRuleIds,
+              evidenceEventIds,
+              sourceEventIds,
+              recordedAt,
+            }),
+          );
+        return {
+          ...control,
+          overrideControlId,
+          idempotencyDigest,
+          overrideAction,
+          actor,
+          reason,
+          reasonCodes,
+          targetCandidateIds,
+          targetRuleIds,
+          evidenceEventIds,
+          sourceEventIds,
+          metadata,
+          recordedAt,
+        };
+      }),
+      "recordedAt",
+      "overrideControlId",
     ),
     shadowCandidates: sortByTimestampAndId(
       shadowCandidates.map((candidate) => {

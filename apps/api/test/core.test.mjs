@@ -36,6 +36,7 @@ test("core exposes the full required operation surface", () => {
     "pain_signal_ingest",
     "failure_signal_ingest",
     "incident_escalation_signal",
+    "manual_quarantine_override",
     "curriculum_recommendation",
     "review_schedule_clock",
     "review_set_rebalance",
@@ -1345,6 +1346,205 @@ test("ums-memory-hpl.7 non-severe escalation records signal without immediate qu
   assert.ok(candidate);
   assert.equal(candidate.status, "promoted");
   assert.equal(snapshot.rules.some((entry) => entry.ruleId === ruleId), true);
+});
+
+test("ums-memory-hpl.7 incident escalation enforces evidence pointer contract", () => {
+  assert.throws(
+    () =>
+      executeOperation("incident_escalation_signal", {
+        storeId: "tenant-hpl7-contract",
+        profile: "hpl7-contract",
+        escalationSignalId: "esc-hpl7-contract-1",
+        severity: "critical",
+        targetCandidateIds: ["cand-hpl7-contract-1"],
+      }),
+    /incident_escalation_signal requires at least one evidenceEventId/,
+  );
+});
+
+test("ums-memory-hpl.7 incident escalation quarantines orphaned promoted rules directly and remains replay-safe", () => {
+  const storeId = "tenant-hpl7-orphan-rule";
+  const profile = "hpl7-orphan-rule";
+  const ruleId = "rule-hpl7-orphan-1";
+  importStoreSnapshot({
+    stores: {
+      [storeId]: {
+        profiles: {
+          [profile]: {
+            rules: [
+              {
+                ruleId,
+                statement: "Orphan promoted rules should still be directly quarantinable.",
+                confidence: 0.78,
+                scope: "global",
+                sourceEventIds: ["evt-hpl7-orphan-shadow-1"],
+                evidenceEventIds: ["evt-hpl7-orphan-shadow-1"],
+                promotedFromCandidateId: "cand-hpl7-missing",
+                promotedByReplayEvalId: "reval-hpl7-missing",
+                promotedAt: "2026-03-02T20:00:00.000Z",
+                updatedAt: "2026-03-02T20:00:00.000Z",
+              },
+            ],
+          },
+        },
+      },
+    },
+  });
+
+  const request = {
+    storeId,
+    profile,
+    escalationSignalId: "esc-hpl7-orphan-rule-1",
+    incidentRef: "inc-hpl7-orphan-rule",
+    escalationType: "runtime_error",
+    severity: "critical",
+    reasonCodes: ["production_incident"],
+    targetRuleIds: [ruleId],
+    evidenceEventIds: ["evt-hpl7-orphan-incident-1"],
+    sourceEventIds: ["evt-hpl7-orphan-incident-2"],
+    timestamp: "2026-03-02T20:05:00.000Z",
+  };
+
+  const first = executeOperation("incident_escalation_signal", request);
+  const firstSnapshot = snapshotProfile(profile, storeId);
+  assert.equal(first.action, "created");
+  assert.equal(first.quarantine.changed, true);
+  assert.deepEqual(first.quarantine.demotedCandidateIds, []);
+  assert.deepEqual(first.quarantine.quarantinedRuleIds, [ruleId]);
+  assert.equal(first.quarantine.ruleActions.find((entry) => entry.ruleId === ruleId)?.action, "quarantined");
+  assert.equal(firstSnapshot.rules.some((entry) => entry.ruleId === ruleId), false);
+
+  const auditCountAfterFirst = firstSnapshot.policyAuditTrail.length;
+  const second = executeOperation("incident_escalation_signal", request);
+  const secondSnapshot = snapshotProfile(profile, storeId);
+  assert.equal(second.action, "noop");
+  assert.equal(second.quarantine.changed, false);
+  assert.deepEqual(second.quarantine.quarantinedRuleIds, []);
+  assert.deepEqual(second.quarantine.missingRuleIds, [ruleId]);
+  assert.equal(secondSnapshot.policyAuditTrail.length, auditCountAfterFirst);
+});
+
+test("ums-memory-hpl.9 manual override controls enforce contracts for targets, actor, and reasons", () => {
+  assert.throws(
+    () =>
+      executeOperation("manual_quarantine_override", {
+        storeId: "tenant-hpl9-contracts",
+        profile: "hpl9-contracts",
+        action: "suppress",
+        actor: "oncall-operator",
+        reasonCodes: ["manual_safety_intervention"],
+      }),
+    /manual_quarantine_override requires at least one targetCandidateId or targetRuleId/,
+  );
+  assert.throws(
+    () =>
+      executeOperation("manual_quarantine_override", {
+        storeId: "tenant-hpl9-contracts",
+        profile: "hpl9-contracts",
+        action: "suppress",
+        targetCandidateIds: ["cand-hpl9-contracts-1"],
+        reasonCodes: ["manual_safety_intervention"],
+      }),
+    /manual_quarantine_override requires actor/,
+  );
+  assert.throws(
+    () =>
+      executeOperation("manual_quarantine_override", {
+        storeId: "tenant-hpl9-contracts",
+        profile: "hpl9-contracts",
+        action: "promote",
+        actor: "oncall-operator",
+        targetCandidateIds: ["cand-hpl9-contracts-1"],
+      }),
+    /manual_quarantine_override requires reasonCodes or a reason/,
+  );
+});
+
+test("ums-memory-hpl.9 manual override controls support emergency promote and suppress flows with replay-safe auditability", () => {
+  const storeId = "tenant-hpl9-manual";
+  const profile = "hpl9-manual";
+  const shadow = executeOperation("shadow_write", {
+    storeId,
+    profile,
+    statement: "Manual override should recover this candidate even without replay gate pass.",
+    sourceEventIds: ["evt-hpl9-shadow-1"],
+    evidenceEventIds: ["evt-hpl9-shadow-1"],
+    createdAt: "2026-03-02T21:00:00.000Z",
+    expiresAt: "2026-04-02T21:00:00.000Z",
+  });
+  const candidateId = shadow.applied[0].candidateId;
+
+  const promoteRequest = {
+    storeId,
+    profile,
+    overrideControlId: "movr-hpl9-promote-1",
+    action: "promote",
+    actor: "oncall-operator",
+    reasonCodes: ["false_positive_quarantine"],
+    reason: "Restore candidate while incident triage is ongoing.",
+    targetCandidateIds: [candidateId],
+    evidenceEventIds: ["evt-hpl9-promote-1"],
+    sourceEventIds: ["evt-hpl9-promote-2"],
+    timestamp: "2026-03-02T21:10:00.000Z",
+  };
+
+  const promoteFirst = executeOperation("manual_override_control", promoteRequest);
+  const afterPromote = snapshotProfile(profile, storeId);
+  const promotedCandidate = afterPromote.shadowCandidates.find((entry) => entry.candidateId === candidateId);
+  assert.equal(promoteFirst.operation, "manual_quarantine_override");
+  assert.equal(promoteFirst.action, "created");
+  assert.equal(promoteFirst.override.action, "promote");
+  assert.equal(promoteFirst.override.changed, true);
+  assert.deepEqual(promoteFirst.override.promotedCandidateIds, [candidateId]);
+  assert.equal(promoteFirst.override.promotedRuleIds.length, 1);
+  assert.ok(promotedCandidate);
+  assert.equal(promotedCandidate.status, "promoted");
+  const promotedRuleId = promoteFirst.override.promotedRuleIds[0];
+  assert.equal(afterPromote.rules.some((entry) => entry.ruleId === promotedRuleId), true);
+
+  const promoteAuditCount = afterPromote.policyAuditTrail.length;
+  const promoteReplay = executeOperation("manual_quarantine_override", promoteRequest);
+  const afterPromoteReplay = snapshotProfile(profile, storeId);
+  assert.equal(promoteReplay.action, "noop");
+  assert.equal(promoteReplay.override.changed, false);
+  assert.deepEqual(promoteReplay.override.promotedCandidateIds, []);
+  assert.equal(afterPromoteReplay.policyAuditTrail.length, promoteAuditCount);
+
+  const suppressRequest = {
+    storeId,
+    profile,
+    overrideControlId: "movr-hpl9-suppress-1",
+    action: "suppress",
+    actor: "oncall-operator",
+    reasonCodes: ["emergency_suppress"],
+    reason: "Suppress candidate after production incident.",
+    targetRuleIds: [promotedRuleId],
+    evidenceEventIds: ["evt-hpl9-suppress-1"],
+    sourceEventIds: ["evt-hpl9-suppress-2"],
+    timestamp: "2026-03-02T21:20:00.000Z",
+  };
+
+  const suppressFirst = executeOperation("quarantine_override_control", suppressRequest);
+  const afterSuppress = snapshotProfile(profile, storeId);
+  const suppressedCandidate = afterSuppress.shadowCandidates.find((entry) => entry.candidateId === candidateId);
+  assert.equal(suppressFirst.operation, "manual_quarantine_override");
+  assert.equal(suppressFirst.action, "created");
+  assert.equal(suppressFirst.override.action, "suppress");
+  assert.equal(suppressFirst.override.changed, true);
+  assert.deepEqual(suppressFirst.override.demotedCandidateIds, [candidateId]);
+  assert.deepEqual(suppressFirst.override.quarantinedRuleIds, [promotedRuleId]);
+  assert.ok(suppressedCandidate);
+  assert.equal(suppressedCandidate.status, "demoted");
+  assert.equal(afterSuppress.rules.some((entry) => entry.ruleId === promotedRuleId), false);
+
+  const suppressAuditCount = afterSuppress.policyAuditTrail.length;
+  const suppressReplay = executeOperation("manual_quarantine_override", suppressRequest);
+  const afterSuppressReplay = snapshotProfile(profile, storeId);
+  assert.equal(suppressReplay.action, "noop");
+  assert.equal(suppressReplay.override.changed, false);
+  assert.deepEqual(suppressReplay.override.alreadyQuarantinedCandidateIds, [candidateId]);
+  assert.deepEqual(suppressReplay.override.missingRuleIds, [promotedRuleId]);
+  assert.equal(afterSuppressReplay.policyAuditTrail.length, suppressAuditCount);
 });
 
 test("context and curate operate on shared profile state", () => {
