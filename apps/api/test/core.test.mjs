@@ -102,6 +102,124 @@ test("shadow candidates and replay evaluations survive export/import round-trips
   assert.equal(replayFromRestoredStore.action, "noop");
 });
 
+test("shadow_write returns canonical candidate metadata and preserves it on deterministic noop replay", () => {
+  const request = {
+    storeId: "tenant-shadow-contract",
+    profile: "shadow-contract",
+    statement: "Prefer deterministic adapters with strict contracts.",
+    scope: "workspace",
+    confidence: 0.82,
+    sourceEventIds: ["evt-shadow-2", "evt-shadow-1"],
+    evidenceEventIds: ["evt-shadow-3", "evt-shadow-1"],
+    createdAt: "2026-03-01T10:00:00.000Z",
+    expiresAt: "2026-04-01T10:00:00.000Z",
+  };
+  const requiredFields = [
+    "candidateId",
+    "ruleId",
+    "statement",
+    "scope",
+    "confidence",
+    "sourceEventIds",
+    "evidenceEventIds",
+    "policyException",
+    "status",
+    "createdAt",
+    "updatedAt",
+    "expiresAt",
+  ];
+
+  const created = executeOperation("shadow_write", request);
+  const replay = executeOperation("shadow_write", request);
+
+  assert.equal(created.applied.length, 1);
+  assert.equal(replay.applied.length, 1);
+  assert.equal(created.applied[0].action, "created");
+  assert.equal(replay.applied[0].action, "noop");
+
+  for (const field of requiredFields) {
+    assert.equal(Object.prototype.hasOwnProperty.call(created.applied[0], field), true);
+    assert.equal(Object.prototype.hasOwnProperty.call(replay.applied[0], field), true);
+    assert.deepEqual(replay.applied[0][field], created.applied[0][field]);
+  }
+});
+
+test("shadow_write rejects requests without source/evidence pointers", () => {
+  assert.throws(
+    () =>
+      executeOperation("shadow_write", {
+        storeId: "tenant-shadow-evidence",
+        profile: "shadow-evidence",
+        statement: "Missing pointers should fail contract validation.",
+      }),
+    /EVIDENCE_POINTER_CONTRACT_VIOLATION: shadow_write requires at least one sourceEventId or evidenceEventId\./,
+  );
+});
+
+test("shadow_write updated action emits canonical merged candidate metadata", () => {
+  const firstRequest = {
+    storeId: "tenant-shadow-update",
+    profile: "shadow-update",
+    statement: "Keep retrieval payloads deterministic.",
+    confidence: 0.55,
+    sourceEventIds: ["evt-upd-1", "evt-upd-2"],
+    evidenceEventIds: ["evt-upd-1"],
+    createdAt: "2026-03-01T09:00:00.000Z",
+  };
+  const created = executeOperation("shadow_write", firstRequest);
+  const candidateId = created.applied[0].candidateId;
+
+  const updated = executeOperation("shadow_write", {
+    ...firstRequest,
+    candidateId,
+    confidence: 0.9,
+    sourceEventIds: ["evt-upd-3", "evt-upd-2"],
+    evidenceEventIds: ["evt-upd-4"],
+    policyException: "manual_override",
+    timestamp: "2026-03-02T09:30:00.000Z",
+  });
+
+  assert.equal(updated.applied.length, 1);
+  assert.equal(updated.applied[0].action, "updated");
+  assert.equal(updated.applied[0].candidateId, candidateId);
+  assert.deepEqual(updated.applied[0].sourceEventIds, ["evt-upd-1", "evt-upd-2", "evt-upd-3"]);
+  assert.deepEqual(updated.applied[0].evidenceEventIds, ["evt-upd-1", "evt-upd-4"]);
+  assert.equal(updated.applied[0].confidence, 0.9);
+  assert.equal(updated.applied[0].createdAt, "2026-03-01T09:00:00.000Z");
+  assert.equal(updated.applied[0].updatedAt, "2026-03-02T09:30:00.000Z");
+  assert.deepEqual(updated.applied[0].policyException, {
+    code: "manual_override",
+    reason: null,
+    approvedBy: "unspecified",
+    reference: null,
+    timestamp: "1970-01-01T00:00:00.000Z",
+    metadata: {},
+  });
+
+  const snapshot = snapshotProfile("shadow-update", "tenant-shadow-update");
+  const stored = snapshot.shadowCandidates.find((candidate) => candidate.candidateId === candidateId);
+  assert.ok(stored);
+  assert.equal(stored.updatedAt, updated.applied[0].updatedAt);
+  assert.deepEqual(stored.sourceEventIds, updated.applied[0].sourceEventIds);
+  assert.deepEqual(stored.evidenceEventIds, updated.applied[0].evidenceEventIds);
+  assert.equal(stored.confidence, updated.applied[0].confidence);
+  assert.deepEqual(stored.policyException, updated.applied[0].policyException);
+});
+
+test("shadow_write accepts evidence-only pointers and normalizes source pointers", () => {
+  const result = executeOperation("shadow_write", {
+    storeId: "tenant-shadow-evidence-only",
+    profile: "shadow-evidence-only",
+    statement: "Evidence pointers are valid source anchors.",
+    evidenceEventIds: ["evt-evidence-2", "evt-evidence-1", "evt-evidence-1"],
+  });
+
+  assert.equal(result.applied.length, 1);
+  assert.equal(result.applied[0].action, "created");
+  assert.deepEqual(result.applied[0].evidenceEventIds, ["evt-evidence-1", "evt-evidence-2"]);
+  assert.deepEqual(result.applied[0].sourceEventIds, ["evt-evidence-1", "evt-evidence-2"]);
+});
+
 test("context and curate operate on shared profile state", () => {
   executeOperation("ingest", {
     profile: "demo",

@@ -1719,6 +1719,24 @@ function normalizeShadowCandidate(rawCandidate, request, storeId, profile, times
   };
 }
 
+function buildShadowWriteAppliedEntry(candidate, action) {
+  return {
+    action,
+    candidateId: candidate?.candidateId ?? null,
+    ruleId: candidate?.ruleId ?? null,
+    statement: candidate?.statement ?? "",
+    scope: candidate?.scope ?? "global",
+    confidence: clamp01(candidate?.confidence, 0.5),
+    sourceEventIds: mergeStringLists([], candidate?.sourceEventIds),
+    evidenceEventIds: mergeStringLists([], candidate?.evidenceEventIds),
+    policyException: candidate?.policyException ?? null,
+    status: candidate?.status ?? "shadow",
+    createdAt: candidate?.createdAt ?? null,
+    updatedAt: candidate?.updatedAt ?? null,
+    expiresAt: candidate?.expiresAt ?? null,
+  };
+}
+
 function resolveMemoryCandidate(state, candidateId) {
   const candidates = Array.isArray(state.shadowCandidates) ? state.shadowCandidates : [];
   const candidateIndex = candidates.findIndex((candidate) => candidate?.candidateId === candidateId);
@@ -2910,12 +2928,7 @@ function runShadowWrite(request) {
     const resolved = resolveMemoryCandidate(state, incoming.candidateId);
     if (!resolved.candidate) {
       state.shadowCandidates.push(incoming);
-      applied.push({
-        candidateId: incoming.candidateId,
-        ruleId: incoming.ruleId,
-        action: "created",
-        status: incoming.status,
-      });
+      applied.push(buildShadowWriteAppliedEntry(incoming, "created"));
       continue;
     }
 
@@ -2938,22 +2951,12 @@ function runShadowWrite(request) {
     };
 
     if (stableStringify(resolved.candidate) === stableStringify(merged)) {
-      applied.push({
-        candidateId: incoming.candidateId,
-        ruleId: incoming.ruleId,
-        action: "noop",
-        status: resolved.candidate.status,
-      });
+      applied.push(buildShadowWriteAppliedEntry(resolved.candidate, "noop"));
       continue;
     }
 
     state.shadowCandidates[resolved.candidateIndex] = merged;
-    applied.push({
-      candidateId: incoming.candidateId,
-      ruleId: incoming.ruleId,
-      action: "updated",
-      status: merged.status,
-    });
+    applied.push(buildShadowWriteAppliedEntry(merged, "updated"));
   }
 
   state.shadowCandidates = sortByTimestampAndId(state.shadowCandidates, "updatedAt", "candidateId");
