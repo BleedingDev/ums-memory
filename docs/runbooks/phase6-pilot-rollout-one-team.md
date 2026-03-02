@@ -20,6 +20,7 @@ Create these artifacts exactly once per pilot day:
 - Operator feedback: `ops/pilot-rollout/<pilot-id>/feedback.ndjson`
 - Daily summary report: `docs/reports/pilot-rollout/<pilot-id>-day-<NN>-summary.json`
 - Final summary report: `docs/reports/pilot-rollout/<pilot-id>-final-summary.json`
+- KPI dashboard report: `docs/reports/pilot-rollout/<pilot-id>-kpi-dashboard.json`
 - Rollout decision log: `docs/reports/pilot-rollout/<pilot-id>-decision-log.md`
 
 All artifacts are append-only, committed to git, and sorted/normalized before aggregation.
@@ -176,6 +177,14 @@ npm run pilot:report -- \
   --output docs/reports/pilot-rollout/<pilot-id>-final-summary.json
 ```
 
+KPI dashboard:
+```bash
+npm run pilot:dashboard -- \
+  --input docs/reports/pilot-rollout/<pilot-id>-final-summary.json \
+  --feedback ops/pilot-rollout/<pilot-id>/feedback.ndjson \
+  --output docs/reports/pilot-rollout/<pilot-id>-kpi-dashboard.json
+```
+
 Report generator guarantees:
 1. Fails fast by default when required telemetry fields are missing (`timestamp`, `team`, `project`, `operation`, outcome indicator, latency).
 2. Supports legacy compatibility mode with `--allow-invalid` and reports skipped entries via `invalidEventCount`.
@@ -185,6 +194,7 @@ Report generator guarantees:
 ## Handoff to n4m.2 and n4m.3
 - For `n4m.2` dashboards:
   - Use `requestVolume`, `successRate`, `failureRate`, `p95LatencyMs`, `operationHistogram`, `failureCodeHistogram`, `policyDecisionHistogram`, and `anomalyHistogram`.
+  - Generate and publish `docs/reports/pilot-rollout/<pilot-id>-kpi-dashboard.json` using `npm run pilot:dashboard` and the phase 6 KPI runbook (`docs/runbooks/phase6-kpi-dashboard-operations.md`).
 - For `n4m.3` tuning:
   - Use per-operation failure and latency distributions plus anomaly/policy slices and linked feedback categories.
 
