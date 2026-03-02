@@ -7,6 +7,10 @@ import type {
   DomainValue,
   StorageDeleteRequest,
   StorageDeleteResponse,
+  StorageSnapshotExportRequest,
+  StorageSnapshotExportResponse,
+  StorageSnapshotImportRequest,
+  StorageSnapshotImportResponse,
   StorageUpsertRequest,
   StorageUpsertResponse,
 } from "../../contracts/index.js";
@@ -16,6 +20,17 @@ import {
   StorageNotFoundError,
   type StorageServiceError,
 } from "../../errors.js";
+import {
+  applySqliteStorageSnapshotData,
+  assertSqliteStorageSnapshotSchemaCompatibility,
+  countSqliteStorageSnapshotRows,
+  createSqliteStorageSnapshotSignature,
+  exportSqliteStorageSnapshotData,
+  parseSqliteStorageSnapshotPayload,
+  serializeSqliteStorageSnapshotData,
+  sqliteStorageSnapshotSignatureAlgorithm,
+  verifySqliteStorageSnapshotSignature,
+} from "./snapshot-codec.js";
 import {
   type EnterpriseAuditEventOperation,
   type EnterpriseAuditEventOutcome,
@@ -156,6 +171,12 @@ export interface SqliteStorageRepository {
   readonly deleteMemory: (
     request: StorageDeleteRequest,
   ) => Effect.Effect<StorageDeleteResponse, StorageServiceError>;
+  readonly exportSnapshot: (
+    request: StorageSnapshotExportRequest,
+  ) => Effect.Effect<StorageSnapshotExportResponse, StorageServiceError>;
+  readonly importSnapshot: (
+    request: StorageSnapshotImportRequest,
+  ) => Effect.Effect<StorageSnapshotImportResponse, StorageServiceError>;
 }
 
 const withImmediateTransaction = <Value>(database: DatabaseSync, execute: () => Value): Value => {
@@ -1389,6 +1410,161 @@ const mapDeleteFailure = (cause: unknown, request: StorageDeleteRequest): Storag
   });
 };
 
+const parseOptionalSnapshotAliasValue = (
+  value: unknown,
+  fieldName: "signatureSecret" | "signature_secret",
+  contract:
+    | "StorageSnapshotExportRequest.signatureSecret"
+    | "StorageSnapshotImportRequest.signatureSecret",
+): string | undefined => {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (typeof value !== "string") {
+    throw new ContractValidationError({
+      contract,
+      message: "Snapshot signing secret must be a non-empty string.",
+      details: `${fieldName} must be a string value.`,
+    });
+  }
+
+  const trimmed = value.trim();
+  if (trimmed.length === 0) {
+    throw new ContractValidationError({
+      contract,
+      message: "Snapshot signing secret must be a non-empty string.",
+      details: `${fieldName} must be a non-empty string value.`,
+    });
+  }
+
+  return trimmed;
+};
+
+const resolveSnapshotSigningSecret = (
+  request: StorageSnapshotExportRequest | StorageSnapshotImportRequest,
+  contract:
+    | "StorageSnapshotExportRequest.signatureSecret"
+    | "StorageSnapshotImportRequest.signatureSecret",
+): string => {
+  const requestWithAliases = request as {
+    readonly signatureSecret?: unknown;
+    readonly signature_secret?: unknown;
+  };
+  const camelCaseSecret = parseOptionalSnapshotAliasValue(
+    requestWithAliases.signatureSecret,
+    "signatureSecret",
+    contract,
+  );
+  const snakeCaseSecret = parseOptionalSnapshotAliasValue(
+    requestWithAliases.signature_secret,
+    "signature_secret",
+    contract,
+  );
+  if (
+    camelCaseSecret !== undefined &&
+    snakeCaseSecret !== undefined &&
+    camelCaseSecret !== snakeCaseSecret
+  ) {
+    throw new ContractValidationError({
+      contract,
+      message: "Snapshot signing secret aliases must match when both are provided.",
+      details: `signatureSecret (${camelCaseSecret}) does not match signature_secret (${snakeCaseSecret}).`,
+    });
+  }
+
+  const resolvedSecret = camelCaseSecret ?? snakeCaseSecret;
+  if (resolvedSecret === undefined) {
+    throw new ContractValidationError({
+      contract,
+      message: "Snapshot signing secret is required.",
+      details: "Provide signatureSecret or signature_secret.",
+    });
+  }
+
+  return resolvedSecret;
+};
+
+const normalizeSnapshotPayload = (payload: unknown): string => {
+  if (typeof payload !== "string") {
+    throw new ContractValidationError({
+      contract: "StorageSnapshotImportRequest.payload",
+      message: "Snapshot payload must be a non-empty string.",
+      details: "payload must be a string value.",
+    });
+  }
+  if (payload.length === 0) {
+    throw new ContractValidationError({
+      contract: "StorageSnapshotImportRequest.payload",
+      message: "Snapshot payload must be a non-empty string.",
+      details: "payload must not be empty.",
+    });
+  }
+
+  return payload;
+};
+
+const normalizeSnapshotSignatureAlgorithm = (value: unknown): string => {
+  if (typeof value !== "string") {
+    throw new ContractValidationError({
+      contract: "StorageSnapshotImportRequest.signatureAlgorithm",
+      message: "Snapshot signature algorithm must be hmac-sha256.",
+      details: "signatureAlgorithm must be a string value.",
+    });
+  }
+  const trimmed = value.trim().toLowerCase();
+  if (trimmed !== sqliteStorageSnapshotSignatureAlgorithm) {
+    throw new ContractValidationError({
+      contract: "StorageSnapshotImportRequest.signatureAlgorithm",
+      message: "Snapshot signature algorithm must be hmac-sha256.",
+      details: `Expected ${sqliteStorageSnapshotSignatureAlgorithm} but received ${value}.`,
+    });
+  }
+  return trimmed;
+};
+
+const normalizeSnapshotSignatureHex = (value: unknown): string => {
+  if (typeof value !== "string") {
+    throw new ContractValidationError({
+      contract: "StorageSnapshotImportRequest.signature",
+      message: "Snapshot signature must be a 64-character hexadecimal hmac digest.",
+      details: "signature must be a string value.",
+    });
+  }
+  const normalizedSignature = value.trim().toLowerCase();
+  if (!/^[0-9a-f]{64}$/.test(normalizedSignature)) {
+    throw new ContractValidationError({
+      contract: "StorageSnapshotImportRequest.signature",
+      message: "Snapshot signature must be a 64-character hexadecimal hmac digest.",
+      details: "signature must contain exactly 64 hexadecimal characters.",
+    });
+  }
+  return normalizedSignature;
+};
+
+const mapSnapshotExportFailure = (cause: unknown): StorageServiceError => {
+  if (cause instanceof ContractValidationError) {
+    return cause;
+  }
+
+  return new ContractValidationError({
+    contract: "StorageSnapshotExportRequest",
+    message: "Unexpected SQLite storage snapshot export failure",
+    details: toErrorMessage(cause),
+  });
+};
+
+const mapSnapshotImportFailure = (cause: unknown): StorageServiceError => {
+  if (cause instanceof ContractValidationError) {
+    return cause;
+  }
+
+  return new ContractValidationError({
+    contract: "StorageSnapshotImportRequest",
+    message: "Unexpected SQLite storage snapshot import failure",
+    details: toErrorMessage(cause),
+  });
+};
+
 export const makeSqliteStorageRepository = (
   database: DatabaseSync,
   options: SqliteStorageRepositoryOptions = {},
@@ -2386,6 +2562,84 @@ export const makeSqliteStorageRepository = (
           persistDeleteFailureAuditEntry(cause, request);
           return mapDeleteFailure(cause, request);
         },
+      }),
+    exportSnapshot: (request) =>
+      Effect.try({
+        try: () =>
+          withImmediateTransaction(database, () => {
+            assertExpectedForeignKeysMode();
+            const signingSecret = resolveSnapshotSigningSecret(
+              request,
+              "StorageSnapshotExportRequest.signatureSecret",
+            );
+            const snapshotData = exportSqliteStorageSnapshotData(database);
+            const payload = serializeSqliteStorageSnapshotData(snapshotData);
+            const response = {
+              signatureAlgorithm: sqliteStorageSnapshotSignatureAlgorithm,
+              payload,
+              signature: createSqliteStorageSnapshotSignature(payload, signingSecret),
+              tableCount: snapshotData.tables.length,
+              rowCount: countSqliteStorageSnapshotRows(snapshotData),
+            } satisfies StorageSnapshotExportResponse;
+            return response;
+          }),
+        catch: mapSnapshotExportFailure,
+      }),
+    importSnapshot: (request) =>
+      Effect.try({
+        try: () =>
+          withImmediateTransaction(database, () => {
+            assertExpectedForeignKeysMode();
+            const signingSecret = resolveSnapshotSigningSecret(
+              request,
+              "StorageSnapshotImportRequest.signatureSecret",
+            );
+            normalizeSnapshotSignatureAlgorithm(request.signatureAlgorithm);
+            const payload = normalizeSnapshotPayload(request.payload);
+            const signatureHex = normalizeSnapshotSignatureHex(request.signature);
+            if (!verifySqliteStorageSnapshotSignature(payload, signatureHex, signingSecret)) {
+              throw new ContractValidationError({
+                contract: "StorageSnapshotImportRequest.signature",
+                message: "Snapshot signature verification failed.",
+                details: "Provided signature does not match payload and secret using hmac-sha256.",
+              });
+            }
+
+            const snapshotData = parseSqliteStorageSnapshotPayload(payload);
+            const canonicalPayload = serializeSqliteStorageSnapshotData(snapshotData);
+            if (canonicalPayload !== payload) {
+              throw new ContractValidationError({
+                contract: "StorageSnapshotImportRequest.payload",
+                message: "Snapshot payload must use deterministic canonical serialization.",
+                details:
+                  "Payload does not match canonical JSON encoding for the decoded snapshot document.",
+              });
+            }
+
+            assertSqliteStorageSnapshotSchemaCompatibility(database, snapshotData);
+            const existingSnapshotData = exportSqliteStorageSnapshotData(database);
+            const existingCanonicalPayload =
+              serializeSqliteStorageSnapshotData(existingSnapshotData);
+            const responseBase = {
+              imported: true,
+              tableCount: snapshotData.tables.length,
+              rowCount: countSqliteStorageSnapshotRows(snapshotData),
+            };
+
+            if (existingCanonicalPayload === canonicalPayload) {
+              return {
+                ...responseBase,
+                replayed: true,
+              } satisfies StorageSnapshotImportResponse;
+            }
+
+            applySqliteStorageSnapshotData(database, snapshotData);
+            return {
+              ...responseBase,
+              replayed: false,
+            } satisfies StorageSnapshotImportResponse;
+          }),
+        catch: mapSnapshotImportFailure,
       }),
   };
 };

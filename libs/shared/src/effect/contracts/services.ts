@@ -9,6 +9,7 @@ import {
 import { EvidenceIdSchema, MemoryIdSchema, SpaceIdSchema, UserIdSchema } from "./ids.js";
 
 const NonNegativeIntSchema = Schema.NonNegativeInt;
+const Sha256HexSchema = Schema.String.pipe(Schema.pattern(/^[0-9A-Fa-f]{64}$/));
 
 export const StorageUpsertRequestSchema = Schema.Struct({
   spaceId: SpaceIdSchema,
@@ -38,6 +39,36 @@ export const StorageDeleteResponseSchema = Schema.Struct({
   spaceId: SpaceIdSchema,
   memoryId: MemoryIdSchema,
   deleted: Schema.Boolean,
+});
+
+export const StorageSnapshotSignatureAlgorithmSchema = Schema.Literal("hmac-sha256");
+
+export const StorageSnapshotExportRequestSchema = Schema.Struct({
+  signatureSecret: Schema.String,
+  signature_secret: Schema.optional(Schema.String),
+});
+
+export const StorageSnapshotExportResponseSchema = Schema.Struct({
+  signatureAlgorithm: StorageSnapshotSignatureAlgorithmSchema,
+  payload: Schema.String,
+  signature: Sha256HexSchema,
+  tableCount: NonNegativeIntSchema,
+  rowCount: NonNegativeIntSchema,
+});
+
+export const StorageSnapshotImportRequestSchema = Schema.Struct({
+  signatureSecret: Schema.String,
+  signature_secret: Schema.optional(Schema.String),
+  signatureAlgorithm: StorageSnapshotSignatureAlgorithmSchema,
+  payload: Schema.String,
+  signature: Sha256HexSchema,
+});
+
+export const StorageSnapshotImportResponseSchema = Schema.Struct({
+  imported: Schema.Boolean,
+  replayed: Schema.Boolean,
+  tableCount: NonNegativeIntSchema,
+  rowCount: NonNegativeIntSchema,
 });
 
 const RetrievalScoreSchema = Schema.Number.pipe(Schema.between(0, 1));
@@ -118,6 +149,21 @@ export type StorageUpsertRequest = Schema.Schema.Type<typeof StorageUpsertReques
 export type StorageUpsertResponse = Schema.Schema.Type<typeof StorageUpsertResponseSchema>;
 export type StorageDeleteRequest = Schema.Schema.Type<typeof StorageDeleteRequestSchema>;
 export type StorageDeleteResponse = Schema.Schema.Type<typeof StorageDeleteResponseSchema>;
+export type StorageSnapshotSignatureAlgorithm = Schema.Schema.Type<
+  typeof StorageSnapshotSignatureAlgorithmSchema
+>;
+export type StorageSnapshotExportRequest = Schema.Schema.Type<
+  typeof StorageSnapshotExportRequestSchema
+>;
+export type StorageSnapshotExportResponse = Schema.Schema.Type<
+  typeof StorageSnapshotExportResponseSchema
+>;
+export type StorageSnapshotImportRequest = Schema.Schema.Type<
+  typeof StorageSnapshotImportRequestSchema
+>;
+export type StorageSnapshotImportResponse = Schema.Schema.Type<
+  typeof StorageSnapshotImportResponseSchema
+>;
 export type RetrievalRequest = Schema.Schema.Type<typeof RetrievalRequestSchema>;
 export type RetrievalHit = Schema.Schema.Type<typeof RetrievalHitSchema>;
 export type RetrievalResponse = Schema.Schema.Type<typeof RetrievalResponseSchema>;

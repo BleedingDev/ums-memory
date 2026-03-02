@@ -49,6 +49,7 @@ const transpileManifest = Object.freeze([
   "storage/sqlite/schema-metadata.ts",
   "storage/sqlite/enterprise-schema.ts",
   "storage/sqlite/migrations.ts",
+  "storage/sqlite/snapshot-codec.ts",
   "storage/sqlite/storage-repository.ts",
   "storage/sqlite/index.ts",
   "services/storage-service.ts",
@@ -1956,6 +1957,192 @@ test("ums-memory-5cb.10: sqlite storage service rejects delete idempotency key r
     assert.equal(remainingMemoryRow.memory_id, "memory-idempotency-delete-b");
   } finally {
     db.close();
+  }
+});
+
+test("ums-memory-5cb.9: sqlite storage snapshot export is deterministic and signed", async () => {
+  const storageServiceModule = await loadStorageServiceModule();
+  const db = new DatabaseSync(":memory:");
+
+  try {
+    const storageService = storageServiceModule.makeSqliteStorageService(db);
+    Effect.runSync(
+      storageService.upsertMemory({
+        spaceId: "tenant-snapshot-export",
+        memoryId: "memory-snapshot-export",
+        layer: "working",
+        payload: {
+          title: "Snapshot export baseline",
+          updatedAtMillis: 1_700_000_200_100,
+        },
+      }),
+    );
+
+    const firstExport = Effect.runSync(
+      storageService.exportSnapshot({
+        signatureSecret: "snapshot-secret-001",
+      }),
+    );
+    const secondExport = Effect.runSync(
+      storageService.exportSnapshot({
+        signature_secret: "snapshot-secret-001",
+        signatureSecret: "snapshot-secret-001",
+      }),
+    );
+
+    assert.deepEqual(secondExport, firstExport);
+    assert.equal(firstExport.signatureAlgorithm, "hmac-sha256");
+    assert.match(firstExport.signature, /^[0-9a-f]{64}$/i);
+    assert.ok(firstExport.tableCount > 0);
+    assert.ok(firstExport.rowCount > 0);
+
+    const payloadDocument = JSON.parse(firstExport.payload);
+    assert.equal(payloadDocument.format, "ums-memory/sqlite-storage-snapshot/v1");
+    assert.equal(payloadDocument.userVersion, 4);
+    assert.equal(payloadDocument.tables.length, firstExport.tableCount);
+  } finally {
+    db.close();
+  }
+});
+
+test("ums-memory-5cb.9: sqlite storage snapshot import restores state and reports replay on identical payload", async () => {
+  const storageServiceModule = await loadStorageServiceModule();
+  const sourceDb = new DatabaseSync(":memory:");
+  const targetDb = new DatabaseSync(":memory:");
+
+  try {
+    const sourceStorageService = storageServiceModule.makeSqliteStorageService(sourceDb);
+    Effect.runSync(
+      sourceStorageService.upsertMemory({
+        spaceId: "tenant-snapshot-import",
+        memoryId: "memory-snapshot-import",
+        layer: "working",
+        payload: {
+          title: "Snapshot import seed",
+          updatedAtMillis: 1_700_000_200_200,
+        },
+      }),
+    );
+    Effect.runSync(
+      sourceStorageService.upsertMemory({
+        spaceId: "tenant-snapshot-import",
+        memoryId: "memory-snapshot-import-procedural",
+        layer: "procedural",
+        payload: {
+          title: "Snapshot import procedural seed",
+          updatedAtMillis: 1_700_000_200_201,
+          evidencePointers: [
+            {
+              sourceKind: "event",
+              sourceRef: "event://snapshot-import-evidence-1",
+              digestSha256: "1".repeat(64),
+            },
+          ],
+        },
+      }),
+    );
+
+    const exportedSnapshot = Effect.runSync(
+      sourceStorageService.exportSnapshot({
+        signatureSecret: "snapshot-secret-002",
+      }),
+    );
+
+    const targetStorageService = storageServiceModule.makeSqliteStorageService(targetDb);
+    const importResponse = Effect.runSync(
+      targetStorageService.importSnapshot({
+        signatureSecret: "snapshot-secret-002",
+        signatureAlgorithm: exportedSnapshot.signatureAlgorithm,
+        payload: exportedSnapshot.payload,
+        signature: exportedSnapshot.signature,
+      }),
+    );
+    assert.deepEqual(importResponse, {
+      imported: true,
+      replayed: false,
+      tableCount: exportedSnapshot.tableCount,
+      rowCount: exportedSnapshot.rowCount,
+    });
+
+    const sourceCanonicalExport = Effect.runSync(
+      sourceStorageService.exportSnapshot({
+        signatureSecret: "snapshot-secret-002",
+      }),
+    );
+    const targetCanonicalExport = Effect.runSync(
+      targetStorageService.exportSnapshot({
+        signatureSecret: "snapshot-secret-002",
+      }),
+    );
+    assert.deepEqual(targetCanonicalExport, sourceCanonicalExport);
+
+    const replayImportResponse = Effect.runSync(
+      targetStorageService.importSnapshot({
+        signatureSecret: "snapshot-secret-002",
+        signatureAlgorithm: exportedSnapshot.signatureAlgorithm,
+        payload: exportedSnapshot.payload,
+        signature: exportedSnapshot.signature,
+      }),
+    );
+    assert.deepEqual(replayImportResponse, {
+      imported: true,
+      replayed: true,
+      tableCount: exportedSnapshot.tableCount,
+      rowCount: exportedSnapshot.rowCount,
+    });
+  } finally {
+    sourceDb.close();
+    targetDb.close();
+  }
+});
+
+test("ums-memory-5cb.9: sqlite storage snapshot import rejects tampered signature payload combinations", async () => {
+  const storageServiceModule = await loadStorageServiceModule();
+  const sourceDb = new DatabaseSync(":memory:");
+  const targetDb = new DatabaseSync(":memory:");
+
+  try {
+    const sourceStorageService = storageServiceModule.makeSqliteStorageService(sourceDb);
+    Effect.runSync(
+      sourceStorageService.upsertMemory({
+        spaceId: "tenant-snapshot-signature",
+        memoryId: "memory-snapshot-signature",
+        layer: "working",
+        payload: {
+          title: "Snapshot signature baseline",
+          updatedAtMillis: 1_700_000_200_300,
+        },
+      }),
+    );
+
+    const exportedSnapshot = Effect.runSync(
+      sourceStorageService.exportSnapshot({
+        signatureSecret: "snapshot-secret-003",
+      }),
+    );
+    const tamperedPayload = exportedSnapshot.payload.replace(
+      "Snapshot signature baseline",
+      "Snapshot signature tampered",
+    );
+
+    const targetStorageService = storageServiceModule.makeSqliteStorageService(targetDb);
+    const importEither = Effect.runSync(
+      Effect.either(
+        targetStorageService.importSnapshot({
+          signatureSecret: "snapshot-secret-003",
+          signatureAlgorithm: exportedSnapshot.signatureAlgorithm,
+          payload: tamperedPayload,
+          signature: exportedSnapshot.signature,
+        }),
+      ),
+    );
+    const importFailure = unwrapFailure(importEither);
+    assert.equal(importFailure._tag, "ContractValidationError");
+    assert.equal(importFailure.contract, "StorageSnapshotImportRequest.signature");
+    assert.match(importFailure.message, /verification failed/i);
+  } finally {
+    sourceDb.close();
+    targetDb.close();
   }
 });
 

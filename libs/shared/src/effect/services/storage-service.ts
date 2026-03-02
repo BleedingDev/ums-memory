@@ -4,6 +4,10 @@ import { Context, Effect, Layer } from "effect";
 import type {
   StorageDeleteRequest,
   StorageDeleteResponse,
+  StorageSnapshotExportRequest,
+  StorageSnapshotExportResponse,
+  StorageSnapshotImportRequest,
+  StorageSnapshotImportResponse,
   StorageUpsertRequest,
   StorageUpsertResponse,
 } from "../contracts/index.js";
@@ -16,6 +20,10 @@ import {
 export type {
   StorageDeleteRequest,
   StorageDeleteResponse,
+  StorageSnapshotExportRequest,
+  StorageSnapshotExportResponse,
+  StorageSnapshotImportRequest,
+  StorageSnapshotImportResponse,
   StorageUpsertRequest,
   StorageUpsertResponse,
 } from "../contracts/index.js";
@@ -27,6 +35,12 @@ export interface StorageService {
   readonly deleteMemory: (
     request: StorageDeleteRequest,
   ) => Effect.Effect<StorageDeleteResponse, StorageServiceError>;
+  readonly exportSnapshot: (
+    request: StorageSnapshotExportRequest,
+  ) => Effect.Effect<StorageSnapshotExportResponse, StorageServiceError>;
+  readonly importSnapshot: (
+    request: StorageSnapshotImportRequest,
+  ) => Effect.Effect<StorageSnapshotImportResponse, StorageServiceError>;
 }
 
 export interface StorageRepository {
@@ -36,6 +50,12 @@ export interface StorageRepository {
   readonly deleteMemory: (
     request: StorageDeleteRequest,
   ) => Effect.Effect<StorageDeleteResponse, StorageServiceError>;
+  readonly exportSnapshot: (
+    request: StorageSnapshotExportRequest,
+  ) => Effect.Effect<StorageSnapshotExportResponse, StorageServiceError>;
+  readonly importSnapshot: (
+    request: StorageSnapshotImportRequest,
+  ) => Effect.Effect<StorageSnapshotImportResponse, StorageServiceError>;
 }
 
 export const StorageServiceTag = Context.GenericTag<StorageService>("@ums/effect/StorageService");
@@ -55,6 +75,21 @@ export const makeNoopStorageService = (): StorageService => ({
       memoryId: request.memoryId,
       deleted: true,
     }),
+  exportSnapshot: () =>
+    Effect.succeed({
+      signatureAlgorithm: "hmac-sha256",
+      payload: '{"format":"ums-memory/sqlite-storage-snapshot/v1","tables":[],"userVersion":0}',
+      signature: "0".repeat(64),
+      tableCount: 0,
+      rowCount: 0,
+    }),
+  importSnapshot: () =>
+    Effect.succeed({
+      imported: true,
+      replayed: true,
+      tableCount: 0,
+      rowCount: 0,
+    }),
 });
 
 export const makeStorageServiceFromRepository = (
@@ -62,6 +97,8 @@ export const makeStorageServiceFromRepository = (
 ): StorageService => ({
   upsertMemory: (request) => repository.upsertMemory(request),
   deleteMemory: (request) => repository.deleteMemory(request),
+  exportSnapshot: (request) => repository.exportSnapshot(request),
+  importSnapshot: (request) => repository.importSnapshot(request),
 });
 
 // Unsafe synchronous constructor; prefer makeSqliteStorageServiceEffect/makeSqliteStorageLayer
