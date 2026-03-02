@@ -1,9 +1,30 @@
+import { createHash } from "node:crypto";
 import { Context, Effect, Layer } from "effect";
 
-import type { RetrievalHit, RetrievalRequest, RetrievalResponse } from "../contracts/index.js";
-import type { RetrievalServiceError } from "../errors.js";
+import type {
+  PolicyRequest,
+  RetrievalHit,
+  RetrievalPolicyInput,
+  RetrievalRequest,
+  RetrievalResponse,
+  RetrievalScopeSelectors,
+} from "../contracts/index.js";
+import { decodeRetrievalRequestEffect } from "../contracts/validators.js";
+import { RetrievalQueryError, type RetrievalServiceError } from "../errors.js";
+import {
+  parseSqliteStorageSnapshotPayload,
+  type SqliteStorageSnapshotData,
+} from "../storage/sqlite/index.js";
+import type { PolicyService } from "./policy-service.js";
+import type { StorageService } from "./storage-service.js";
 
-export type { RetrievalHit, RetrievalRequest, RetrievalResponse } from "../contracts/index.js";
+export type {
+  RetrievalHit,
+  RetrievalPolicyInput,
+  RetrievalRequest,
+  RetrievalResponse,
+  RetrievalScopeSelectors,
+} from "../contracts/index.js";
 
 export interface RetrievalService {
   readonly retrieve: (
@@ -15,6 +36,821 @@ export const RetrievalServiceTag = Context.GenericTag<RetrievalService>(
   "@ums/effect/RetrievalService",
 );
 
+const defaultSnapshotSignatureSecret = "@ums/retrieval-service/snapshot";
+const defaultPolicyActorId = "retrieval-system" as PolicyRequest["actorId"];
+const defaultPolicyAction = "memory.retrieve";
+const emptyPolicyEvidenceIds = [] as unknown as PolicyRequest["evidenceIds"];
+const emptyPolicyContext = {} as unknown as PolicyRequest["context"];
+
+type ScopeLevel = "common" | "project" | "job_role" | "user";
+
+interface ParsedScopeRow {
+  readonly scopeId: string;
+  readonly scopeLevel: ScopeLevel;
+  readonly projectId: string | null;
+  readonly roleId: string | null;
+  readonly userId: string | null;
+  readonly parentScopeId: string | null;
+}
+
+interface ParsedMemoryRow {
+  readonly memoryId: RetrievalHit["memoryId"];
+  readonly scopeId: string;
+  readonly layer: RetrievalHit["layer"];
+  readonly status: string;
+  readonly title: string;
+  readonly payloadJson: string;
+  readonly updatedAtMillis: number;
+  readonly expiresAtMillis: number | null;
+  readonly tombstonedAtMillis: number | null;
+}
+
+interface PlannedHit {
+  readonly memoryId: RetrievalHit["memoryId"];
+  readonly layer: RetrievalHit["layer"];
+  readonly score: number;
+  readonly excerpt: string;
+  readonly scopeId: string;
+  readonly scopeLevel: ScopeLevel;
+  readonly scopeRank: number;
+  readonly updatedAtMillis: number;
+}
+
+interface NormalizedScopeSelectors {
+  readonly projectId: string | null;
+  readonly roleId: string | null;
+  readonly userId: string | null;
+}
+
+interface NormalizedPolicyInput {
+  readonly actorId: PolicyRequest["actorId"];
+  readonly action: PolicyRequest["action"];
+  readonly evidenceIds: PolicyRequest["evidenceIds"];
+  readonly context: PolicyRequest["context"];
+}
+
+interface NormalizedRetrievalRequest {
+  readonly request: RetrievalRequest;
+  readonly selectors: NormalizedScopeSelectors;
+  readonly policy: NormalizedPolicyInput;
+  readonly queryNormalized: string;
+  readonly queryTokens: readonly string[];
+}
+
+interface CursorPayload {
+  readonly v: 1;
+  readonly o: number;
+  readonly d: string;
+}
+
+export interface RetrievalPlannerOptions {
+  readonly snapshotSignatureSecret?: string;
+}
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+const describeFailure = (cause: unknown): string => {
+  if (cause instanceof Error) {
+    return cause.message;
+  }
+  if (isRecord(cause)) {
+    const taggedMessage = cause["message"];
+    if (typeof taggedMessage === "string" && taggedMessage.trim().length > 0) {
+      return taggedMessage;
+    }
+  }
+  return String(cause);
+};
+
+const toRetrievalQueryError = (request: RetrievalRequest, message: string): RetrievalQueryError =>
+  new RetrievalQueryError({
+    spaceId: request.spaceId,
+    query: request.query,
+    message,
+  });
+
+const readSnapshotTable = (
+  snapshot: SqliteStorageSnapshotData,
+  tableName: "scopes" | "memory_items",
+) => {
+  const table = snapshot.tables.find((entry) => entry.name === tableName);
+  if (table === undefined) {
+    throw new Error(`Snapshot table ${tableName} is missing.`);
+  }
+  return table;
+};
+
+const readColumnIndex = (
+  tableName: string,
+  columns: readonly string[],
+  columnName: string,
+): number => {
+  const index = columns.indexOf(columnName);
+  if (index === -1) {
+    throw new Error(`Snapshot table ${tableName} is missing required column ${columnName}.`);
+  }
+  return index;
+};
+
+const readRowCell = (
+  row: readonly (string | number | null)[],
+  index: number,
+  label: string,
+): string | number | null => {
+  const value = row[index];
+  if (value === undefined) {
+    throw new Error(`${label} is undefined.`);
+  }
+  return value;
+};
+
+const readNonEmptyString = (
+  row: readonly (string | number | null)[],
+  index: number,
+  label: string,
+): string => {
+  const value = readRowCell(row, index, label);
+  if (typeof value !== "string" || value.trim().length === 0) {
+    throw new Error(`${label} must be a non-empty string.`);
+  }
+  return value;
+};
+
+const readNullableString = (
+  row: readonly (string | number | null)[],
+  index: number,
+  label: string,
+): string | null => {
+  const value = readRowCell(row, index, label);
+  if (value === null) {
+    return null;
+  }
+  if (typeof value !== "string" || value.trim().length === 0) {
+    throw new Error(`${label} must be a non-empty string or null.`);
+  }
+  return value;
+};
+
+const readNonNegativeInteger = (
+  row: readonly (string | number | null)[],
+  index: number,
+  label: string,
+): number => {
+  const value = readRowCell(row, index, label);
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
+    throw new Error(`${label} must be a non-negative safe integer.`);
+  }
+  return value;
+};
+
+const readNullableNonNegativeInteger = (
+  row: readonly (string | number | null)[],
+  index: number,
+  label: string,
+): number | null => {
+  const value = readRowCell(row, index, label);
+  if (value === null) {
+    return null;
+  }
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
+    throw new Error(`${label} must be a non-negative safe integer or null.`);
+  }
+  return value;
+};
+
+const toScopeLevel = (value: string, label: string): ScopeLevel => {
+  if (value === "common" || value === "project" || value === "job_role" || value === "user") {
+    return value;
+  }
+  throw new Error(`${label} must be one of common, project, job_role, user.`);
+};
+
+const toMemoryLayer = (value: string, label: string): RetrievalHit["layer"] => {
+  if (value === "episodic" || value === "working" || value === "procedural") {
+    return value;
+  }
+  throw new Error(`${label} must be one of episodic, working, procedural.`);
+};
+
+const toMemoryId = (value: string): RetrievalHit["memoryId"] => value as RetrievalHit["memoryId"];
+
+const parseScopeRows = (
+  snapshot: SqliteStorageSnapshotData,
+  spaceId: string,
+): readonly ParsedScopeRow[] => {
+  const table = readSnapshotTable(snapshot, "scopes");
+  const scopeIdIndex = readColumnIndex("scopes", table.columns, "scope_id");
+  const tenantIdIndex = readColumnIndex("scopes", table.columns, "tenant_id");
+  const scopeLevelIndex = readColumnIndex("scopes", table.columns, "scope_level");
+  const projectIdIndex = readColumnIndex("scopes", table.columns, "project_id");
+  const roleIdIndex = readColumnIndex("scopes", table.columns, "role_id");
+  const userIdIndex = readColumnIndex("scopes", table.columns, "user_id");
+  const parentScopeIdIndex = readColumnIndex("scopes", table.columns, "parent_scope_id");
+
+  const rows: ParsedScopeRow[] = [];
+  for (const [rowIndex, row] of table.rows.entries()) {
+    const tenantId = readNonEmptyString(row, tenantIdIndex, `scopes.rows[${rowIndex}].tenant_id`);
+    if (tenantId !== spaceId) {
+      continue;
+    }
+    rows.push({
+      scopeId: readNonEmptyString(row, scopeIdIndex, `scopes.rows[${rowIndex}].scope_id`),
+      scopeLevel: toScopeLevel(
+        readNonEmptyString(row, scopeLevelIndex, `scopes.rows[${rowIndex}].scope_level`),
+        `scopes.rows[${rowIndex}].scope_level`,
+      ),
+      projectId: readNullableString(row, projectIdIndex, `scopes.rows[${rowIndex}].project_id`),
+      roleId: readNullableString(row, roleIdIndex, `scopes.rows[${rowIndex}].role_id`),
+      userId: readNullableString(row, userIdIndex, `scopes.rows[${rowIndex}].user_id`),
+      parentScopeId: readNullableString(
+        row,
+        parentScopeIdIndex,
+        `scopes.rows[${rowIndex}].parent_scope_id`,
+      ),
+    });
+  }
+
+  return Object.freeze(rows);
+};
+
+const parseMemoryRows = (
+  snapshot: SqliteStorageSnapshotData,
+  spaceId: string,
+): readonly ParsedMemoryRow[] => {
+  const table = readSnapshotTable(snapshot, "memory_items");
+  const memoryIdIndex = readColumnIndex("memory_items", table.columns, "memory_id");
+  const tenantIdIndex = readColumnIndex("memory_items", table.columns, "tenant_id");
+  const scopeIdIndex = readColumnIndex("memory_items", table.columns, "scope_id");
+  const layerIndex = readColumnIndex("memory_items", table.columns, "memory_layer");
+  const statusIndex = readColumnIndex("memory_items", table.columns, "status");
+  const titleIndex = readColumnIndex("memory_items", table.columns, "title");
+  const payloadJsonIndex = readColumnIndex("memory_items", table.columns, "payload_json");
+  const updatedAtIndex = readColumnIndex("memory_items", table.columns, "updated_at_ms");
+  const expiresAtIndex = readColumnIndex("memory_items", table.columns, "expires_at_ms");
+  const tombstonedAtIndex = readColumnIndex("memory_items", table.columns, "tombstoned_at_ms");
+
+  const rows: ParsedMemoryRow[] = [];
+  for (const [rowIndex, row] of table.rows.entries()) {
+    const tenantId = readNonEmptyString(
+      row,
+      tenantIdIndex,
+      `memory_items.rows[${rowIndex}].tenant_id`,
+    );
+    if (tenantId !== spaceId) {
+      continue;
+    }
+
+    rows.push({
+      memoryId: toMemoryId(
+        readNonEmptyString(row, memoryIdIndex, `memory_items.rows[${rowIndex}].memory_id`),
+      ),
+      scopeId: readNonEmptyString(row, scopeIdIndex, `memory_items.rows[${rowIndex}].scope_id`),
+      layer: toMemoryLayer(
+        readNonEmptyString(row, layerIndex, `memory_items.rows[${rowIndex}].memory_layer`),
+        `memory_items.rows[${rowIndex}].memory_layer`,
+      ),
+      status: readNonEmptyString(row, statusIndex, `memory_items.rows[${rowIndex}].status`),
+      title: readNonEmptyString(row, titleIndex, `memory_items.rows[${rowIndex}].title`),
+      payloadJson: readNonEmptyString(
+        row,
+        payloadJsonIndex,
+        `memory_items.rows[${rowIndex}].payload_json`,
+      ),
+      updatedAtMillis: readNonNegativeInteger(
+        row,
+        updatedAtIndex,
+        `memory_items.rows[${rowIndex}].updated_at_ms`,
+      ),
+      expiresAtMillis: readNullableNonNegativeInteger(
+        row,
+        expiresAtIndex,
+        `memory_items.rows[${rowIndex}].expires_at_ms`,
+      ),
+      tombstonedAtMillis: readNullableNonNegativeInteger(
+        row,
+        tombstonedAtIndex,
+        `memory_items.rows[${rowIndex}].tombstoned_at_ms`,
+      ),
+    });
+  }
+
+  return Object.freeze(rows);
+};
+
+const tokenize = (text: string): readonly string[] => {
+  const matches = text.toLowerCase().match(/[a-z0-9]+/g) ?? [];
+  return Object.freeze([...new Set(matches)]);
+};
+
+const toExcerpt = (title: string, payloadJson: string): string => {
+  let excerpt = title;
+  try {
+    const payload: unknown = JSON.parse(payloadJson);
+    if (isRecord(payload)) {
+      const preferredKeys = [
+        "summary",
+        "content",
+        "text",
+        "description",
+        "note",
+        "details",
+      ] as const;
+      for (const key of preferredKeys) {
+        const value = payload[key];
+        if (typeof value === "string" && value.trim().length > 0) {
+          excerpt = value.trim();
+          break;
+        }
+      }
+    }
+  } catch {
+    excerpt = title;
+  }
+
+  return excerpt.length > 220 ? `${excerpt.slice(0, 217)}...` : excerpt;
+};
+
+const clampScore = (value: number): number =>
+  Math.min(1, Math.max(0, Math.round(value * 1_000_000) / 1_000_000));
+
+const toScopeRank = (scopeLevel: ScopeLevel): number => {
+  switch (scopeLevel) {
+    case "common":
+      return 0;
+    case "project":
+      return 1;
+    case "job_role":
+      return 2;
+    case "user":
+      return 3;
+    default:
+      return 0;
+  }
+};
+
+const computeScore = (
+  queryTokens: readonly string[],
+  queryNormalized: string,
+  searchableText: string,
+  scopeRank: number,
+): number | null => {
+  let baseScore = 0.5;
+  if (queryTokens.length > 0) {
+    let matchedTokenCount = 0;
+    for (const token of queryTokens) {
+      if (searchableText.includes(token)) {
+        matchedTokenCount += 1;
+      }
+    }
+    if (matchedTokenCount === 0) {
+      return null;
+    }
+    baseScore = matchedTokenCount / queryTokens.length;
+  }
+
+  const fullQueryBoost =
+    queryNormalized.length > 0 && searchableText.includes(queryNormalized) ? 0.15 : 0;
+  const scopeBoost = scopeRank * 0.02;
+  return clampScore(baseScore + fullQueryBoost + scopeBoost);
+};
+
+const comparePlannedHits = (left: PlannedHit, right: PlannedHit): number => {
+  if (left.score !== right.score) {
+    return right.score - left.score;
+  }
+  if (left.scopeRank !== right.scopeRank) {
+    return right.scopeRank - left.scopeRank;
+  }
+  if (left.updatedAtMillis !== right.updatedAtMillis) {
+    return right.updatedAtMillis - left.updatedAtMillis;
+  }
+  return left.memoryId.localeCompare(right.memoryId);
+};
+
+const encodeCursor = (cursor: CursorPayload): string =>
+  Buffer.from(JSON.stringify(cursor), "utf8").toString("base64url");
+
+const decodeCursorOffset = (cursor: string | null | undefined, digest: string): number => {
+  if (cursor === undefined || cursor === null) {
+    return 0;
+  }
+  if (cursor.length === 0) {
+    throw new Error("cursor must be a non-empty base64url string.");
+  }
+
+  let decodedJson = "";
+  try {
+    decodedJson = Buffer.from(cursor, "base64url").toString("utf8");
+  } catch (cause) {
+    throw new Error(`cursor must be valid base64url: ${describeFailure(cause)}`);
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(decodedJson);
+  } catch (cause) {
+    throw new Error(`cursor payload must be valid JSON: ${describeFailure(cause)}`);
+  }
+  if (!isRecord(parsed)) {
+    throw new Error("cursor payload must decode to an object.");
+  }
+
+  if (parsed["v"] !== 1) {
+    throw new Error("cursor payload version must equal 1.");
+  }
+  const cursorOffset = parsed["o"];
+  if (typeof cursorOffset !== "number" || !Number.isSafeInteger(cursorOffset) || cursorOffset < 0) {
+    throw new Error("cursor payload offset must be a non-negative safe integer.");
+  }
+  const cursorDigest = parsed["d"];
+  if (typeof cursorDigest !== "string" || cursorDigest !== digest) {
+    throw new Error("cursor payload digest does not match the current retrieval query.");
+  }
+
+  return cursorOffset;
+};
+
+type StableDomainValue =
+  | string
+  | number
+  | boolean
+  | null
+  | readonly StableDomainValue[]
+  | { readonly [key: string]: StableDomainValue };
+
+const toStableDomainValue = (value: unknown): StableDomainValue => {
+  if (value === null) {
+    return null;
+  }
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+    return value;
+  }
+  if (Array.isArray(value)) {
+    return value.map((entry) => toStableDomainValue(entry));
+  }
+  if (!isRecord(value)) {
+    return String(value);
+  }
+
+  const sortedKeys = Object.keys(value).sort((left, right) => left.localeCompare(right));
+  return Object.fromEntries(
+    sortedKeys.map((key) => [key, toStableDomainValue(value[key])] as const),
+  );
+};
+
+const toCursorDigest = (
+  request: RetrievalRequest,
+  selectors: NormalizedScopeSelectors,
+  policy: NormalizedPolicyInput,
+  queryNormalized: string,
+): string =>
+  createHash("sha256")
+    .update(
+      JSON.stringify({
+        spaceId: request.spaceId,
+        query: queryNormalized,
+        projectId: selectors.projectId,
+        roleId: selectors.roleId,
+        userId: selectors.userId,
+        actorId: policy.actorId,
+        action: policy.action,
+        evidenceIds: [...policy.evidenceIds].sort((left, right) => left.localeCompare(right)),
+        policyContext: toStableDomainValue(policy.context),
+      }),
+    )
+    .digest("hex");
+
+const resolveScopeSelectors = (request: RetrievalRequest): NormalizedScopeSelectors => {
+  const scope = request.scope;
+  const roleId = scope?.roleId ?? scope?.jobRoleId ?? request.roleId ?? request.jobRoleId ?? null;
+
+  return Object.freeze({
+    projectId: scope?.projectId ?? request.projectId ?? null,
+    roleId,
+    userId: scope?.userId ?? request.userId ?? null,
+  });
+};
+
+const resolvePolicyInput = (
+  request: RetrievalRequest,
+  selectors: NormalizedScopeSelectors,
+): NormalizedPolicyInput => {
+  const requestPolicy: RetrievalPolicyInput | undefined = request.policy;
+  const baseContext = requestPolicy?.context ?? request.policyContext ?? emptyPolicyContext;
+
+  return {
+    actorId: requestPolicy?.actorId ?? request.actorId ?? defaultPolicyActorId,
+    action: requestPolicy?.action ?? request.action ?? defaultPolicyAction,
+    evidenceIds: requestPolicy?.evidenceIds ?? request.evidenceIds ?? emptyPolicyEvidenceIds,
+    context: {
+      ...baseContext,
+      retrievalQuery: request.query,
+      retrievalScopeProjectId: selectors.projectId,
+      retrievalScopeRoleId: selectors.roleId,
+      retrievalScopeUserId: selectors.userId,
+    },
+  };
+};
+
+const normalizeRetrievalRequest = (request: RetrievalRequest): NormalizedRetrievalRequest => {
+  const queryNormalized = request.query.trim().toLowerCase();
+  const selectors = resolveScopeSelectors(request);
+  const policy = resolvePolicyInput(request, selectors);
+
+  return {
+    request,
+    selectors,
+    policy,
+    queryNormalized,
+    queryTokens: tokenize(queryNormalized),
+  };
+};
+
+const resolveAllowedScopeIds = (
+  scopeRows: readonly ParsedScopeRow[],
+  selectors: NormalizedScopeSelectors,
+): ReadonlySet<string> => {
+  const scopeById = new Map(scopeRows.map((row) => [row.scopeId, row] as const));
+  const childScopeIdsByParent = new Map<string, string[]>();
+  for (const scopeRow of scopeRows) {
+    if (scopeRow.parentScopeId === null) {
+      continue;
+    }
+    const existingChildren = childScopeIdsByParent.get(scopeRow.parentScopeId);
+    if (existingChildren === undefined) {
+      childScopeIdsByParent.set(scopeRow.parentScopeId, [scopeRow.scopeId]);
+      continue;
+    }
+    existingChildren.push(scopeRow.scopeId);
+  }
+  const allowedScopeIds = new Set<string>();
+  const hasExplicitScopeSelector =
+    selectors.projectId !== null || selectors.roleId !== null || selectors.userId !== null;
+
+  if (!hasExplicitScopeSelector) {
+    for (const scopeRow of scopeRows) {
+      allowedScopeIds.add(scopeRow.scopeId);
+    }
+    return allowedScopeIds;
+  }
+
+  const selectorSeedScopeIds = new Set<string>();
+  for (const scopeRow of scopeRows) {
+    if (scopeRow.scopeLevel === "common") {
+      allowedScopeIds.add(scopeRow.scopeId);
+      continue;
+    }
+    if (
+      selectors.projectId !== null &&
+      scopeRow.scopeLevel === "project" &&
+      scopeRow.projectId === selectors.projectId
+    ) {
+      allowedScopeIds.add(scopeRow.scopeId);
+      selectorSeedScopeIds.add(scopeRow.scopeId);
+      continue;
+    }
+    if (
+      selectors.roleId !== null &&
+      scopeRow.scopeLevel === "job_role" &&
+      scopeRow.roleId === selectors.roleId
+    ) {
+      allowedScopeIds.add(scopeRow.scopeId);
+      selectorSeedScopeIds.add(scopeRow.scopeId);
+      continue;
+    }
+    if (
+      selectors.userId !== null &&
+      scopeRow.scopeLevel === "user" &&
+      scopeRow.userId === selectors.userId
+    ) {
+      allowedScopeIds.add(scopeRow.scopeId);
+      selectorSeedScopeIds.add(scopeRow.scopeId);
+    }
+  }
+
+  const ancestorQueue = [...allowedScopeIds];
+  while (ancestorQueue.length > 0) {
+    const scopeId = ancestorQueue.pop();
+    if (scopeId === undefined) {
+      continue;
+    }
+
+    const row = scopeById.get(scopeId);
+    if (row === undefined || row.parentScopeId === null || allowedScopeIds.has(row.parentScopeId)) {
+      continue;
+    }
+    allowedScopeIds.add(row.parentScopeId);
+    ancestorQueue.push(row.parentScopeId);
+  }
+
+  const descendantQueue = [...selectorSeedScopeIds];
+  while (descendantQueue.length > 0) {
+    const scopeId = descendantQueue.pop();
+    if (scopeId === undefined) {
+      continue;
+    }
+    const childScopeIds = childScopeIdsByParent.get(scopeId) ?? [];
+    for (const childScopeId of childScopeIds) {
+      if (allowedScopeIds.has(childScopeId)) {
+        continue;
+      }
+      allowedScopeIds.add(childScopeId);
+      descendantQueue.push(childScopeId);
+    }
+  }
+
+  return allowedScopeIds;
+};
+
+const buildPlannedHits = (
+  normalized: NormalizedRetrievalRequest,
+  scopeRows: readonly ParsedScopeRow[],
+  memoryRows: readonly ParsedMemoryRow[],
+): readonly PlannedHit[] => {
+  const scopeById = new Map(scopeRows.map((row) => [row.scopeId, row] as const));
+  const allowedScopeIds = resolveAllowedScopeIds(scopeRows, normalized.selectors);
+  const plannedHits: PlannedHit[] = [];
+
+  for (const memoryRow of memoryRows) {
+    if (memoryRow.status !== "active") {
+      continue;
+    }
+    if (memoryRow.tombstonedAtMillis !== null) {
+      continue;
+    }
+    if (
+      memoryRow.expiresAtMillis !== null &&
+      memoryRow.expiresAtMillis <= memoryRow.updatedAtMillis
+    ) {
+      continue;
+    }
+    if (!allowedScopeIds.has(memoryRow.scopeId)) {
+      continue;
+    }
+
+    const scopeRow = scopeById.get(memoryRow.scopeId);
+    if (scopeRow === undefined) {
+      throw new Error(
+        `Memory ${memoryRow.memoryId} references scope ${memoryRow.scopeId} which is missing from the snapshot.`,
+      );
+    }
+
+    const excerpt = toExcerpt(memoryRow.title, memoryRow.payloadJson);
+    const searchableText = `${memoryRow.title}\n${excerpt}\n${memoryRow.payloadJson}`.toLowerCase();
+    const scopeRank = toScopeRank(scopeRow.scopeLevel);
+    const score = computeScore(
+      normalized.queryTokens,
+      normalized.queryNormalized,
+      searchableText,
+      scopeRank,
+    );
+    if (score === null) {
+      continue;
+    }
+
+    plannedHits.push({
+      memoryId: memoryRow.memoryId,
+      layer: memoryRow.layer,
+      score,
+      excerpt,
+      scopeId: memoryRow.scopeId,
+      scopeLevel: scopeRow.scopeLevel,
+      scopeRank,
+      updatedAtMillis: memoryRow.updatedAtMillis,
+    });
+  }
+
+  plannedHits.sort(comparePlannedHits);
+  return Object.freeze(plannedHits);
+};
+
+const isPolicyDeniedError = (error: unknown): boolean =>
+  isRecord(error) && error["_tag"] === "PolicyDeniedError";
+
+const buildPolicyContextForHit = (
+  policyContext: PolicyRequest["context"],
+  hit: PlannedHit,
+): PolicyRequest["context"] => ({
+  ...policyContext,
+  retrievalHitScopeId: hit.scopeId,
+  retrievalHitScopeLevel: hit.scopeLevel,
+  retrievalHitLayer: hit.layer,
+});
+
+const filterDeniedHits = (
+  normalized: NormalizedRetrievalRequest,
+  policyService: PolicyService,
+  plannedHits: readonly PlannedHit[],
+): Effect.Effect<readonly PlannedHit[], RetrievalQueryError> =>
+  Effect.forEach(
+    plannedHits,
+    (hit) =>
+      policyService
+        .evaluate({
+          spaceId: normalized.request.spaceId,
+          actorId: normalized.policy.actorId,
+          action: normalized.policy.action,
+          resourceId: hit.memoryId,
+          evidenceIds: normalized.policy.evidenceIds,
+          context: buildPolicyContextForHit(normalized.policy.context, hit),
+        })
+        .pipe(
+          Effect.map((policyResult) => (policyResult.decision === "deny" ? null : hit)),
+          Effect.catchAll((error) =>
+            isPolicyDeniedError(error)
+              ? Effect.succeed(null)
+              : Effect.fail(
+                  toRetrievalQueryError(
+                    normalized.request,
+                    `Policy evaluation failed for memory ${hit.memoryId}: ${describeFailure(error)}`,
+                  ),
+                ),
+          ),
+        ),
+    { concurrency: 1 },
+  ).pipe(Effect.map((maybeHits) => maybeHits.filter((hit): hit is PlannedHit => hit !== null)));
+
+const paginateHits = (
+  normalized: NormalizedRetrievalRequest,
+  hits: readonly PlannedHit[],
+): RetrievalResponse => {
+  const digest = toCursorDigest(
+    normalized.request,
+    normalized.selectors,
+    normalized.policy,
+    normalized.queryNormalized,
+  );
+  const offset = decodeCursorOffset(normalized.request.cursor, digest);
+  const totalHits = hits.length;
+  const boundedOffset = Math.min(offset, totalHits);
+  const limit = normalized.request.limit;
+  const pageHits =
+    limit === 0
+      ? []
+      : hits.slice(boundedOffset, Math.min(totalHits, boundedOffset + limit)).map((hit) => ({
+          memoryId: hit.memoryId,
+          layer: hit.layer,
+          score: hit.score,
+          excerpt: hit.excerpt,
+        }));
+
+  const nextOffset = boundedOffset + pageHits.length;
+  const nextCursor =
+    limit > 0 && nextOffset < totalHits
+      ? encodeCursor({
+          v: 1,
+          o: nextOffset,
+          d: digest,
+        })
+      : null;
+
+  return {
+    hits: pageHits,
+    totalHits,
+    nextCursor,
+  };
+};
+
+const planRetrieval = (
+  normalized: NormalizedRetrievalRequest,
+  policyService: PolicyService,
+  snapshot: SqliteStorageSnapshotData,
+): Effect.Effect<RetrievalResponse, RetrievalQueryError> =>
+  Effect.try({
+    try: () => ({
+      scopeRows: parseScopeRows(snapshot, normalized.request.spaceId),
+      memoryRows: parseMemoryRows(snapshot, normalized.request.spaceId),
+    }),
+    catch: (cause) =>
+      toRetrievalQueryError(
+        normalized.request,
+        `Snapshot projection failed for retrieval planner: ${describeFailure(cause)}`,
+      ),
+  }).pipe(
+    Effect.flatMap(({ scopeRows, memoryRows }) =>
+      Effect.try({
+        try: () => buildPlannedHits(normalized, scopeRows, memoryRows),
+        catch: (cause) =>
+          toRetrievalQueryError(
+            normalized.request,
+            `Retrieval scope planning failed: ${describeFailure(cause)}`,
+          ),
+      }),
+    ),
+    Effect.flatMap((plannedHits) => filterDeniedHits(normalized, policyService, plannedHits)),
+    Effect.flatMap((policyFilteredHits) =>
+      Effect.try({
+        try: () => paginateHits(normalized, policyFilteredHits),
+        catch: (cause) =>
+          toRetrievalQueryError(
+            normalized.request,
+            `Retrieval pagination failed: ${describeFailure(cause)}`,
+          ),
+      }),
+    ),
+  );
+
 export const makeNoopRetrievalService = (): RetrievalService => ({
   retrieve: () =>
     Effect.succeed({
@@ -23,6 +859,48 @@ export const makeNoopRetrievalService = (): RetrievalService => ({
       nextCursor: null,
     }),
 });
+
+export const makeRetrievalService = (
+  storageService: StorageService,
+  policyService: PolicyService,
+  options: RetrievalPlannerOptions = {},
+): RetrievalService => {
+  const snapshotSignatureSecret = options.snapshotSignatureSecret ?? defaultSnapshotSignatureSecret;
+
+  return {
+    retrieve: (request) =>
+      decodeRetrievalRequestEffect(request).pipe(
+        Effect.flatMap((decodedRequest) => {
+          const normalized = normalizeRetrievalRequest(decodedRequest);
+          return storageService
+            .exportSnapshot({
+              signatureSecret: snapshotSignatureSecret,
+            })
+            .pipe(
+              Effect.mapError((error) =>
+                toRetrievalQueryError(
+                  decodedRequest,
+                  `Storage snapshot export failed for retrieval planner: ${describeFailure(error)}`,
+                ),
+              ),
+              Effect.flatMap((snapshotExport) =>
+                Effect.try({
+                  try: () => parseSqliteStorageSnapshotPayload(snapshotExport.payload),
+                  catch: (cause) =>
+                    toRetrievalQueryError(
+                      decodedRequest,
+                      `Snapshot payload parsing failed for retrieval planner: ${describeFailure(cause)}`,
+                    ),
+                }),
+              ),
+              Effect.flatMap((snapshot) => planRetrieval(normalized, policyService, snapshot)),
+            );
+        }),
+      ),
+  };
+};
+
+export const makePolicyAwareRetrievalService = makeRetrievalService;
 
 export const noopRetrievalLayer: Layer.Layer<RetrievalService> = Layer.succeed(
   RetrievalServiceTag,

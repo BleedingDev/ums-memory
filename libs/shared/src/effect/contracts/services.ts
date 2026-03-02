@@ -6,7 +6,14 @@ import {
   PolicyContextSchema,
   PolicyOutcomeSchema,
 } from "./domains.js";
-import { EvidenceIdSchema, MemoryIdSchema, SpaceIdSchema, UserIdSchema } from "./ids.js";
+import {
+  EvidenceIdSchema,
+  MemoryIdSchema,
+  ProjectIdSchema,
+  RoleIdSchema,
+  SpaceIdSchema,
+  UserIdSchema,
+} from "./ids.js";
 
 const NonNegativeIntSchema = Schema.NonNegativeInt;
 const Sha256HexSchema = Schema.String.pipe(Schema.pattern(/^[0-9A-Fa-f]{64}$/));
@@ -73,11 +80,35 @@ export const StorageSnapshotImportResponseSchema = Schema.Struct({
 
 const RetrievalScoreSchema = Schema.Number.pipe(Schema.between(0, 1));
 
+export const RetrievalScopeSelectorsSchema = Schema.Struct({
+  projectId: Schema.optional(ProjectIdSchema),
+  roleId: Schema.optional(RoleIdSchema),
+  jobRoleId: Schema.optional(RoleIdSchema),
+  userId: Schema.optional(UserIdSchema),
+});
+
+export const RetrievalPolicyInputSchema = Schema.Struct({
+  actorId: Schema.optional(UserIdSchema),
+  action: Schema.optional(Schema.String),
+  evidenceIds: Schema.optional(Schema.Array(EvidenceIdSchema)),
+  context: Schema.optional(PolicyContextSchema),
+});
+
 export const RetrievalRequestSchema = Schema.Struct({
   spaceId: SpaceIdSchema,
   query: Schema.String,
   limit: NonNegativeIntSchema,
   cursor: Schema.optional(Schema.NullOr(Schema.String)),
+  scope: Schema.optional(RetrievalScopeSelectorsSchema),
+  projectId: Schema.optional(ProjectIdSchema),
+  roleId: Schema.optional(RoleIdSchema),
+  jobRoleId: Schema.optional(RoleIdSchema),
+  userId: Schema.optional(UserIdSchema),
+  policy: Schema.optional(RetrievalPolicyInputSchema),
+  actorId: Schema.optional(UserIdSchema),
+  action: Schema.optional(Schema.String),
+  evidenceIds: Schema.optional(Schema.Array(EvidenceIdSchema)),
+  policyContext: Schema.optional(PolicyContextSchema),
 });
 
 export const RetrievalHitSchema = Schema.Struct({
@@ -187,6 +218,8 @@ export type StorageSnapshotImportRequest = Schema.Schema.Type<
 export type StorageSnapshotImportResponse = Schema.Schema.Type<
   typeof StorageSnapshotImportResponseSchema
 >;
+export type RetrievalScopeSelectors = Schema.Schema.Type<typeof RetrievalScopeSelectorsSchema>;
+export type RetrievalPolicyInput = Schema.Schema.Type<typeof RetrievalPolicyInputSchema>;
 export type RetrievalRequest = Schema.Schema.Type<typeof RetrievalRequestSchema>;
 export type RetrievalHit = Schema.Schema.Type<typeof RetrievalHitSchema>;
 export type ActionableRetrievalPackSourceMetadata = Schema.Schema.Type<

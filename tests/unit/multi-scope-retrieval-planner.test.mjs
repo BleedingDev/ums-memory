@@ -1,0 +1,582 @@
+import assert from "node:assert/strict";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
+import test from "node:test";
+import { pathToFileURL } from "node:url";
+import { Effect } from "effect";
+import ts from "typescript";
+
+const effectModuleDirectory = new URL("../../libs/shared/src/effect/", import.meta.url);
+
+const transpileEffectModule = (sourceFilename, tempDirectory) => {
+  const sourceFileUrl = new URL(sourceFilename, effectModuleDirectory);
+  const source = readFileSync(sourceFileUrl, "utf8");
+  const transpiled = ts.transpileModule(source, {
+    fileName: sourceFileUrl.pathname,
+    reportDiagnostics: true,
+    compilerOptions: {
+      module: ts.ModuleKind.ES2022,
+      target: ts.ScriptTarget.ES2022,
+    },
+  });
+  const diagnostics = transpiled.diagnostics ?? [];
+  if (diagnostics.length > 0) {
+    const diagnosticMessage = diagnostics
+      .map((diagnostic) => {
+        const messageText = ts.flattenDiagnosticMessageText(diagnostic.messageText, "\n");
+        const position =
+          diagnostic.file === undefined || diagnostic.start === undefined
+            ? sourceFilename
+            : `${sourceFilename}:${diagnostic.file.getLineAndCharacterOfPosition(diagnostic.start).line + 1}`;
+        return `${position} - ${messageText}`;
+      })
+      .join("\n");
+    throw new Error(`TypeScript transpile diagnostics for ${sourceFilename}:\n${diagnosticMessage}`);
+  }
+
+  const outputFilename = join(tempDirectory, sourceFilename.replace(/\.ts$/, ".js"));
+  mkdirSync(dirname(outputFilename), { recursive: true });
+  writeFileSync(outputFilename, transpiled.outputText, "utf8");
+};
+
+const transpileManifest = Object.freeze([
+  "contracts/ids.ts",
+  "contracts/domains.ts",
+  "contracts/services.ts",
+  "contracts/validators.ts",
+  "contracts/index.ts",
+  "errors.ts",
+  "storage/sqlite/schema-metadata.ts",
+  "storage/sqlite/enterprise-schema.ts",
+  "storage/sqlite/migrations.ts",
+  "storage/sqlite/snapshot-codec.ts",
+  "storage/sqlite/storage-repository.ts",
+  "storage/sqlite/index.ts",
+  "services/policy-service.ts",
+  "services/storage-service.ts",
+  "services/retrieval-service.ts",
+]);
+
+let modulesPromise;
+let transpiledDirectoryPath;
+
+const loadModules = async () => {
+  if (!modulesPromise) {
+    const tempRootDirectory = join(process.cwd(), "dist", "tmp");
+    mkdirSync(tempRootDirectory, { recursive: true });
+    transpiledDirectoryPath = mkdtempSync(join(tempRootDirectory, "ums-memory-retrieval-planner-"));
+
+    for (const modulePath of transpileManifest) {
+      transpileEffectModule(modulePath, transpiledDirectoryPath);
+    }
+
+    const retrievalServiceModuleUrl = pathToFileURL(
+      join(transpiledDirectoryPath, "services/retrieval-service.js"),
+    ).href;
+    const storageServiceModuleUrl = pathToFileURL(
+      join(transpiledDirectoryPath, "services/storage-service.js"),
+    ).href;
+
+    modulesPromise = Promise.all([
+      import(retrievalServiceModuleUrl),
+      import(storageServiceModuleUrl),
+    ]).then(([retrievalServiceModule, storageServiceModule]) => ({
+      retrievalServiceModule,
+      storageServiceModule,
+    }));
+  }
+
+  return modulesPromise;
+};
+
+process.on("exit", () => {
+  if (transpiledDirectoryPath) {
+    rmSync(transpiledDirectoryPath, { recursive: true, force: true });
+  }
+});
+
+const seedScopeLatticeAnchors = (
+  db,
+  tenantId,
+  {
+    projectIds = [],
+    roleIds = [],
+    userIds = [],
+  } = {},
+) => {
+  const now = 1_700_000_000_000;
+  db.prepare(
+    "INSERT OR IGNORE INTO tenants (tenant_id, tenant_slug, display_name, created_at_ms, updated_at_ms) VALUES (?, ?, ?, ?, ?);",
+  ).run(tenantId, tenantId, tenantId, now, now);
+
+  for (const userId of userIds) {
+    db.prepare(
+      "INSERT OR IGNORE INTO users (tenant_id, user_id, email, display_name, status, created_at_ms, updated_at_ms) VALUES (?, ?, ?, ?, ?, ?, ?);",
+    ).run(tenantId, userId, `${userId}@example.com`, userId, "active", now, now);
+  }
+
+  for (const projectId of projectIds) {
+    db.prepare(
+      "INSERT OR IGNORE INTO projects (tenant_id, project_id, project_key, display_name, status, created_at_ms, archived_at_ms) VALUES (?, ?, ?, ?, ?, ?, ?);",
+    ).run(tenantId, projectId, `KEY_${projectId}`, projectId, "active", now, null);
+  }
+
+  for (const roleId of roleIds) {
+    db.prepare(
+      "INSERT OR IGNORE INTO roles (tenant_id, role_id, role_code, display_name, role_type, created_at_ms) VALUES (?, ?, ?, ?, ?, ?);",
+    ).run(tenantId, roleId, `ROLE_${roleId}`, roleId, "project", now);
+  }
+};
+
+const upsertMemorySync = (storageService, request) => {
+  Effect.runSync(storageService.upsertMemory(request));
+};
+
+const makePolicyService = ({ denyMemoryIds = new Set(), calls = [] } = {}) => ({
+  evaluate: (request) => {
+    calls.push(request);
+    const denied = denyMemoryIds.has(request.resourceId);
+    return Effect.succeed({
+      decision: denied ? "deny" : "allow",
+      reasonCodes: denied ? ["DENIED_BY_TEST_POLICY"] : ["ALLOWED_BY_TEST_POLICY"],
+      evaluatedAtMillis: 0,
+    });
+  },
+});
+
+test("ums-memory-8as.2: retrieval planner merges common/project/job_role/user scopes deterministically", async () => {
+  const { retrievalServiceModule, storageServiceModule } = await loadModules();
+  const db = new DatabaseSync(":memory:");
+
+  try {
+    const tenantId = "tenant-scope-merge";
+    const projectId = "project-orbit";
+    const roleId = "role-mentor";
+    const userId = "user-student";
+    const storageService = storageServiceModule.makeSqliteStorageService(db);
+    seedScopeLatticeAnchors(db, tenantId, {
+      projectIds: [projectId],
+      roleIds: [roleId],
+      userIds: [userId],
+    });
+
+    upsertMemorySync(storageService, {
+      spaceId: tenantId,
+      memoryId: "memory-common",
+      layer: "working",
+      payload: {
+        title: "merge token common",
+        updatedAtMillis: 100,
+      },
+    });
+    upsertMemorySync(storageService, {
+      spaceId: tenantId,
+      memoryId: "memory-project",
+      layer: "working",
+      payload: {
+        title: "merge token project",
+        scope: { projectId },
+        updatedAtMillis: 100,
+      },
+    });
+    upsertMemorySync(storageService, {
+      spaceId: tenantId,
+      memoryId: "memory-role",
+      layer: "working",
+      payload: {
+        title: "merge token role",
+        scope: { roleId },
+        updatedAtMillis: 100,
+      },
+    });
+    upsertMemorySync(storageService, {
+      spaceId: tenantId,
+      memoryId: "memory-user",
+      layer: "working",
+      payload: {
+        title: "merge token user",
+        scope: { userId, roleId },
+        updatedAtMillis: 100,
+      },
+    });
+
+    const retrievalService = retrievalServiceModule.makeRetrievalService(
+      storageService,
+      makePolicyService(),
+    );
+
+    const response = await Effect.runPromise(
+      retrievalService.retrieve({
+        spaceId: tenantId,
+        query: "merge token",
+        limit: 10,
+        scope: { projectId, roleId, userId },
+      }),
+    );
+    const responseWithoutSelectors = await Effect.runPromise(
+      retrievalService.retrieve({
+        spaceId: tenantId,
+        query: "merge token",
+        limit: 10,
+      }),
+    );
+
+    assert.equal(response.totalHits, 4);
+    assert.deepEqual(
+      response.hits.map((hit) => hit.memoryId),
+      ["memory-user", "memory-role", "memory-project", "memory-common"],
+    );
+    assert.equal(response.nextCursor, null);
+    assert.equal(responseWithoutSelectors.totalHits, 4);
+    assert.deepEqual(
+      responseWithoutSelectors.hits.map((hit) => hit.memoryId),
+      ["memory-user", "memory-role", "memory-project", "memory-common"],
+    );
+  } finally {
+    db.close();
+  }
+});
+
+test("ums-memory-8as.2: retrieval planner filters denied policy decisions", async () => {
+  const { retrievalServiceModule, storageServiceModule } = await loadModules();
+  const db = new DatabaseSync(":memory:");
+
+  try {
+    const tenantId = "tenant-policy-filter";
+    const storageService = storageServiceModule.makeSqliteStorageService(db);
+    upsertMemorySync(storageService, {
+      spaceId: tenantId,
+      memoryId: "memory-allowed",
+      layer: "working",
+      payload: {
+        title: "policy token allowed",
+        updatedAtMillis: 10,
+      },
+    });
+    upsertMemorySync(storageService, {
+      spaceId: tenantId,
+      memoryId: "memory-denied",
+      layer: "working",
+      payload: {
+        title: "policy token denied",
+        updatedAtMillis: 10,
+      },
+    });
+
+    const policyCalls = [];
+    const retrievalService = retrievalServiceModule.makeRetrievalService(storageService, {
+      evaluate: (request) => {
+        policyCalls.push(request);
+        return Effect.succeed({
+          decision: request.resourceId === "memory-denied" ? "deny" : "allow",
+          reasonCodes: ["TEST_POLICY"],
+          evaluatedAtMillis: 0,
+        });
+      },
+    });
+
+    const response = await Effect.runPromise(
+      retrievalService.retrieve({
+        spaceId: tenantId,
+        query: "policy token",
+        limit: 10,
+        policy: {
+          actorId: "user-policy",
+          action: "memory.retrieve",
+          evidenceIds: ["evidence-policy-1"],
+          context: {
+            requestId: "req-policy-1",
+          },
+        },
+      }),
+    );
+
+    assert.equal(response.totalHits, 1);
+    assert.deepEqual(response.hits.map((hit) => hit.memoryId), ["memory-allowed"]);
+    assert.equal(policyCalls.length, 2);
+    assert.ok(policyCalls.every((call) => call.actorId === "user-policy"));
+    assert.ok(policyCalls.every((call) => call.action === "memory.retrieve"));
+  } finally {
+    db.close();
+  }
+});
+
+test("ums-memory-8as.2: retrieval planner cursor pagination is deterministic", async () => {
+  const { retrievalServiceModule, storageServiceModule } = await loadModules();
+  const db = new DatabaseSync(":memory:");
+
+  try {
+    const tenantId = "tenant-cursor";
+    const storageService = storageServiceModule.makeSqliteStorageService(db);
+
+    for (let index = 1; index <= 5; index += 1) {
+      upsertMemorySync(storageService, {
+        spaceId: tenantId,
+        memoryId: `memory-${index}`,
+        layer: "working",
+        payload: {
+          title: `cursor token ${index}`,
+          updatedAtMillis: 200,
+        },
+      });
+    }
+
+    const retrievalService = retrievalServiceModule.makeRetrievalService(
+      storageService,
+      makePolicyService(),
+    );
+
+    const firstPageRequest = {
+      spaceId: tenantId,
+      query: "cursor token",
+      limit: 2,
+    };
+
+    const firstPage = await Effect.runPromise(retrievalService.retrieve(firstPageRequest));
+    const firstPageReplay = await Effect.runPromise(retrievalService.retrieve(firstPageRequest));
+    assert.deepEqual(firstPage.hits, firstPageReplay.hits);
+    assert.equal(firstPage.nextCursor, firstPageReplay.nextCursor);
+    assert.equal(firstPage.totalHits, 5);
+    assert.deepEqual(
+      firstPage.hits.map((hit) => hit.memoryId),
+      ["memory-1", "memory-2"],
+    );
+    assert.ok(firstPage.nextCursor);
+
+    const secondPage = await Effect.runPromise(
+      retrievalService.retrieve({
+        ...firstPageRequest,
+        cursor: firstPage.nextCursor,
+      }),
+    );
+    assert.deepEqual(
+      secondPage.hits.map((hit) => hit.memoryId),
+      ["memory-3", "memory-4"],
+    );
+    assert.ok(secondPage.nextCursor);
+
+    const thirdPage = await Effect.runPromise(
+      retrievalService.retrieve({
+        ...firstPageRequest,
+        cursor: secondPage.nextCursor,
+      }),
+    );
+    assert.deepEqual(thirdPage.hits.map((hit) => hit.memoryId), ["memory-5"]);
+    assert.equal(thirdPage.nextCursor, null);
+  } finally {
+    db.close();
+  }
+});
+
+test("ums-memory-8as.2: cursor is rejected when policy context changes", async () => {
+  const { retrievalServiceModule, storageServiceModule } = await loadModules();
+  const db = new DatabaseSync(":memory:");
+
+  try {
+    const tenantId = "tenant-cursor-policy";
+    const storageService = storageServiceModule.makeSqliteStorageService(db);
+    for (let index = 1; index <= 3; index += 1) {
+      upsertMemorySync(storageService, {
+        spaceId: tenantId,
+        memoryId: `memory-policy-${index}`,
+        layer: "working",
+        payload: {
+          title: `policy cursor token ${index}`,
+          updatedAtMillis: 50,
+        },
+      });
+    }
+
+    const retrievalService = retrievalServiceModule.makeRetrievalService(
+      storageService,
+      makePolicyService(),
+    );
+    const firstPage = await Effect.runPromise(
+      retrievalService.retrieve({
+        spaceId: tenantId,
+        query: "policy cursor token",
+        limit: 1,
+        policy: {
+          actorId: "actor-a",
+          evidenceIds: ["evidence-a"],
+          context: { requestId: "req-a" },
+        },
+      }),
+    );
+    assert.ok(firstPage.nextCursor);
+
+    await assert.rejects(
+      Effect.runPromise(
+        retrievalService.retrieve({
+          spaceId: tenantId,
+          query: "policy cursor token",
+          limit: 1,
+          cursor: firstPage.nextCursor,
+          policy: {
+            actorId: "actor-b",
+            evidenceIds: ["evidence-b"],
+            context: { requestId: "req-b" },
+          },
+        }),
+      ),
+      (error) => {
+        const errorMessage =
+          typeof error?.message === "string" && error.message.length > 0
+            ? error.message
+            : String(error);
+        assert.match(errorMessage, /digest/i);
+        return true;
+      },
+    );
+  } finally {
+    db.close();
+  }
+});
+
+test("ums-memory-8as.2: partial scope selectors include descendant scopes", async () => {
+  const { retrievalServiceModule, storageServiceModule } = await loadModules();
+  const db = new DatabaseSync(":memory:");
+
+  try {
+    const tenantId = "tenant-scope-descendants";
+    const projectId = "project-desc";
+    const roleId = "role-desc";
+    const projectUserId = "user-project-desc";
+    const roleUserId = "user-role-desc";
+    const storageService = storageServiceModule.makeSqliteStorageService(db);
+    seedScopeLatticeAnchors(db, tenantId, {
+      projectIds: [projectId],
+      roleIds: [roleId],
+      userIds: [projectUserId, roleUserId],
+    });
+
+    upsertMemorySync(storageService, {
+      spaceId: tenantId,
+      memoryId: "memory-project-parent",
+      layer: "working",
+      payload: {
+        title: "desc token project parent",
+        scope: { projectId },
+        updatedAtMillis: 10,
+      },
+    });
+    upsertMemorySync(storageService, {
+      spaceId: tenantId,
+      memoryId: "memory-project-user-child",
+      layer: "working",
+      payload: {
+        title: "desc token project user",
+        scope: { userId: projectUserId, projectId },
+        updatedAtMillis: 10,
+      },
+    });
+    upsertMemorySync(storageService, {
+      spaceId: tenantId,
+      memoryId: "memory-role-parent",
+      layer: "working",
+      payload: {
+        title: "desc token role parent",
+        scope: { roleId },
+        updatedAtMillis: 10,
+      },
+    });
+    upsertMemorySync(storageService, {
+      spaceId: tenantId,
+      memoryId: "memory-role-user-child",
+      layer: "working",
+      payload: {
+        title: "desc token role user",
+        scope: { userId: roleUserId, roleId },
+        updatedAtMillis: 10,
+      },
+    });
+
+    const retrievalService = retrievalServiceModule.makeRetrievalService(
+      storageService,
+      makePolicyService(),
+    );
+
+    const projectScoped = await Effect.runPromise(
+      retrievalService.retrieve({
+        spaceId: tenantId,
+        query: "desc token",
+        limit: 10,
+        scope: { projectId },
+      }),
+    );
+    const roleScoped = await Effect.runPromise(
+      retrievalService.retrieve({
+        spaceId: tenantId,
+        query: "desc token",
+        limit: 10,
+        scope: { roleId },
+      }),
+    );
+
+    assert.deepEqual(
+      projectScoped.hits.map((hit) => hit.memoryId),
+      ["memory-project-user-child", "memory-project-parent"],
+    );
+    assert.deepEqual(
+      roleScoped.hits.map((hit) => hit.memoryId),
+      ["memory-role-user-child", "memory-role-parent"],
+    );
+  } finally {
+    db.close();
+  }
+});
+
+test("ums-memory-8as.2: retrieval planner enforces tenant isolation", async () => {
+  const { retrievalServiceModule, storageServiceModule } = await loadModules();
+  const db = new DatabaseSync(":memory:");
+
+  try {
+    const storageService = storageServiceModule.makeSqliteStorageService(db);
+    upsertMemorySync(storageService, {
+      spaceId: "tenant-a",
+      memoryId: "memory-tenant-a",
+      layer: "working",
+      payload: {
+        title: "tenant token shared",
+        updatedAtMillis: 1,
+      },
+    });
+    upsertMemorySync(storageService, {
+      spaceId: "tenant-b",
+      memoryId: "memory-tenant-b",
+      layer: "working",
+      payload: {
+        title: "tenant token shared",
+        updatedAtMillis: 1,
+      },
+    });
+
+    const retrievalService = retrievalServiceModule.makeRetrievalService(
+      storageService,
+      makePolicyService(),
+    );
+
+    const tenantAResponse = await Effect.runPromise(
+      retrievalService.retrieve({
+        spaceId: "tenant-a",
+        query: "tenant token",
+        limit: 10,
+      }),
+    );
+    const tenantBResponse = await Effect.runPromise(
+      retrievalService.retrieve({
+        spaceId: "tenant-b",
+        query: "tenant token",
+        limit: 10,
+      }),
+    );
+
+    assert.equal(tenantAResponse.totalHits, 1);
+    assert.equal(tenantAResponse.hits[0]?.memoryId, "memory-tenant-a");
+    assert.equal(tenantBResponse.totalHits, 1);
+    assert.equal(tenantBResponse.hits[0]?.memoryId, "memory-tenant-b");
+  } finally {
+    db.close();
+  }
+});
