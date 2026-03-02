@@ -1460,3 +1460,407 @@ test("ums-memory-8as.7: explainability reason codes include scope ranking and po
     db.close();
   }
 });
+
+test("ums-memory-8as.8: coding-agent release workflow prefers superseding guidance with traceable actionable output", async () => {
+  const { retrievalServiceModule, storageServiceModule } = await loadModules();
+  const db = new DatabaseSync(":memory:");
+
+  try {
+    const dayMillis = 24 * 60 * 60 * 1_000;
+    const tenantId = "tenant-scenario-release-workflow";
+    const projectId = "project-release-workflow";
+    const roleId = "role-release-workflow";
+    const userId = "user-release-workflow";
+    const storageService = storageServiceModule.makeSqliteStorageService(db);
+
+    seedScopeLatticeAnchors(db, tenantId, {
+      projectIds: [projectId],
+      roleIds: [roleId],
+      userIds: [userId],
+    });
+
+    upsertMemorySync(storageService, {
+      spaceId: tenantId,
+      memoryId: "memory-common-release-checklist",
+      layer: "working",
+      payload: {
+        title: "release workflow token checklist baseline",
+        summary: "Do: run the test suite before changing release scripts.",
+        updatedAtMillis: 8 * dayMillis,
+      },
+    });
+    upsertMemorySync(storageService, {
+      spaceId: tenantId,
+      memoryId: "memory-project-release-old",
+      layer: "working",
+      payload: {
+        title: "release workflow token bundler legacy guidance",
+        summary: "Do: skip bundler verification before publishing packages.",
+        scope: { projectId },
+        updatedAtMillis: 2 * dayMillis,
+      },
+    });
+    upsertMemorySync(storageService, {
+      spaceId: tenantId,
+      memoryId: "memory-project-release-new",
+      layer: "working",
+      payload: {
+        title: "release workflow token bundler corrected guidance",
+        summary: "Do: verify bundler output hash before publishing packages.",
+        scope: { projectId },
+        updatedAtMillis: 11 * dayMillis,
+        supersedesMemoryId: "memory-project-release-old",
+        contradictsMemoryIds: ["memory-project-release-old"],
+      },
+    });
+    upsertMemorySync(storageService, {
+      spaceId: tenantId,
+      memoryId: "memory-role-release-guardrail",
+      layer: "working",
+      payload: {
+        title: "release workflow token role guardrail",
+        summary: "Do not merge release changes without green CI checks.",
+        scope: { roleId },
+        updatedAtMillis: 10 * dayMillis,
+      },
+    });
+    upsertMemorySync(storageService, {
+      spaceId: tenantId,
+      memoryId: "memory-user-release-example",
+      layer: "episodic",
+      payload: {
+        title: "release workflow token user scenario",
+        summary: "Example: run lint and tests in dry-run mode before tagging.",
+        scope: { projectId, roleId, userId },
+        updatedAtMillis: 10 * dayMillis + 1_000,
+      },
+    });
+    upsertMemorySync(storageService, {
+      spaceId: tenantId,
+      memoryId: "memory-common-release-risk-legacy",
+      layer: "working",
+      payload: {
+        title: "release workflow token legacy risk",
+        summary: "Risk: legacy publish scripts can omit changelog generation.",
+        updatedAtMillis: 0,
+      },
+    });
+
+    const retrievalService = retrievalServiceModule.makeRetrievalService(
+      storageService,
+      makePolicyService(),
+    );
+    const request = {
+      spaceId: tenantId,
+      query: "release workflow token bundler ci checklist",
+      limit: 10,
+      scope: { projectId, roleId, userId },
+      policy: {
+        actorId: userId,
+        action: "memory.retrieve",
+        evidenceIds: ["evidence-release-1"],
+        context: {
+          requestId: "req-release-1",
+        },
+      },
+    };
+
+    const firstResponse = await Effect.runPromise(retrievalService.retrieve(request));
+    const secondResponse = await Effect.runPromise(retrievalService.retrieve(request));
+    assert.deepEqual(firstResponse, secondResponse);
+
+    assert.ok(firstResponse.actionablePack);
+    const hitMemoryIds = firstResponse.hits.map((hit) => hit.memoryId);
+    assert.ok(firstResponse.totalHits >= firstResponse.hits.length);
+    assert.ok(firstResponse.hits.length >= 3);
+    assert.ok(hitMemoryIds.includes("memory-project-release-new"));
+    assert.ok(!hitMemoryIds.includes("memory-project-release-old"));
+
+    const reconciledHit = firstResponse.hits.find(
+      (hit) => hit.memoryId === "memory-project-release-new",
+    );
+    assert.deepEqual(reconciledHit?.metadata?.chronology?.reconciledMemoryIds, [
+      "memory-project-release-old",
+    ]);
+
+    const actionablePack = firstResponse.actionablePack;
+    assert.ok(actionablePack.do.some((line) => /verify bundler output hash/i.test(line)));
+    assert.ok(actionablePack.dont.some((line) => /without green ci/i.test(line)));
+    assert.ok(actionablePack.examples.some((line) => /dry-run mode before tagging/i.test(line)));
+    assert.ok(actionablePack.risks.length >= 1);
+    assert.ok(actionablePack.warnings.length >= 1);
+    assert.ok(actionablePack.warnings.some((warning) => /stale/i.test(warning)));
+
+    const sourceMemoryIds = actionablePack.sources.map((source) => source.memoryId);
+    assert.ok(sourceMemoryIds.includes("memory-project-release-new"));
+    assert.ok(sourceMemoryIds.includes("memory-common-release-risk-legacy"));
+    assert.ok(!sourceMemoryIds.includes("memory-project-release-old"));
+    assert.ok(sourceMemoryIds.every((memoryId) => hitMemoryIds.includes(memoryId)));
+    for (const source of actionablePack.sources) {
+      assert.ok(source.metadata.score >= 0 && source.metadata.score <= 1);
+      assert.ok(source.metadata.layer === "working" || source.metadata.layer === "episodic");
+    }
+
+    const firstExplainability = await Effect.runPromise(retrievalService.retrieveExplainability(request));
+    const secondExplainability = await Effect.runPromise(
+      retrievalService.retrieveExplainability(request),
+    );
+    assert.deepEqual(firstExplainability, secondExplainability);
+    assert.deepEqual(
+      [...firstExplainability.hits.map((hit) => hit.memoryId)].sort(),
+      [...hitMemoryIds].sort(),
+    );
+
+    const reconciledExplainabilityHit = firstExplainability.hits.find(
+      (hit) => hit.memoryId === "memory-project-release-new",
+    );
+    assert.ok(reconciledExplainabilityHit?.reasonCodes.includes("CHRONOLOGY_RECONCILED"));
+
+    const reasonCodeUnion = new Set(firstExplainability.hits.flatMap((hit) => hit.reasonCodes));
+    assert.ok(reasonCodeUnion.has("QUERY_TOKEN_MATCH"));
+    assert.ok(reasonCodeUnion.has("SCOPE_FILTER_MATCH"));
+    assert.ok(reasonCodeUnion.has("RANKING_WEIGHTED_SIGNALS"));
+    assert.ok([...reasonCodeUnion].some((reasonCode) => reasonCode.startsWith("SCOPE_LEVEL_")));
+
+    for (const hit of firstExplainability.hits) {
+      assert.ok(hit.reasonCodes.length > 0);
+      const rankingSignalKeys = Object.keys(hit.rankingSignals);
+      const expectedRankingSignalKeys = [
+        "relevance",
+        "evidenceStrength",
+        "decay",
+        "humanWeight",
+        "utility",
+      ];
+      for (const expectedSignalKey of expectedRankingSignalKeys) {
+        assert.ok(rankingSignalKeys.includes(expectedSignalKey));
+      }
+      const contributionSignals = hit.weightedContributions.map((entry) => entry.signal);
+      for (const expectedSignalKey of expectedRankingSignalKeys) {
+        assert.ok(contributionSignals.includes(expectedSignalKey));
+      }
+      assert.equal(new Set(contributionSignals).size, contributionSignals.length);
+      for (const contribution of hit.weightedContributions) {
+        assert.ok(contribution.signalScore >= 0 && contribution.signalScore <= 1);
+        assert.ok(contribution.weight >= 0 && contribution.weight <= 1);
+        assert.equal(
+          contribution.weightedContribution,
+          roundRetrievalScore(contribution.weight * contribution.signalScore),
+        );
+      }
+    }
+  } finally {
+    db.close();
+  }
+});
+
+test("ums-memory-8as.8: coding-agent flaky-test workflow surfaces stale and low-confidence warnings with explainability weights", async () => {
+  const { retrievalServiceModule, storageServiceModule } = await loadModules();
+  const db = new DatabaseSync(":memory:");
+
+  try {
+    const dayMillis = 24 * 60 * 60 * 1_000;
+    const tenantId = "tenant-scenario-flaky-workflow";
+    const projectId = "project-flaky-workflow";
+    const roleId = "role-flaky-workflow";
+    const userId = "user-flaky-workflow";
+    const storageService = storageServiceModule.makeSqliteStorageService(db);
+
+    seedScopeLatticeAnchors(db, tenantId, {
+      projectIds: [projectId],
+      roleIds: [roleId],
+      userIds: [userId],
+    });
+
+    upsertMemorySync(storageService, {
+      spaceId: tenantId,
+      memoryId: "memory-common-flaky-old",
+      layer: "working",
+      payload: {
+        title: "flaky test workflow token old guidance",
+        summary: "Do: bypass flaky tests by forcing success in CI.",
+        updatedAtMillis: 2 * dayMillis,
+      },
+    });
+    upsertMemorySync(storageService, {
+      spaceId: tenantId,
+      memoryId: "memory-user-flaky-new",
+      layer: "working",
+      payload: {
+        title: "flaky test workflow token corrected guidance",
+        summary: "Do: quarantine flaky tests and keep retry diagnostics enabled.",
+        scope: { projectId, roleId, userId },
+        updatedAtMillis: 12 * dayMillis,
+        supersedesMemoryId: "memory-common-flaky-old",
+        contradictsMemoryIds: ["memory-common-flaky-old"],
+      },
+    });
+    upsertMemorySync(storageService, {
+      spaceId: tenantId,
+      memoryId: "memory-project-flaky-dont",
+      layer: "working",
+      payload: {
+        title: "flaky test workflow token merge guardrail",
+        summary: "Do not merge flaky fixes before reproducing the failing seed.",
+        scope: { projectId },
+        updatedAtMillis: 11 * dayMillis,
+      },
+    });
+    upsertMemorySync(storageService, {
+      spaceId: tenantId,
+      memoryId: "memory-role-flaky-example",
+      layer: "episodic",
+      payload: {
+        title: "flaky test workflow token role scenario",
+        summary: "Example: run tests with --runInBand and seed 42 for deterministic repro.",
+        scope: { roleId },
+        updatedAtMillis: 11 * dayMillis - 5_000,
+      },
+    });
+    upsertMemorySync(storageService, {
+      spaceId: tenantId,
+      memoryId: "memory-common-flaky-risk-stale",
+      layer: "working",
+      payload: {
+        title: "flaky test workflow token stale cache risk",
+        summary: "Risk: stale CI cache can hide flaky test regressions.",
+        updatedAtMillis: 0,
+      },
+    });
+    upsertMemorySync(storageService, {
+      spaceId: tenantId,
+      memoryId: "memory-project-flaky-low-confidence",
+      layer: "working",
+      payload: {
+        title: "flaky tracker note",
+        summary: "Do: log flaky owner in the issue tracker.",
+        scope: { projectId },
+        updatedAtMillis: 12 * dayMillis + 1_000,
+      },
+    });
+
+    const retrievalService = retrievalServiceModule.makeRetrievalService(
+      storageService,
+      makePolicyService(),
+    );
+    const rankingWeights = {
+      relevance: 0.9,
+      evidence_strength: 0.05,
+      decay: 0.05,
+      human_weight: 0,
+      utility_score: 0,
+    };
+    const request = {
+      spaceId: tenantId,
+      query: "flaky test workflow token seed diagnostics cache retry",
+      limit: 10,
+      scope: { projectId, roleId, userId },
+      ranking_weights: rankingWeights,
+      policy: {
+        actorId: userId,
+        action: "memory.retrieve",
+        evidenceIds: ["evidence-flaky-1"],
+        context: {
+          requestId: "req-flaky-1",
+        },
+      },
+    };
+
+    const firstResponse = await Effect.runPromise(retrievalService.retrieve(request));
+    const secondResponse = await Effect.runPromise(retrievalService.retrieve(request));
+    assert.deepEqual(firstResponse, secondResponse);
+
+    assert.ok(firstResponse.actionablePack);
+    const hitMemoryIds = firstResponse.hits.map((hit) => hit.memoryId);
+    assert.ok(firstResponse.totalHits >= firstResponse.hits.length);
+    assert.ok(firstResponse.hits.length >= 3);
+    assert.ok(hitMemoryIds.includes("memory-user-flaky-new"));
+    assert.ok(!hitMemoryIds.includes("memory-common-flaky-old"));
+
+    const correctedHit = firstResponse.hits.find((hit) => hit.memoryId === "memory-user-flaky-new");
+    assert.deepEqual(correctedHit?.metadata?.chronology?.reconciledMemoryIds, [
+      "memory-common-flaky-old",
+    ]);
+
+    const actionablePack = firstResponse.actionablePack;
+    assert.ok(actionablePack.do.some((line) => /quarantine flaky tests/i.test(line)));
+    assert.ok(actionablePack.dont.some((line) => /do not merge flaky fixes/i.test(line)));
+    assert.ok(actionablePack.examples.some((line) => /--runInBand/i.test(line)));
+    assert.ok(actionablePack.risks.some((line) => /stale ci cache/i.test(line)));
+    assert.ok(actionablePack.warnings.length >= 1);
+    assert.ok(actionablePack.warnings.some((warning) => /stale/i.test(warning)));
+    assert.ok(actionablePack.warnings.some((warning) => /confidence/i.test(warning)));
+
+    const sourceMemoryIds = actionablePack.sources.map((source) => source.memoryId);
+    assert.ok(sourceMemoryIds.includes("memory-user-flaky-new"));
+    assert.ok(sourceMemoryIds.includes("memory-project-flaky-low-confidence"));
+    assert.ok(!sourceMemoryIds.includes("memory-common-flaky-old"));
+    assert.ok(sourceMemoryIds.every((memoryId) => hitMemoryIds.includes(memoryId)));
+    for (const source of actionablePack.sources) {
+      assert.ok(source.metadata.score >= 0 && source.metadata.score <= 1);
+    }
+
+    const firstExplainability = await Effect.runPromise(retrievalService.retrieveExplainability(request));
+    const secondExplainability = await Effect.runPromise(
+      retrievalService.retrieveExplainability(request),
+    );
+    assert.deepEqual(firstExplainability, secondExplainability);
+    assert.deepEqual(
+      [...firstExplainability.hits.map((hit) => hit.memoryId)].sort(),
+      [...hitMemoryIds].sort(),
+    );
+
+    const correctedExplainabilityHit = firstExplainability.hits.find(
+      (hit) => hit.memoryId === "memory-user-flaky-new",
+    );
+    assert.ok(correctedExplainabilityHit?.reasonCodes.includes("CHRONOLOGY_RECONCILED"));
+    assert.ok(correctedExplainabilityHit?.reasonCodes.includes("SCOPE_LEVEL_USER"));
+
+    const reasonCodeUnion = new Set(firstExplainability.hits.flatMap((hit) => hit.reasonCodes));
+    assert.ok(reasonCodeUnion.has("QUERY_TOKEN_MATCH"));
+    assert.ok(reasonCodeUnion.has("SCOPE_FILTER_MATCH"));
+    assert.ok(reasonCodeUnion.has("RANKING_WEIGHTED_SIGNALS"));
+    assert.ok([...reasonCodeUnion].some((reasonCode) => reasonCode.startsWith("SCOPE_LEVEL_")));
+
+    for (const hit of firstExplainability.hits) {
+      assert.ok(hit.reasonCodes.length > 0);
+      const contributionSignals = hit.weightedContributions.map((entry) => entry.signal);
+      const expectedContributionSignals = [
+        "relevance",
+        "evidenceStrength",
+        "decay",
+        "humanWeight",
+        "utility",
+      ];
+      for (const expectedSignal of expectedContributionSignals) {
+        assert.ok(contributionSignals.includes(expectedSignal));
+      }
+      assert.equal(new Set(contributionSignals).size, contributionSignals.length);
+      const contributionBySignal = Object.fromEntries(
+        hit.weightedContributions.map((entry) => [entry.signal, entry]),
+      );
+      assert.ok(contributionBySignal.relevance.weight >= 0 && contributionBySignal.relevance.weight <= 1);
+      assert.ok(
+        contributionBySignal.evidenceStrength.weight >= 0 &&
+          contributionBySignal.evidenceStrength.weight <= 1,
+      );
+      assert.ok(contributionBySignal.decay.weight >= 0 && contributionBySignal.decay.weight <= 1);
+      assert.ok(
+        contributionBySignal.humanWeight.weight >= 0 &&
+          contributionBySignal.humanWeight.weight <= 1,
+      );
+      assert.ok(contributionBySignal.utility.weight >= 0 && contributionBySignal.utility.weight <= 1);
+      assert.equal(contributionBySignal.humanWeight.weight, 0);
+      assert.equal(contributionBySignal.utility.weight, 0);
+      assert.ok(contributionBySignal.relevance.weight > contributionBySignal.evidenceStrength.weight);
+      for (const contribution of hit.weightedContributions) {
+        assert.equal(
+          contribution.weightedContribution,
+          roundRetrievalScore(contribution.weight * contribution.signalScore),
+        );
+      }
+    }
+  } finally {
+    db.close();
+  }
+});
