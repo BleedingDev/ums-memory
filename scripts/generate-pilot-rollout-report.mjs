@@ -184,10 +184,7 @@ export function parseTelemetryEvents(source, { allowInvalid = false } = {}) {
       parsed = JSON.parse(trimmed);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      if (!allowInvalid) {
-        throw new Error(`Invalid JSON telemetry array: ${message}`);
-      }
-      return attachInvalidCount([], 1);
+      throw new Error(`Invalid JSON telemetry array: ${message}`);
     }
     if (!Array.isArray(parsed)) {
       throw new Error("Telemetry input must be a JSON array or NDJSON stream of objects.");
@@ -461,8 +458,9 @@ export function generatePilotRolloutReport(events, { allowInvalid = false } = {}
 
   const latencies = [];
   const timestamps = [];
-  let invalidEventCount =
+  const parsedInvalidCount =
     Number.isInteger(events.invalidCount) && events.invalidCount > 0 ? events.invalidCount : 0;
+  let invalidEventCount = parsedInvalidCount;
 
   for (let index = 0; index < events.length; index += 1) {
     const event = events[index];
@@ -614,6 +612,10 @@ function printUsage() {
       "Input formats:",
       "  - NDJSON (one telemetry object per line)",
       "  - JSON array of telemetry objects",
+      "",
+      "Notes:",
+      "  --allow-invalid skips malformed NDJSON lines and invalid event records.",
+      "  Malformed top-level JSON arrays are always treated as fatal input errors.",
       "",
       "Examples:",
       "  node scripts/generate-pilot-rollout-report.mjs --input ops/pilot-rollout/pilot-a/telemetry.ndjson",

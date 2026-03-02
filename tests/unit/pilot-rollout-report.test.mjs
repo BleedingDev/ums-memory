@@ -211,6 +211,47 @@ test("pilot rollout report main creates parent output directories automatically"
   }
 });
 
+test("pilot rollout report main allow-invalid skips malformed NDJSON lines", async () => {
+  const fixtureRoot = await mkdtemp(resolve(tmpdir(), "pilot-rollout-report-allow-invalid-"));
+  const inputPath = resolve(fixtureRoot, "telemetry.ndjson");
+  const outputPath = resolve(fixtureRoot, "summary.json");
+
+  try {
+    const fixture = `${JSON.stringify(FIXTURE_EVENTS[0])}\nnot json\n`;
+    await writeFile(inputPath, fixture, "utf8");
+    const code = await main([
+      "--input",
+      inputPath,
+      "--output",
+      outputPath,
+      "--compact",
+      "--allow-invalid",
+    ]);
+    assert.equal(code, 0);
+
+    const written = JSON.parse(await readFile(outputPath, "utf8"));
+    assert.equal(written.requestVolume, 1);
+    assert.equal(written.invalidEventCount, 1);
+  } finally {
+    await rm(fixtureRoot, { recursive: true, force: true });
+  }
+});
+
+test("pilot rollout report rejects malformed JSON arrays even in allow-invalid mode", async () => {
+  const fixtureRoot = await mkdtemp(resolve(tmpdir(), "pilot-rollout-report-bad-array-"));
+  const inputPath = resolve(fixtureRoot, "telemetry.json");
+
+  try {
+    await writeFile(inputPath, '[{"ok":true},]', "utf8");
+    await assert.rejects(
+      () => main(["--input", inputPath, "--allow-invalid"]),
+      /Invalid JSON telemetry array/i,
+    );
+  } finally {
+    await rm(fixtureRoot, { recursive: true, force: true });
+  }
+});
+
 test("pilot rollout report parses numeric status codes and compatible outcome tokens", () => {
   const report = generatePilotRolloutReport([
     {
@@ -322,4 +363,18 @@ test("pilot rollout report allow-invalid mode skips malformed events and reports
   assert.equal(report.invalidEventCount, 2);
   assert.equal(report.successCount, 1);
   assert.equal(report.failureCount, 0);
+});
+
+test("pilot rollout report preserves parsed invalid counts in default mode", () => {
+  const parsed = parseTelemetryEvents(
+    [
+      FIXTURE_EVENTS[0],
+      "invalid-entry",
+    ],
+    { allowInvalid: true },
+  );
+  const report = generatePilotRolloutReport(parsed);
+
+  assert.equal(report.requestVolume, 1);
+  assert.equal(report.invalidEventCount, 1);
 });
