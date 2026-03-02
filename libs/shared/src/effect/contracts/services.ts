@@ -87,10 +87,33 @@ export const RetrievalHitSchema = Schema.Struct({
   excerpt: Schema.String,
 });
 
+const ActionableRetrievalLineSchema = Schema.NonEmptyTrimmedString;
+
+export const ActionableRetrievalPackSourceMetadataSchema = Schema.Struct({
+  score: RetrievalScoreSchema,
+  layer: MemoryLayerSchema,
+});
+
+export const ActionableRetrievalPackSourceSchema = Schema.Struct({
+  memoryId: MemoryIdSchema,
+  excerpt: Schema.String,
+  metadata: ActionableRetrievalPackSourceMetadataSchema,
+});
+
+export const ActionableRetrievalPackSchema = Schema.Struct({
+  do: Schema.Array(ActionableRetrievalLineSchema),
+  dont: Schema.Array(ActionableRetrievalLineSchema),
+  examples: Schema.Array(ActionableRetrievalLineSchema),
+  risks: Schema.Array(ActionableRetrievalLineSchema),
+  sources: Schema.Array(ActionableRetrievalPackSourceSchema),
+  warnings: Schema.Array(ActionableRetrievalLineSchema),
+});
+
 export const RetrievalResponseSchema = Schema.Struct({
   hits: Schema.Array(RetrievalHitSchema),
   totalHits: NonNegativeIntSchema,
   nextCursor: Schema.NullOr(Schema.String),
+  actionablePack: Schema.optional(ActionableRetrievalPackSchema),
 });
 
 export const EvaluationRequestSchema = Schema.Struct({
@@ -166,6 +189,13 @@ export type StorageSnapshotImportResponse = Schema.Schema.Type<
 >;
 export type RetrievalRequest = Schema.Schema.Type<typeof RetrievalRequestSchema>;
 export type RetrievalHit = Schema.Schema.Type<typeof RetrievalHitSchema>;
+export type ActionableRetrievalPackSourceMetadata = Schema.Schema.Type<
+  typeof ActionableRetrievalPackSourceMetadataSchema
+>;
+export type ActionableRetrievalPackSource = Schema.Schema.Type<
+  typeof ActionableRetrievalPackSourceSchema
+>;
+export type ActionableRetrievalPack = Schema.Schema.Type<typeof ActionableRetrievalPackSchema>;
 export type RetrievalResponse = Schema.Schema.Type<typeof RetrievalResponseSchema>;
 export type EvaluationRequest = Schema.Schema.Type<typeof EvaluationRequestSchema>;
 export type EvaluationResult = Schema.Schema.Type<typeof EvaluationResultSchema>;
