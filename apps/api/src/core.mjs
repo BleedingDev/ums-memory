@@ -124,6 +124,15 @@ const DEFAULT_RECOMMENDATION_WEIGHTS = Object.freeze({
   due: 0.15,
   evidence: 0.05,
 });
+const DEFAULT_UTILITY_SIGNAL_SCORE = 0.5;
+const FEEDBACK_UTILITY_SIGNAL_DELTA = Object.freeze({
+  helpful: 0.12,
+  harmful: -0.18,
+});
+const OUTCOME_UTILITY_SIGNAL_DELTA = Object.freeze({
+  success: 0.08,
+  failure: -0.2,
+});
 const DEFAULT_STORE_ID = "coding-agent";
 const INTERNAL_PROFILE_ID = "__store_default__";
 
@@ -298,6 +307,40 @@ function normalizeBoundedString(value, fieldName, maxLength = MAX_SIGNAL_ITEM_LE
     throw new Error(`${fieldName} must be <= ${maxLength} characters.`);
   }
   return normalized;
+}
+
+function normalizeBoundedStringLenient(value, maxLength = MAX_SIGNAL_ITEM_LENGTH) {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const normalized = value.trim();
+  if (!normalized) {
+    return null;
+  }
+  if (normalized.length <= maxLength) {
+    return normalized;
+  }
+  return normalized.slice(0, maxLength);
+}
+
+function normalizeBoundedStringArrayLenient(values, maxLength = MAX_SIGNAL_ITEM_LENGTH) {
+  if (!Array.isArray(values)) {
+    return [];
+  }
+  const seen = new Set();
+  const normalized = [];
+  for (const value of values) {
+    const next = normalizeBoundedStringLenient(value, maxLength);
+    if (!next || seen.has(next)) {
+      continue;
+    }
+    seen.add(next);
+    normalized.push(next);
+    if (normalized.length >= MAX_LIST_ITEMS) {
+      break;
+    }
+  }
+  return normalized.sort((left, right) => left.localeCompare(right));
 }
 
 function normalizeBoundedStringArray(values, fieldName, maxItems = MAX_LIST_ITEMS, maxLength = MAX_SIGNAL_ITEM_LENGTH) {
@@ -5333,28 +5376,242 @@ function runPolicyAuditExport(request) {
   };
 }
 
+function findPolicyAuditTrailByOperationEntity(state, operation, entityId) {
+  const existing = Array.isArray(state.policyAuditTrail) ? state.policyAuditTrail : [];
+  for (let index = existing.length - 1; index >= 0; index -= 1) {
+    const entry = existing[index];
+    if (entry?.operation === operation && entry?.entityId === entityId) {
+      return entry;
+    }
+  }
+  return null;
+}
+
+function resolveUtilitySignalScore(entity) {
+  const metadataScore = toFiniteNumber(entity?.metadata?.utilitySignal?.score, Number.NaN);
+  if (Number.isFinite(metadataScore)) {
+    return clamp01(metadataScore, DEFAULT_UTILITY_SIGNAL_SCORE);
+  }
+  return clamp01(entity?.utilityScore, DEFAULT_UTILITY_SIGNAL_SCORE);
+}
+
+function applyUtilitySignalToCandidatesAndRules(
+  state,
+  {
+    targetRuleIds = [],
+    targetCandidateIds = [],
+    signalId,
+    signalType,
+    source,
+    delta,
+    note,
+    actor,
+    timestamp,
+  },
+) {
+  const normalizedRuleIds = asSortedUniqueStrings(targetRuleIds);
+  const normalizedCandidateIds = asSortedUniqueStrings(targetCandidateIds);
+  const normalizedNote = normalizeBoundedString(note, "utilitySignal.note", 512) ?? "";
+  const normalizedActor = normalizeBoundedString(actor, "utilitySignal.actor", 128) ?? "human_unspecified";
+  const signalDelta = roundNumber(stableScore(delta, 0), 6);
+  const updatedCandidateIds = [];
+  const updatedRuleIds = [];
+  const candidates = Array.isArray(state.shadowCandidates) ? state.shadowCandidates : [];
+
+  for (let index = 0; index < candidates.length; index += 1) {
+    const candidate = candidates[index];
+    const matchesRule = normalizedRuleIds.includes(candidate?.ruleId);
+    const matchesCandidate = normalizedCandidateIds.includes(candidate?.candidateId);
+    if (!matchesRule && !matchesCandidate) {
+      continue;
+    }
+    const existingMetadata = isPlainObject(candidate?.metadata) ? candidate.metadata : {};
+    const existingSignal = isPlainObject(existingMetadata.utilitySignal) ? existingMetadata.utilitySignal : {};
+    const existingSignalId = normalizeBoundedString(existingSignal.signalId, "utilitySignal.signalId", 64);
+    if (existingSignalId === signalId) {
+      continue;
+    }
+    const previousScore = resolveUtilitySignalScore(candidate);
+    const nextScore = roundNumber(clamp01(previousScore + signalDelta, previousScore), 6);
+    const nextCandidate = {
+      ...candidate,
+      updatedAt: timestamp,
+      metadata: stableSortObject({
+        ...existingMetadata,
+        utilitySignal: {
+          score: nextScore,
+          previousScore: roundNumber(previousScore, 6),
+          delta: signalDelta,
+          signalId,
+          signalType,
+          source,
+          note: normalizedNote,
+          actor: normalizedActor,
+          timestamp,
+        },
+      }),
+    };
+    candidates[index] = nextCandidate;
+    updatedCandidateIds.push(nextCandidate.candidateId);
+  }
+  if (updatedCandidateIds.length > 0) {
+    state.shadowCandidates = sortByTimestampAndId(candidates, "updatedAt", "candidateId");
+  } else if (!Array.isArray(state.shadowCandidates)) {
+    state.shadowCandidates = candidates;
+  }
+
+  if (Array.isArray(state.rules)) {
+    for (let index = 0; index < state.rules.length; index += 1) {
+      const rule = state.rules[index];
+      if (!normalizedRuleIds.includes(rule?.ruleId)) {
+        continue;
+      }
+      const existingSignalId = normalizeBoundedString(rule?.utilitySignalId, "rules.utilitySignalId", 64);
+      if (existingSignalId === signalId) {
+        continue;
+      }
+      const previousScore = resolveUtilitySignalScore(rule);
+      const nextScore = roundNumber(clamp01(previousScore + signalDelta, previousScore), 6);
+      const nextRule = {
+        ...rule,
+        utilityScore: nextScore,
+        utilitySignalId: signalId,
+        utilitySignalType: signalType,
+        utilitySignalSource: source,
+        utilitySignalDelta: signalDelta,
+        utilitySignalNote: normalizedNote,
+        utilitySignalActor: normalizedActor,
+        utilitySignalUpdatedAt: timestamp,
+      };
+      state.rules[index] = nextRule;
+      updatedRuleIds.push(nextRule.ruleId);
+    }
+  }
+
+  return {
+    targetRuleIds: normalizedRuleIds,
+    targetCandidateIds: normalizedCandidateIds,
+    updatedRuleIds: asSortedUniqueStrings(updatedRuleIds),
+    updatedCandidateIds: asSortedUniqueStrings(updatedCandidateIds),
+  };
+}
+
 function runFeedback(request) {
   const { storeId, profile, input } = normalizeRequest("feedback", request);
   const state = getProfileState(storeId, profile);
-  const targetRuleId = typeof request.targetRuleId === "string" ? request.targetRuleId : "";
+  const targetRuleId = normalizeBoundedString(request.targetRuleId, "feedback.targetRuleId", 64) ?? "";
+  const targetCandidateId =
+    normalizeBoundedString(request.targetCandidateId ?? request.candidateId, "feedback.targetCandidateId", 64) ?? "";
   const signal = request.signal === "harmful" ? "harmful" : "helpful";
-  const note = typeof request.note === "string" ? request.note : "";
-  const seed = hash(stableStringify({ targetRuleId, signal, note }));
-  const feedbackId = makeId("fdbk", seed);
-
-  state.feedback.push({
+  const note = normalizeBoundedString(request.note, "feedback.note", 512) ?? "";
+  const actor = normalizeBoundedString(request.actor ?? request.userId, "feedback.actor", 128) ?? "human_unspecified";
+  const recordedAt = normalizeIsoTimestamp(
+    request.timestamp ?? request.recordedAt ?? request.createdAt,
+    "feedback.timestamp",
+    DEFAULT_VERSION_TIMESTAMP,
+  );
+  const metadata = normalizeMetadata(request.metadata);
+  const seed = hash(
+    stableStringify({
+      targetRuleId,
+      targetCandidateId,
+      signal,
+      note,
+      actor,
+      recordedAt,
+      metadata,
+    }),
+  );
+  const feedbackId = normalizeBoundedString(request.feedbackId, "feedback.feedbackId", 64) ?? makeId("fdbk", seed);
+  const nextFeedback = {
     feedbackId,
     targetRuleId,
+    targetCandidateId: targetCandidateId || null,
     signal,
     note,
-  });
+    actor,
+    recordedAt,
+    metadata,
+  };
+  const existingIndex = state.feedback.findIndex((entry) => entry?.feedbackId === feedbackId);
+  let action = "created";
+  if (existingIndex >= 0) {
+    if (stableStringify(state.feedback[existingIndex]) === stableStringify(nextFeedback)) {
+      action = "noop";
+    } else {
+      action = "updated";
+      state.feedback[existingIndex] = nextFeedback;
+    }
+  } else {
+    state.feedback.push(nextFeedback);
+  }
+  state.feedback = sortByTimestampAndId(state.feedback, "recordedAt", "feedbackId");
+  const meta = buildMeta("feedback", storeId, profile, input);
+
+  const mapping =
+    action === "noop"
+      ? {
+          targetRuleIds: targetRuleId ? [targetRuleId] : [],
+          targetCandidateIds: targetCandidateId ? [targetCandidateId] : [],
+          updatedRuleIds: [],
+          updatedCandidateIds: [],
+        }
+      : applyUtilitySignalToCandidatesAndRules(state, {
+          targetRuleIds: targetRuleId ? [targetRuleId] : [],
+          targetCandidateIds: targetCandidateId ? [targetCandidateId] : [],
+          signalId: feedbackId,
+          signalType: signal,
+          source: "feedback",
+          delta: FEEDBACK_UTILITY_SIGNAL_DELTA[signal],
+          note,
+          actor,
+          timestamp: recordedAt,
+        });
+  const mappingUpdatedCount = mapping.updatedRuleIds.length + mapping.updatedCandidateIds.length;
+  const existingAudit = findPolicyAuditTrailByOperationEntity(state, "feedback", feedbackId);
+  const auditEvent =
+    action === "noop"
+      ? null
+      : appendPolicyAuditTrail(state, {
+          operation: "feedback",
+          storeId,
+          profile,
+          entityId: feedbackId,
+          outcome: "recorded",
+          reasonCodes: [
+            `feedback_${signal}`,
+            mappingUpdatedCount > 0 ? "memory_utility_signal_update" : "memory_utility_signal_record_only",
+          ],
+          details: {
+            targetRuleId: targetRuleId || null,
+            targetCandidateId: targetCandidateId || null,
+            updatedRuleIds: mapping.updatedRuleIds,
+            updatedCandidateIds: mapping.updatedCandidateIds,
+            note,
+            actor,
+            signal,
+          },
+          timestamp: recordedAt,
+        });
 
   return {
-    ...buildMeta("feedback", storeId, profile, input),
+    ...meta,
+    action,
     feedbackId,
     targetRuleId,
+    targetCandidateId: targetCandidateId || null,
     signal,
+    note,
+    actor,
+    recordedAt,
     totalFeedback: state.feedback.length,
+    mapping,
+    policyAuditEventId: auditEvent?.auditEventId ?? existingAudit?.auditEventId ?? null,
+    observability: {
+      replaySafe: true,
+      mappedUtilitySignals: mappingUpdatedCount,
+      slo: buildSloObservability(meta.requestDigest, "feedback", 30),
+    },
   };
 }
 
@@ -5362,26 +5619,103 @@ function runOutcome(request) {
   const { storeId, profile, input } = normalizeRequest("outcome", request);
   const state = getProfileState(storeId, profile);
   const outcome = request.outcome === "failure" ? "failure" : "success";
-  const task = typeof request.task === "string" && request.task ? request.task : "unspecified-task";
-  const usedRuleIds = Array.isArray(request.usedRuleIds)
-    ? request.usedRuleIds.filter((entry) => typeof entry === "string")
-    : [];
-  const outcomeId = makeId("out", hash(stableStringify({ task, outcome, usedRuleIds })));
-
-  state.outcomes.push({
+  const task = normalizeBoundedString(request.task, "outcome.task", 128) ?? "unspecified-task";
+  const usedRuleIds = normalizeBoundedStringArray(request.usedRuleIds, "outcome.usedRuleIds");
+  const actor = normalizeBoundedString(request.actor ?? request.userId, "outcome.actor", 128) ?? "human_unspecified";
+  const recordedAt = normalizeIsoTimestamp(
+    request.timestamp ?? request.recordedAt ?? request.createdAt,
+    "outcome.timestamp",
+    DEFAULT_VERSION_TIMESTAMP,
+  );
+  const metadata = normalizeMetadata(request.metadata);
+  const outcomeId =
+    normalizeBoundedString(request.outcomeId, "outcome.outcomeId", 64) ??
+    makeId("out", hash(stableStringify({ task, outcome, usedRuleIds, actor, recordedAt, metadata })));
+  const nextOutcome = {
     outcomeId,
     task,
     outcome,
     usedRuleIds,
-  });
+    actor,
+    recordedAt,
+    metadata,
+  };
+  const existingIndex = state.outcomes.findIndex((entry) => entry?.outcomeId === outcomeId);
+  let action = "created";
+  if (existingIndex >= 0) {
+    if (stableStringify(state.outcomes[existingIndex]) === stableStringify(nextOutcome)) {
+      action = "noop";
+    } else {
+      action = "updated";
+      state.outcomes[existingIndex] = nextOutcome;
+    }
+  } else {
+    state.outcomes.push(nextOutcome);
+  }
+  state.outcomes = sortByTimestampAndId(state.outcomes, "recordedAt", "outcomeId");
+  const meta = buildMeta("outcome", storeId, profile, input);
+  const mapping =
+    action === "noop"
+      ? {
+          targetRuleIds: usedRuleIds,
+          targetCandidateIds: [],
+          updatedRuleIds: [],
+          updatedCandidateIds: [],
+        }
+      : applyUtilitySignalToCandidatesAndRules(state, {
+          targetRuleIds: usedRuleIds,
+          targetCandidateIds: [],
+          signalId: outcomeId,
+          signalType: outcome === "failure" ? "harmful" : "helpful",
+          source: `outcome_${outcome}`,
+          delta: OUTCOME_UTILITY_SIGNAL_DELTA[outcome],
+          note: task,
+          actor,
+          timestamp: recordedAt,
+        });
+  const mappingUpdatedCount = mapping.updatedRuleIds.length + mapping.updatedCandidateIds.length;
+  const existingAudit = findPolicyAuditTrailByOperationEntity(state, "outcome", outcomeId);
+  const auditEvent =
+    action === "noop"
+      ? null
+      : appendPolicyAuditTrail(state, {
+          operation: "outcome",
+          storeId,
+          profile,
+          entityId: outcomeId,
+          outcome: "recorded",
+          reasonCodes: [
+            `outcome_${outcome}`,
+            mappingUpdatedCount > 0 ? "memory_utility_signal_update" : "memory_utility_signal_record_only",
+          ],
+          details: {
+            task,
+            outcome,
+            usedRuleIds,
+            updatedRuleIds: mapping.updatedRuleIds,
+            updatedCandidateIds: mapping.updatedCandidateIds,
+            actor,
+          },
+          timestamp: recordedAt,
+        });
 
   return {
-    ...buildMeta("outcome", storeId, profile, input),
+    ...meta,
+    action,
     outcomeId,
     task,
     outcome,
     usedRuleIds,
+    actor,
+    recordedAt,
     totalOutcomes: state.outcomes.length,
+    mapping,
+    policyAuditEventId: auditEvent?.auditEventId ?? existingAudit?.auditEventId ?? null,
+    observability: {
+      replaySafe: true,
+      mappedUtilitySignals: mappingUpdatedCount,
+      slo: buildSloObservability(meta.requestDigest, "outcome", 30),
+    },
   };
 }
 
@@ -5721,8 +6055,39 @@ function normalizeState(rawState) {
     events: events.map((event) => ({ ...event })),
     eventDigests,
     rules: rules.map((rule) => ({ ...rule })),
-    feedback: feedback.map((entry) => ({ ...entry })),
-    outcomes: outcomes.map((entry) => ({ ...entry })),
+    feedback: sortByTimestampAndId(
+      feedback.map((entry) => ({
+        ...entry,
+        feedbackId:
+          normalizeBoundedStringLenient(entry?.feedbackId, 64) ??
+          makeId("fdbk", hash(stableStringify(entry))),
+        targetRuleId: normalizeBoundedStringLenient(entry?.targetRuleId, 64) ?? "",
+        targetCandidateId: normalizeBoundedStringLenient(entry?.targetCandidateId, 64),
+        signal: entry?.signal === "harmful" ? "harmful" : "helpful",
+        note: normalizeBoundedStringLenient(entry?.note, 512) ?? "",
+        actor: normalizeBoundedStringLenient(entry?.actor, 128) ?? "human_unspecified",
+        recordedAt: normalizeIsoTimestampOrFallback(entry?.recordedAt ?? entry?.timestamp, DEFAULT_VERSION_TIMESTAMP),
+        metadata: isPlainObject(entry?.metadata) ? stableSortObject(entry.metadata) : {},
+      })),
+      "recordedAt",
+      "feedbackId",
+    ),
+    outcomes: sortByTimestampAndId(
+      outcomes.map((entry) => ({
+        ...entry,
+        outcomeId:
+          normalizeBoundedStringLenient(entry?.outcomeId, 64) ??
+          makeId("out", hash(stableStringify(entry))),
+        task: normalizeBoundedStringLenient(entry?.task, 128) ?? "unspecified-task",
+        outcome: entry?.outcome === "failure" ? "failure" : "success",
+        usedRuleIds: normalizeBoundedStringArrayLenient(entry?.usedRuleIds),
+        actor: normalizeBoundedStringLenient(entry?.actor, 128) ?? "human_unspecified",
+        recordedAt: normalizeIsoTimestampOrFallback(entry?.recordedAt ?? entry?.timestamp, DEFAULT_VERSION_TIMESTAMP),
+        metadata: isPlainObject(entry?.metadata) ? stableSortObject(entry.metadata) : {},
+      })),
+      "recordedAt",
+      "outcomeId",
+    ),
     learnerProfiles: learnerProfiles.map((learnerProfile) => ({
       ...learnerProfile,
       identityRefs: Array.isArray(learnerProfile?.identityRefs)

@@ -445,6 +445,209 @@ test("ums-memory-hpl.5 /addweight alias resolves to addweight operation", () => 
   assert.equal(result.candidate.confidence, 0.65);
 });
 
+test("ums-memory-hpl.6 feedback ingestion maps helpful and harmful signals into utility metadata deterministically", () => {
+  const storeId = "tenant-hpl6-feedback";
+  const profile = "hpl6-feedback";
+  const shadow = executeOperation("shadow_write", {
+    storeId,
+    profile,
+    statement: "Feedback utility mapping should remain deterministic.",
+    confidence: 0.55,
+    sourceEventIds: ["evt-hpl6-feedback-1"],
+    evidenceEventIds: ["evt-hpl6-feedback-1"],
+    createdAt: "2026-03-02T12:00:00.000Z",
+  });
+  const candidateId = shadow.applied[0].candidateId;
+  executeOperation("replay_eval", {
+    storeId,
+    profile,
+    candidateId,
+    successRateDelta: 1,
+    evaluatedAt: "2026-03-02T12:10:00.000Z",
+  });
+  const promoted = executeOperation("promote", {
+    storeId,
+    profile,
+    candidateId,
+    promotedAt: "2026-03-02T12:20:00.000Z",
+  });
+  const targetRuleId = promoted.rule.ruleId;
+
+  const helpfulRequest = {
+    storeId,
+    profile,
+    targetRuleId,
+    targetCandidateId: candidateId,
+    signal: "helpful",
+    note: "Human reviewer confirmed the rule improved outcomes.",
+    actor: "reviewer-feedback",
+    timestamp: "2026-03-02T13:00:00.000Z",
+  };
+  const helpful = executeOperation("feedback", helpfulRequest);
+  const helpfulReplay = executeOperation("feedback", helpfulRequest);
+
+  assert.equal(helpful.action, "created");
+  assert.equal(helpfulReplay.action, "noop");
+  assert.equal(helpful.mapping.updatedRuleIds.length, 1);
+  assert.equal(helpful.mapping.updatedCandidateIds.length, 1);
+  assert.equal(helpful.policyAuditEventId, helpfulReplay.policyAuditEventId);
+
+  const harmful = executeOperation("feedback", {
+    ...helpfulRequest,
+    signal: "harmful",
+    note: "Follow-up run exposed regressions.",
+    timestamp: "2026-03-02T13:30:00.000Z",
+  });
+  assert.equal(harmful.action, "created");
+  assert.equal(harmful.mapping.updatedRuleIds.length, 1);
+  assert.equal(harmful.mapping.updatedCandidateIds.length, 1);
+
+  const snapshot = snapshotProfile(profile, storeId);
+  const storedRule = snapshot.rules.find((entry) => entry.ruleId === targetRuleId);
+  assert.ok(storedRule);
+  assert.equal(storedRule.utilitySignalSource, "feedback");
+  assert.equal(storedRule.utilitySignalType, "harmful");
+  assert.equal(storedRule.utilityScore, 0.44);
+
+  const storedCandidate = snapshot.shadowCandidates.find((entry) => entry.candidateId === candidateId);
+  assert.ok(storedCandidate);
+  assert.equal(storedCandidate.metadata.utilitySignal.source, "feedback");
+  assert.equal(storedCandidate.metadata.utilitySignal.signalType, "harmful");
+  assert.equal(storedCandidate.metadata.utilitySignal.score, 0.44);
+});
+
+test("ums-memory-hpl.6 outcome ingestion maps success/failure to utility signals with replay safety", () => {
+  const storeId = "tenant-hpl6-outcome";
+  const profile = "hpl6-outcome";
+  const shadow = executeOperation("shadow_write", {
+    storeId,
+    profile,
+    statement: "Outcome mapping should update utility consistently.",
+    confidence: 0.5,
+    sourceEventIds: ["evt-hpl6-outcome-1"],
+    evidenceEventIds: ["evt-hpl6-outcome-1"],
+  });
+  const candidateId = shadow.applied[0].candidateId;
+  executeOperation("replay_eval", {
+    storeId,
+    profile,
+    candidateId,
+    successRateDelta: 1,
+  });
+  const promoted = executeOperation("promote", {
+    storeId,
+    profile,
+    candidateId,
+  });
+  const targetRuleId = promoted.rule.ruleId;
+
+  const request = {
+    storeId,
+    profile,
+    task: "triage release incident",
+    outcome: "failure",
+    usedRuleIds: [targetRuleId],
+    actor: "oncall",
+    timestamp: "2026-03-02T14:00:00.000Z",
+  };
+  const created = executeOperation("outcome", request);
+  const replay = executeOperation("outcome", request);
+
+  assert.equal(created.action, "created");
+  assert.equal(replay.action, "noop");
+  assert.equal(created.mapping.updatedRuleIds.length, 1);
+  assert.equal(created.mapping.updatedCandidateIds.length, 1);
+  assert.equal(created.policyAuditEventId, replay.policyAuditEventId);
+  assert.deepEqual(created.usedRuleIds, [targetRuleId]);
+
+  const snapshot = snapshotProfile(profile, storeId);
+  const storedRule = snapshot.rules.find((entry) => entry.ruleId === targetRuleId);
+  assert.ok(storedRule);
+  assert.equal(storedRule.utilitySignalSource, "outcome_failure");
+  assert.equal(storedRule.utilityScore, 0.3);
+  const storedCandidate = snapshot.shadowCandidates.find((entry) => entry.candidateId === candidateId);
+  assert.ok(storedCandidate);
+  assert.equal(storedCandidate.metadata.utilitySignal.source, "outcome_failure");
+  assert.equal(storedCandidate.metadata.utilitySignal.score, 0.3);
+});
+
+test("ums-memory-hpl.6 feedback supports candidate-only utility mapping without a rule target", () => {
+  const storeId = "tenant-hpl6-candidate-only";
+  const profile = "hpl6-candidate-only";
+  const created = executeOperation("shadow_write", {
+    storeId,
+    profile,
+    statement: "Candidate-only mapping should still update utility metadata.",
+    sourceEventIds: ["evt-hpl6-candidate-only-1"],
+    evidenceEventIds: ["evt-hpl6-candidate-only-1"],
+  });
+  const candidateId = created.applied[0].candidateId;
+
+  const mapped = executeOperation("feedback", {
+    storeId,
+    profile,
+    targetCandidateId: candidateId,
+    signal: "helpful",
+    note: "No promoted rule exists yet.",
+    actor: "reviewer-candidate-only",
+    timestamp: "2026-03-02T14:30:00.000Z",
+  });
+
+  assert.equal(mapped.action, "created");
+  assert.deepEqual(mapped.mapping.updatedRuleIds, []);
+  assert.deepEqual(mapped.mapping.updatedCandidateIds, [candidateId]);
+  const snapshot = snapshotProfile(profile, storeId);
+  const storedCandidate = snapshot.shadowCandidates.find((entry) => entry.candidateId === candidateId);
+  assert.ok(storedCandidate);
+  assert.equal(storedCandidate.metadata.utilitySignal.score, 0.62);
+});
+
+test("ums-memory-hpl.6 legacy overlength feedback/outcome snapshots import leniently", () => {
+  const storeId = "tenant-hpl6-legacy-import";
+  const longNote = "n".repeat(700);
+  const longActor = "a".repeat(200);
+  const longTask = "t".repeat(400);
+  const longRuleId = "r".repeat(400);
+  importStoreSnapshot({
+    stores: {
+      [storeId]: {
+        profiles: {
+          legacy: {
+            feedback: [
+              {
+                feedbackId: "feedback-legacy-1",
+                targetRuleId: "rule-legacy-1",
+                signal: "helpful",
+                note: longNote,
+                actor: longActor,
+                recordedAt: "2026-03-02T15:00:00.000Z",
+              },
+            ],
+            outcomes: [
+              {
+                outcomeId: "outcome-legacy-1",
+                task: longTask,
+                outcome: "failure",
+                usedRuleIds: [longRuleId],
+                actor: longActor,
+                recordedAt: "2026-03-02T15:10:00.000Z",
+              },
+            ],
+          },
+        },
+      },
+    },
+  });
+
+  const snapshot = snapshotProfile("legacy", storeId);
+  assert.equal(snapshot.feedback.length, 1);
+  assert.equal(snapshot.feedback[0].note.length, 512);
+  assert.equal(snapshot.feedback[0].actor.length, 128);
+  assert.equal(snapshot.outcomes.length, 1);
+  assert.equal(snapshot.outcomes[0].task.length, 128);
+  assert.equal(snapshot.outcomes[0].usedRuleIds[0].length, 256);
+});
+
 test("context and curate operate on shared profile state", () => {
   executeOperation("ingest", {
     profile: "demo",
