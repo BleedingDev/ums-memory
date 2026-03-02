@@ -9,6 +9,7 @@ export * from "./services/clock-service.js";
 export * from "./services/config-service.js";
 export * from "./services/evaluation-service.js";
 export * from "./services/ingestion-service.js";
+export * from "./services/lifecycle-service.js";
 export * from "./services/logger-service.js";
 export * from "./services/policy-service.js";
 export * from "./services/retrieval-service.js";

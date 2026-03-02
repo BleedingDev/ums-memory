@@ -6,6 +6,10 @@ import {
   AuthorizationResponseSchema,
   EvaluationRequestSchema,
   IngestionRequestSchema,
+  MemoryLifecycleDemoteRequestSchema,
+  MemoryLifecyclePromoteRequestSchema,
+  MemoryLifecycleReplayEvalRequestSchema,
+  MemoryLifecycleShadowWriteRequestSchema,
   PolicyRequestSchema,
   RetrievalRequestSchema,
   StorageDeleteRequestSchema,
@@ -120,4 +124,49 @@ export const validateIngestionRequest = validateUnknownSync(
 export const decodeIngestionRequestEffect = decodeUnknownEffect(
   IngestionRequestSchema,
   "IngestionRequest"
+);
+
+export const decodeMemoryLifecycleShadowWriteRequest = decodeUnknownSync(
+  MemoryLifecycleShadowWriteRequestSchema
+);
+export const validateMemoryLifecycleShadowWriteRequest = validateUnknownSync(
+  MemoryLifecycleShadowWriteRequestSchema
+);
+export const decodeMemoryLifecycleShadowWriteRequestEffect =
+  decodeUnknownEffect(
+    MemoryLifecycleShadowWriteRequestSchema,
+    "MemoryLifecycleShadowWriteRequest"
+  );
+
+export const decodeMemoryLifecycleReplayEvalRequest = decodeUnknownSync(
+  MemoryLifecycleReplayEvalRequestSchema
+);
+export const validateMemoryLifecycleReplayEvalRequest = validateUnknownSync(
+  MemoryLifecycleReplayEvalRequestSchema
+);
+export const decodeMemoryLifecycleReplayEvalRequestEffect = decodeUnknownEffect(
+  MemoryLifecycleReplayEvalRequestSchema,
+  "MemoryLifecycleReplayEvalRequest"
+);
+
+export const decodeMemoryLifecyclePromoteRequest = decodeUnknownSync(
+  MemoryLifecyclePromoteRequestSchema
+);
+export const validateMemoryLifecyclePromoteRequest = validateUnknownSync(
+  MemoryLifecyclePromoteRequestSchema
+);
+export const decodeMemoryLifecyclePromoteRequestEffect = decodeUnknownEffect(
+  MemoryLifecyclePromoteRequestSchema,
+  "MemoryLifecyclePromoteRequest"
+);
+
+export const decodeMemoryLifecycleDemoteRequest = decodeUnknownSync(
+  MemoryLifecycleDemoteRequestSchema
+);
+export const validateMemoryLifecycleDemoteRequest = validateUnknownSync(
+  MemoryLifecycleDemoteRequestSchema
+);
+export const decodeMemoryLifecycleDemoteRequestEffect = decodeUnknownEffect(
+  MemoryLifecycleDemoteRequestSchema,
+  "MemoryLifecycleDemoteRequest"
 );

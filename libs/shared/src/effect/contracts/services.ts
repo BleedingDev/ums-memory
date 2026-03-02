@@ -346,6 +346,145 @@ export const IngestionResponseSchema = Schema.Struct({
   ingestedAtMillis: NonNegativeIntSchema,
 });
 
+const LifecycleEntityIdSchema = Schema.NonEmptyTrimmedString;
+const LifecycleReasonCodeSchema = Schema.NonEmptyTrimmedString;
+const LifecycleDeltaScoreSchema = Schema.Number.pipe(Schema.between(-1, 1));
+const LifecycleDeltaMillisSchema = Schema.Number.pipe(
+  Schema.int(),
+  Schema.between(-86_400_000, 86_400_000)
+);
+const LifecycleDeltaCountSchema = Schema.Number.pipe(Schema.int());
+
+export const MemoryLifecycleOperationSchema = Schema.Literal(
+  "shadow_write",
+  "replay_eval",
+  "promote",
+  "demote"
+);
+
+export const MemoryLifecycleCandidateStatusSchema = Schema.Literal(
+  "shadow",
+  "promoted",
+  "demoted"
+);
+
+export const MemoryLifecycleGateStatusSchema = Schema.Literal("pass", "fail");
+
+export const MemoryLifecyclePreconditionReasonCodeSchema = Schema.Literal(
+  "SHADOW_WRITE_REQUIRES_SOURCE_EPISODES",
+  "SHADOW_WRITE_REJECTS_PROMOTED_CANDIDATE",
+  "REPLAY_EVAL_REQUIRES_SHADOW_CANDIDATE",
+  "PROMOTE_REQUIRES_EXISTING_CANDIDATE",
+  "PROMOTE_REQUIRES_PASSING_REPLAY_EVAL",
+  "PROMOTE_REQUIRES_FRESH_EVIDENCE",
+  "DEMOTE_REQUIRES_EXISTING_CANDIDATE",
+  "DEMOTE_REQUIRES_REASON_CODES"
+);
+
+export const MemoryLifecycleQualityDeltaSchema = Schema.Struct({
+  successRateDelta: LifecycleDeltaScoreSchema,
+  reopenRateDelta: LifecycleDeltaScoreSchema,
+});
+
+export const MemoryLifecycleEfficiencyDeltaSchema = Schema.Struct({
+  latencyP95DeltaMs: LifecycleDeltaMillisSchema,
+  tokenCostDelta: Schema.Number.pipe(Schema.between(-100_000, 100_000)),
+});
+
+export const MemoryLifecycleSafetyDeltaSchema = Schema.Struct({
+  policyViolationsDelta: LifecycleDeltaCountSchema,
+  hallucinationFlagDelta: LifecycleDeltaCountSchema,
+});
+
+export const MemoryLifecycleCandidateSchema = Schema.Struct({
+  spaceId: SpaceIdSchema,
+  candidateId: LifecycleEntityIdSchema,
+  statement: Schema.NonEmptyTrimmedString,
+  scope: Schema.NonEmptyTrimmedString,
+  sourceEpisodeIds: Schema.Array(EvidenceIdSchema),
+  status: MemoryLifecycleCandidateStatusSchema,
+  expiresAtMillis: NonNegativeIntSchema,
+  latestReplayEvalId: Schema.NullOr(LifecycleEntityIdSchema),
+  promotedRuleId: Schema.NullOr(LifecycleEntityIdSchema),
+  promotedAtMillis: Schema.NullOr(NonNegativeIntSchema),
+  demotedAtMillis: Schema.NullOr(NonNegativeIntSchema),
+  updatedAtMillis: NonNegativeIntSchema,
+});
+
+export const MemoryLifecycleShadowWriteRequestSchema = Schema.Struct({
+  spaceId: SpaceIdSchema,
+  candidateId: LifecycleEntityIdSchema,
+  statement: Schema.NonEmptyTrimmedString,
+  scope: Schema.optional(Schema.NonEmptyTrimmedString),
+  sourceEpisodeIds: Schema.Array(EvidenceIdSchema),
+  expiresAtMillis: NonNegativeIntSchema,
+  writtenAtMillis: NonNegativeIntSchema,
+});
+
+export const MemoryLifecycleShadowWriteResponseSchema = Schema.Struct({
+  operation: Schema.Literal("shadow_write"),
+  requestDigest: Sha256HexSchema,
+  action: Schema.Literal("created", "updated", "noop"),
+  candidate: MemoryLifecycleCandidateSchema,
+});
+
+export const MemoryLifecycleReplayEvalRequestSchema = Schema.Struct({
+  spaceId: SpaceIdSchema,
+  candidateId: LifecycleEntityIdSchema,
+  evaluationPackId: LifecycleEntityIdSchema,
+  targetMemorySpace: SpaceIdSchema,
+  evaluatedAtMillis: NonNegativeIntSchema,
+  qualityDelta: MemoryLifecycleQualityDeltaSchema,
+  efficiencyDelta: MemoryLifecycleEfficiencyDeltaSchema,
+  safetyDelta: MemoryLifecycleSafetyDeltaSchema,
+});
+
+export const MemoryLifecycleReplayEvalResponseSchema = Schema.Struct({
+  operation: Schema.Literal("replay_eval"),
+  requestDigest: Sha256HexSchema,
+  replayEvalId: LifecycleEntityIdSchema,
+  candidateId: LifecycleEntityIdSchema,
+  evaluationPackId: LifecycleEntityIdSchema,
+  targetMemorySpace: SpaceIdSchema,
+  qualityDelta: MemoryLifecycleQualityDeltaSchema,
+  efficiencyDelta: MemoryLifecycleEfficiencyDeltaSchema,
+  safetyDelta: MemoryLifecycleSafetyDeltaSchema,
+  netValueScore: Schema.Number,
+  gateStatus: MemoryLifecycleGateStatusSchema,
+});
+
+export const MemoryLifecyclePromoteRequestSchema = Schema.Struct({
+  spaceId: SpaceIdSchema,
+  candidateId: LifecycleEntityIdSchema,
+  promotedAtMillis: NonNegativeIntSchema,
+});
+
+export const MemoryLifecyclePromoteResponseSchema = Schema.Struct({
+  operation: Schema.Literal("promote"),
+  requestDigest: Sha256HexSchema,
+  action: Schema.Literal("promoted", "noop"),
+  candidate: MemoryLifecycleCandidateSchema,
+  ruleId: Schema.NullOr(LifecycleEntityIdSchema),
+  replayEvalId: Schema.NullOr(LifecycleEntityIdSchema),
+  gateStatus: MemoryLifecycleGateStatusSchema,
+});
+
+export const MemoryLifecycleDemoteRequestSchema = Schema.Struct({
+  spaceId: SpaceIdSchema,
+  candidateId: LifecycleEntityIdSchema,
+  demotedAtMillis: NonNegativeIntSchema,
+  reasonCodes: Schema.Array(LifecycleReasonCodeSchema),
+});
+
+export const MemoryLifecycleDemoteResponseSchema = Schema.Struct({
+  operation: Schema.Literal("demote"),
+  requestDigest: Sha256HexSchema,
+  action: Schema.Literal("demoted", "noop"),
+  candidate: MemoryLifecycleCandidateSchema,
+  removedRuleId: Schema.NullOr(LifecycleEntityIdSchema),
+  reasonCodes: Schema.Array(LifecycleReasonCodeSchema),
+});
+
 export type StorageUpsertRequest = Schema.Schema.Type<
   typeof StorageUpsertRequestSchema
 >;
@@ -454,4 +593,58 @@ export type IngestionRequest = Schema.Schema.Type<
 >;
 export type IngestionResponse = Schema.Schema.Type<
   typeof IngestionResponseSchema
+>;
+export type MemoryLifecycleEntityId = Schema.Schema.Type<
+  typeof LifecycleEntityIdSchema
+>;
+export type MemoryLifecycleReasonCode = Schema.Schema.Type<
+  typeof LifecycleReasonCodeSchema
+>;
+export type MemoryLifecycleOperation = Schema.Schema.Type<
+  typeof MemoryLifecycleOperationSchema
+>;
+export type MemoryLifecycleCandidateStatus = Schema.Schema.Type<
+  typeof MemoryLifecycleCandidateStatusSchema
+>;
+export type MemoryLifecycleGateStatus = Schema.Schema.Type<
+  typeof MemoryLifecycleGateStatusSchema
+>;
+export type MemoryLifecyclePreconditionReasonCode = Schema.Schema.Type<
+  typeof MemoryLifecyclePreconditionReasonCodeSchema
+>;
+export type MemoryLifecycleQualityDelta = Schema.Schema.Type<
+  typeof MemoryLifecycleQualityDeltaSchema
+>;
+export type MemoryLifecycleEfficiencyDelta = Schema.Schema.Type<
+  typeof MemoryLifecycleEfficiencyDeltaSchema
+>;
+export type MemoryLifecycleSafetyDelta = Schema.Schema.Type<
+  typeof MemoryLifecycleSafetyDeltaSchema
+>;
+export type MemoryLifecycleCandidate = Schema.Schema.Type<
+  typeof MemoryLifecycleCandidateSchema
+>;
+export type MemoryLifecycleShadowWriteRequest = Schema.Schema.Type<
+  typeof MemoryLifecycleShadowWriteRequestSchema
+>;
+export type MemoryLifecycleShadowWriteResponse = Schema.Schema.Type<
+  typeof MemoryLifecycleShadowWriteResponseSchema
+>;
+export type MemoryLifecycleReplayEvalRequest = Schema.Schema.Type<
+  typeof MemoryLifecycleReplayEvalRequestSchema
+>;
+export type MemoryLifecycleReplayEvalResponse = Schema.Schema.Type<
+  typeof MemoryLifecycleReplayEvalResponseSchema
+>;
+export type MemoryLifecyclePromoteRequest = Schema.Schema.Type<
+  typeof MemoryLifecyclePromoteRequestSchema
+>;
+export type MemoryLifecyclePromoteResponse = Schema.Schema.Type<
+  typeof MemoryLifecyclePromoteResponseSchema
+>;
+export type MemoryLifecycleDemoteRequest = Schema.Schema.Type<
+  typeof MemoryLifecycleDemoteRequestSchema
+>;
+export type MemoryLifecycleDemoteResponse = Schema.Schema.Type<
+  typeof MemoryLifecycleDemoteResponseSchema
 >;

@@ -10,6 +10,8 @@ import {
   AuthorizationActionSchema,
   AuthorizationDecisionReasonCodeSchema,
   AuthorizationRoleSchema,
+  MemoryLifecycleOperationSchema,
+  MemoryLifecyclePreconditionReasonCodeSchema,
 } from "./contracts/services.js";
 
 const RetrievalScoreSchema = Schema.Number.pipe(Schema.between(0, 1));
@@ -89,6 +91,17 @@ export class IngestionDuplicateError extends Schema.TaggedError<IngestionDuplica
   }
 ) {}
 
+export class MemoryLifecyclePreconditionError extends Schema.TaggedError<MemoryLifecyclePreconditionError>()(
+  "MemoryLifecyclePreconditionError",
+  {
+    operation: MemoryLifecycleOperationSchema,
+    spaceId: SpaceIdSchema,
+    candidateId: Schema.NonEmptyTrimmedString,
+    reasonCode: MemoryLifecyclePreconditionReasonCodeSchema,
+    message: Schema.String,
+  }
+) {}
+
 export type StorageServiceError =
   | ContractValidationError
   | StorageConflictError
@@ -111,3 +124,7 @@ export type AuthorizationServiceError =
 export type IngestionServiceError =
   | ContractValidationError
   | IngestionDuplicateError;
+
+export type MemoryLifecycleServiceError =
+  | ContractValidationError
+  | MemoryLifecyclePreconditionError;
