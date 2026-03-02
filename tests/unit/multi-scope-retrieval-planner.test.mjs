@@ -145,6 +145,38 @@ const makePolicyService = ({ denyMemoryIds = new Set(), calls = [] } = {}) => ({
   },
 });
 
+const actionablePackTestTokenBudget = 260;
+const actionablePackTestPerCategoryLimit = 2;
+const actionablePackTestSourceLimit = 6;
+const actionablePackCategories = Object.freeze(["do", "dont", "examples", "risks"]);
+
+const estimateTokenCount = (value) => {
+  const normalized = String(value).replace(/\s+/g, " ").trim();
+  if (normalized.length === 0) {
+    return 0;
+  }
+  return normalized.split(" ").length;
+};
+
+const estimateActionablePackTokens = (actionablePack) => {
+  let tokenCount = 0;
+  for (const category of actionablePackCategories) {
+    for (const line of actionablePack[category]) {
+      tokenCount += estimateTokenCount(line);
+    }
+  }
+  for (const source of actionablePack.sources) {
+    tokenCount += estimateTokenCount(source.memoryId);
+    tokenCount += estimateTokenCount(source.excerpt);
+    tokenCount += estimateTokenCount(source.metadata.layer);
+    tokenCount += 1;
+  }
+  for (const warning of actionablePack.warnings) {
+    tokenCount += estimateTokenCount(warning);
+  }
+  return tokenCount;
+};
+
 test("ums-memory-8as.2: retrieval planner merges common/project/job_role/user scopes deterministically", async () => {
   const { retrievalServiceModule, storageServiceModule } = await loadModules();
   const db = new DatabaseSync(":memory:");
@@ -921,6 +953,142 @@ test("ums-memory-8as.2: retrieval planner enforces tenant isolation", async () =
     assert.equal(tenantAResponse.hits[0]?.memoryId, "memory-tenant-a");
     assert.equal(tenantBResponse.totalHits, 1);
     assert.equal(tenantBResponse.hits[0]?.memoryId, "memory-tenant-b");
+  } finally {
+    db.close();
+  }
+});
+
+test("ums-memory-8as.5: actionable pack compilation is deterministic across repeated retrieval", async () => {
+  const { retrievalServiceModule, storageServiceModule } = await loadModules();
+  const db = new DatabaseSync(":memory:");
+
+  try {
+    const tenantId = "tenant-actionable-pack-deterministic";
+    const storageService = storageServiceModule.makeSqliteStorageService(db);
+
+    upsertMemorySync(storageService, {
+      spaceId: tenantId,
+      memoryId: "memory-do",
+      layer: "working",
+      payload: {
+        title: "actionable deterministic token do",
+        summary: "Do: verify cursor digest before replay.",
+        updatedAtMillis: 400,
+      },
+    });
+    upsertMemorySync(storageService, {
+      spaceId: tenantId,
+      memoryId: "memory-dont",
+      layer: "working",
+      payload: {
+        title: "actionable deterministic token dont",
+        summary: "Do not bypass policy evaluation on retrieval hits.",
+        updatedAtMillis: 300,
+      },
+    });
+    upsertMemorySync(storageService, {
+      spaceId: tenantId,
+      memoryId: "memory-example",
+      layer: "episodic",
+      payload: {
+        title: "actionable deterministic token example",
+        summary: "Example: replay the same request twice and compare the cursor output.",
+        updatedAtMillis: 200,
+      },
+    });
+    upsertMemorySync(storageService, {
+      spaceId: tenantId,
+      memoryId: "memory-risk",
+      layer: "working",
+      payload: {
+        title: "actionable deterministic token risk",
+        summary: "Risk: stale evidence can skew retrieval ranking decisions.",
+        updatedAtMillis: 100,
+      },
+    });
+
+    const retrievalService = retrievalServiceModule.makeRetrievalService(
+      storageService,
+      makePolicyService(),
+    );
+    const request = {
+      spaceId: tenantId,
+      query: "actionable deterministic token",
+      limit: 10,
+    };
+
+    const firstResponse = await Effect.runPromise(retrievalService.retrieve(request));
+    const secondResponse = await Effect.runPromise(retrievalService.retrieve(request));
+
+    assert.deepEqual(firstResponse.actionablePack, secondResponse.actionablePack);
+    assert.ok(firstResponse.actionablePack);
+    assert.deepEqual(firstResponse.actionablePack.do, ["Do: verify cursor digest before replay."]);
+    assert.deepEqual(firstResponse.actionablePack.dont, [
+      "Do not bypass policy evaluation on retrieval hits.",
+    ]);
+    assert.deepEqual(firstResponse.actionablePack.examples, [
+      "Example: replay the same request twice and compare the cursor output.",
+    ]);
+    assert.deepEqual(firstResponse.actionablePack.risks, [
+      "Risk: stale evidence can skew retrieval ranking decisions.",
+    ]);
+    assert.deepEqual(firstResponse.actionablePack.warnings, []);
+    assert.deepEqual(
+      firstResponse.actionablePack.sources.map((source) => source.memoryId),
+      ["memory-do", "memory-dont", "memory-example", "memory-risk"],
+    );
+  } finally {
+    db.close();
+  }
+});
+
+test("ums-memory-8as.5: actionable pack enforces token budget and category/source bounds", async () => {
+  const { retrievalServiceModule, storageServiceModule } = await loadModules();
+  const db = new DatabaseSync(":memory:");
+
+  try {
+    const tenantId = "tenant-actionable-pack-bounded";
+    const storageService = storageServiceModule.makeSqliteStorageService(db);
+    const categoryPrefixes = Object.freeze(["Do:", "Do not:", "Example:", "Risk:"]);
+    const repeatedBody =
+      "deterministic retrieval budget validation requires explicit truncation guards and stable source attribution";
+
+    for (let index = 0; index < 20; index += 1) {
+      const prefix = categoryPrefixes[index % categoryPrefixes.length];
+      upsertMemorySync(storageService, {
+        spaceId: tenantId,
+        memoryId: `memory-bounded-${String(index + 1).padStart(2, "0")}`,
+        layer: index % categoryPrefixes.length === 2 ? "episodic" : "working",
+        payload: {
+          title: `actionable bounded token ${index + 1}`,
+          summary: `${prefix} case ${index + 1} ${repeatedBody} ${repeatedBody} ${repeatedBody}`,
+          updatedAtMillis: 2_000 - index,
+        },
+      });
+    }
+
+    const retrievalService = retrievalServiceModule.makeRetrievalService(
+      storageService,
+      makePolicyService(),
+    );
+    const response = await Effect.runPromise(
+      retrievalService.retrieve({
+        spaceId: tenantId,
+        query: "actionable bounded token",
+        limit: 20,
+      }),
+    );
+
+    assert.ok(response.actionablePack);
+    for (const category of actionablePackCategories) {
+      assert.ok(response.actionablePack[category].length <= actionablePackTestPerCategoryLimit);
+    }
+    assert.ok(response.actionablePack.sources.length <= actionablePackTestSourceLimit);
+    assert.ok(estimateActionablePackTokens(response.actionablePack) <= actionablePackTestTokenBudget);
+    assert.ok(response.actionablePack.sources.some((source) => source.excerpt.endsWith("...")));
+    assert.ok(response.actionablePack.warnings.some((warning) => /token budget/i.test(warning)));
+    assert.ok(response.actionablePack.warnings.some((warning) => /category limits/i.test(warning)));
+    assert.ok(response.actionablePack.warnings.some((warning) => /source limit/i.test(warning)));
   } finally {
     db.close();
   }

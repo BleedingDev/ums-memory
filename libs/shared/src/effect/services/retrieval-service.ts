@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { Context, Effect, Layer } from "effect";
 
 import type {
+  ActionableRetrievalPack,
   PolicyRequest,
   RetrievalHit,
   RetrievalPolicyInput,
@@ -44,6 +45,43 @@ const defaultPolicyAction = "memory.retrieve";
 const emptyPolicyEvidenceIds = [] as unknown as PolicyRequest["evidenceIds"];
 const emptyPolicyContext = {} as unknown as PolicyRequest["context"];
 const neutralSignalScore = 0.5;
+const actionablePackTokenBudget = 260;
+const actionablePackWarningTokenBudget = 40;
+const actionablePackContentTokenBudget =
+  actionablePackTokenBudget - actionablePackWarningTokenBudget;
+const actionablePackPerCategoryLimit = 2;
+const actionablePackSourceLimit = 6;
+const actionablePackWarningLimit = 4;
+const actionablePackLineTokenLimit = 18;
+const actionablePackSourceExcerptTokenLimit = 14;
+const actionablePackWarningTokenLimit = 18;
+const actionablePackTextCharacterLimit = 200;
+
+type ActionablePackCategory = "do" | "dont" | "examples" | "risks";
+type ActionablePackSource = ActionableRetrievalPack["sources"][number];
+
+interface MutableActionablePack {
+  readonly do: string[];
+  readonly dont: string[];
+  readonly examples: string[];
+  readonly risks: string[];
+  readonly sources: ActionablePackSource[];
+  readonly warnings: string[];
+}
+
+interface BoundedActionableText {
+  readonly value: string | null;
+  readonly tokenCount: number;
+  readonly truncated: boolean;
+}
+
+interface ActionablePackCompilerStats {
+  readonly categoryLimitDrops: Record<ActionablePackCategory, number>;
+  tokenBudgetDrops: number;
+  sourceLimitDrops: number;
+  lineTruncations: number;
+  sourceExcerptTruncations: number;
+}
 
 interface NormalizedRankingWeights {
   readonly relevance: number;
@@ -1466,6 +1504,259 @@ const toRetrievalHit = (hit: PlannedHit): RetrievalHit => {
   };
 };
 
+const actionablePackCategoryOrder: readonly ActionablePackCategory[] = Object.freeze([
+  "do",
+  "dont",
+  "examples",
+  "risks",
+]);
+
+const dontCategoryPattern = /(?:^|\b)(?:do\s+not|don't|never|avoid|stop|skip)\b/i;
+const examplesCategoryPattern = /(?:^|\b)(?:example|for\s+example|e\.g\.|sample|scenario)\b/i;
+const risksCategoryPattern = /(?:^|\b)(?:risk|warning|caution|hazard|pitfall|failure)\b/i;
+const doCategoryPattern =
+  /(?:^|\b)(?:do|ensure|prefer|use|always|verify|confirm|check|apply|document|test)\b/i;
+
+const normalizeWhitespace = (value: string): string => value.replace(/\s+/g, " ").trim();
+
+const estimateTokenCount = (value: string): number => {
+  const normalized = normalizeWhitespace(value);
+  if (normalized.length === 0) {
+    return 0;
+  }
+  return normalized.split(" ").length;
+};
+
+const toBoundedActionableText = (
+  value: string,
+  tokenLimit: number,
+  characterLimit: number,
+): BoundedActionableText => {
+  const withoutListPrefix = normalizeWhitespace(value)
+    .replace(/^[-*0-9.)]+\s+/, "")
+    .trim();
+  if (withoutListPrefix.length === 0) {
+    return {
+      value: null,
+      tokenCount: 0,
+      truncated: false,
+    };
+  }
+
+  let boundedText = withoutListPrefix;
+  let truncated = false;
+  if (boundedText.length > characterLimit) {
+    boundedText = `${boundedText.slice(0, Math.max(0, characterLimit - 3)).trimEnd()}...`;
+    truncated = true;
+  }
+  const tokens = boundedText.split(" ");
+  if (tokens.length > tokenLimit) {
+    boundedText = `${tokens.slice(0, tokenLimit).join(" ")}...`;
+    truncated = true;
+  }
+  const normalized = normalizeWhitespace(boundedText);
+  if (normalized.length === 0) {
+    return {
+      value: null,
+      tokenCount: 0,
+      truncated,
+    };
+  }
+  return {
+    value: normalized,
+    tokenCount: estimateTokenCount(normalized),
+    truncated,
+  };
+};
+
+const routeActionableCategory = (
+  line: string,
+  layer: RetrievalHit["layer"],
+): ActionablePackCategory => {
+  if (dontCategoryPattern.test(line)) {
+    return "dont";
+  }
+  if (examplesCategoryPattern.test(line)) {
+    return "examples";
+  }
+  if (risksCategoryPattern.test(line)) {
+    return "risks";
+  }
+  if (doCategoryPattern.test(line)) {
+    return "do";
+  }
+  if (layer === "episodic") {
+    return "examples";
+  }
+  return "do";
+};
+
+const createCategoryCounter = (): Record<ActionablePackCategory, number> => ({
+  do: 0,
+  dont: 0,
+  examples: 0,
+  risks: 0,
+});
+
+const createMutableActionablePack = (): MutableActionablePack => ({
+  do: [],
+  dont: [],
+  examples: [],
+  risks: [],
+  sources: [],
+  warnings: [],
+});
+
+const estimateActionableSourceTokens = (source: ActionablePackSource): number =>
+  estimateTokenCount(source.memoryId) +
+  estimateTokenCount(source.excerpt) +
+  estimateTokenCount(source.metadata.layer) +
+  1;
+
+const toActionablePackWarnings = (stats: ActionablePackCompilerStats): readonly string[] => {
+  const warnings: string[] = [];
+  if (stats.tokenBudgetDrops > 0) {
+    warnings.push(
+      `Actionable pack token budget (${actionablePackTokenBudget}) reached; additional content was omitted.`,
+    );
+  }
+  const cappedCategories = actionablePackCategoryOrder.filter(
+    (category) => stats.categoryLimitDrops[category] > 0,
+  );
+  if (cappedCategories.length > 0) {
+    warnings.push(
+      `Actionable pack category limits (${actionablePackPerCategoryLimit}) reached for ${cappedCategories.join(", ")}.`,
+    );
+  }
+  if (stats.sourceLimitDrops > 0) {
+    warnings.push(
+      `Actionable pack source limit (${actionablePackSourceLimit}) reached; additional sources were omitted.`,
+    );
+  }
+  if (stats.lineTruncations > 0 || stats.sourceExcerptTruncations > 0) {
+    warnings.push("Long excerpts were shortened to keep actionable output bounded.");
+  }
+  return Object.freeze(warnings);
+};
+
+const finalizeActionablePack = (pack: MutableActionablePack): ActionableRetrievalPack => ({
+  do: Object.freeze([...pack.do]),
+  dont: Object.freeze([...pack.dont]),
+  examples: Object.freeze([...pack.examples]),
+  risks: Object.freeze([...pack.risks]),
+  sources: Object.freeze(
+    pack.sources.map((source) => ({
+      memoryId: source.memoryId,
+      excerpt: source.excerpt,
+      metadata: {
+        score: source.metadata.score,
+        layer: source.metadata.layer,
+      },
+    })),
+  ),
+  warnings: Object.freeze([...pack.warnings]),
+});
+
+const compileActionablePack = (hits: readonly RetrievalHit[]): ActionableRetrievalPack => {
+  const pack = createMutableActionablePack();
+  const seenLineKeys = new Set<string>();
+  const stats: ActionablePackCompilerStats = {
+    categoryLimitDrops: createCategoryCounter(),
+    tokenBudgetDrops: 0,
+    sourceLimitDrops: 0,
+    lineTruncations: 0,
+    sourceExcerptTruncations: 0,
+  };
+  let contentTokens = 0;
+
+  for (const hit of hits) {
+    const boundedLine = toBoundedActionableText(
+      hit.excerpt,
+      actionablePackLineTokenLimit,
+      actionablePackTextCharacterLimit,
+    );
+    if (boundedLine.value !== null) {
+      const category = routeActionableCategory(boundedLine.value, hit.layer);
+      if (pack[category].length >= actionablePackPerCategoryLimit) {
+        stats.categoryLimitDrops[category] += 1;
+      } else {
+        const lineKey = `${category}:${boundedLine.value.toLowerCase()}`;
+        if (!seenLineKeys.has(lineKey)) {
+          const nextContentTokenCount = contentTokens + boundedLine.tokenCount;
+          if (nextContentTokenCount <= actionablePackContentTokenBudget) {
+            pack[category].push(boundedLine.value);
+            seenLineKeys.add(lineKey);
+            contentTokens = nextContentTokenCount;
+            if (boundedLine.truncated) {
+              stats.lineTruncations += 1;
+            }
+          } else {
+            stats.tokenBudgetDrops += 1;
+          }
+        }
+      }
+    }
+
+    if (pack.sources.length >= actionablePackSourceLimit) {
+      stats.sourceLimitDrops += 1;
+      continue;
+    }
+    const boundedSourceExcerpt = toBoundedActionableText(
+      hit.excerpt,
+      actionablePackSourceExcerptTokenLimit,
+      actionablePackTextCharacterLimit,
+    );
+    if (boundedSourceExcerpt.value === null) {
+      continue;
+    }
+    const source: ActionablePackSource = {
+      memoryId: hit.memoryId,
+      excerpt: boundedSourceExcerpt.value,
+      metadata: {
+        score: hit.score,
+        layer: hit.layer,
+      },
+    };
+    const nextContentTokenCount = contentTokens + estimateActionableSourceTokens(source);
+    if (nextContentTokenCount > actionablePackContentTokenBudget) {
+      stats.tokenBudgetDrops += 1;
+      continue;
+    }
+    pack.sources.push(source);
+    contentTokens = nextContentTokenCount;
+    if (boundedSourceExcerpt.truncated) {
+      stats.sourceExcerptTruncations += 1;
+    }
+  }
+
+  const warningCandidates = toActionablePackWarnings(stats);
+  let warningTokens = 0;
+  for (const warningCandidate of warningCandidates) {
+    if (pack.warnings.length >= actionablePackWarningLimit) {
+      break;
+    }
+    const boundedWarning = toBoundedActionableText(
+      warningCandidate,
+      actionablePackWarningTokenLimit,
+      actionablePackTextCharacterLimit,
+    );
+    if (boundedWarning.value === null) {
+      continue;
+    }
+    const nextWarningTokenCount = warningTokens + boundedWarning.tokenCount;
+    if (nextWarningTokenCount > actionablePackWarningTokenBudget) {
+      break;
+    }
+    if (contentTokens + nextWarningTokenCount > actionablePackTokenBudget) {
+      break;
+    }
+    pack.warnings.push(boundedWarning.value);
+    warningTokens = nextWarningTokenCount;
+  }
+
+  return finalizeActionablePack(pack);
+};
+
 const paginateHits = (
   normalized: NormalizedRetrievalRequest,
   hits: readonly PlannedHit[],
@@ -1482,11 +1773,10 @@ const paginateHits = (
   const boundedOffset = Math.min(offset, totalHits);
   const limit = normalized.request.limit;
   const pageHits =
-    limit === 0
-      ? []
-      : hits.slice(boundedOffset, Math.min(totalHits, boundedOffset + limit)).map(toRetrievalHit);
+    limit === 0 ? [] : hits.slice(boundedOffset, Math.min(totalHits, boundedOffset + limit));
+  const retrievalHits = pageHits.map(toRetrievalHit);
 
-  const nextOffset = boundedOffset + pageHits.length;
+  const nextOffset = boundedOffset + retrievalHits.length;
   const nextCursor =
     limit > 0 && nextOffset < totalHits
       ? encodeCursor({
@@ -1497,9 +1787,10 @@ const paginateHits = (
       : null;
 
   return {
-    hits: pageHits,
+    hits: retrievalHits,
     totalHits,
     nextCursor,
+    actionablePack: compileActionablePack(retrievalHits),
   };
 };
 
@@ -1549,6 +1840,7 @@ export const makeNoopRetrievalService = (): RetrievalService => ({
       hits: [],
       totalHits: 0,
       nextCursor: null,
+      actionablePack: compileActionablePack([]),
     }),
 });
 
