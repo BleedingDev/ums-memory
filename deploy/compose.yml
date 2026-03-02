@@ -1,0 +1,82 @@
+name: ums-memory
+
+services:
+  api:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+      target: api
+    image: ums-memory-api:local
+    init: true
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      UMS_API_HOST: 0.0.0.0
+      UMS_API_PORT: "8787"
+      UMS_STATE_FILE: /var/lib/ums/.ums-state.json
+      UMS_STATE_LOCK_TIMEOUT_MS: "8000"
+      UMS_STATE_LOCK_RETRY_MS: "25"
+    ports:
+      - "8787:8787"
+    volumes:
+      - ums_shared_state:/var/lib/ums
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "const http=require('node:http');const req=http.get('http://127.0.0.1:8787/',(res)=>process.exit(res.statusCode===200?0:1));req.on('error',()=>process.exit(1));",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  worker:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+      target: worker
+    image: ums-memory-worker:local
+    init: true
+    restart: unless-stopped
+    depends_on:
+      - api
+    environment:
+      NODE_ENV: production
+      UMS_STATE_FILE: /var/lib/ums/.ums-state.json
+      UMS_WORKER_STATE_FILE: /var/lib/ums/.ums-state.json
+      UMS_API_HOST: api
+      UMS_API_PORT: "8787"
+      UMS_API_HEALTH_PATH: /
+      UMS_API_READY_TIMEOUT_MS: "90000"
+      UMS_WORKER_INTERVAL_MS: "30000"
+      UMS_WORKER_RESTART_LIMIT: "3"
+      UMS_WORKER_RESTART_DELAY_MS: "250"
+      UMS_WORKER_REPLAY_EVAL_MAX_PER_PROFILE: "5"
+      UMS_WORKER_MAX_ERROR_ENTRIES: "25"
+    command:
+      - /bin/sh
+      - -ec
+      - |
+        node -e "const http=require('node:http');const host=process.env.UMS_API_HOST||'api';const port=Number(process.env.UMS_API_PORT||8787);const path=process.env.UMS_API_HEALTH_PATH||'/';const timeoutMs=Number(process.env.UMS_API_READY_TIMEOUT_MS||90000);const started=Date.now();const sleep=(ms)=>new Promise((resolve)=>setTimeout(resolve,ms));(async()=>{for(;;){const ready=await new Promise((resolve)=>{const req=http.get({host,port,path},(res)=>{res.resume();resolve(res.statusCode===200);});req.on('error',()=>resolve(false));});if(ready){break;}if(Date.now()-started>timeoutMs){console.error('worker startup timed out waiting for api readiness');process.exit(1);}await sleep(1000);}})().catch(()=>process.exit(1));"
+        exec node apps/ums/src/index.mjs worker
+    volumes:
+      - ums_shared_state:/var/lib/ums
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "const fs=require('node:fs');const hasWorkerProcess=fs.readdirSync('/proc').filter((entry)=>/^\\d+$/.test(entry)).some((pid)=>{try{const cmdline=fs.readFileSync('/proc/'+pid+'/cmdline','utf8');return cmdline.includes('apps/ums/src/index.mjs')&&cmdline.includes('worker');}catch{return false;}});if(!hasWorkerProcess){process.exit(1);}fs.accessSync('/var/lib/ums',fs.constants.R_OK|fs.constants.W_OK);",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 100s
+
+volumes:
+  ums_shared_state:
+    driver: local
