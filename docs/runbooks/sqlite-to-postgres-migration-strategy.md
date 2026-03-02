@@ -182,5 +182,6 @@ Before adapter cutover:
 ## Immediate Next Beads
 
 1. `ums-memory-dd2.2`: implement pluggable storage adapter contracts (pre-req for runtime routing).
-2. Add Postgres schema + migration parity test suite mirroring SQLite migration tests.
-3. Add dual-run telemetry fields (request hash, backend result digest, mismatch category) to storage operation logs.
+2. `ums-memory-dd2.5`: define enterprise identity lifecycle and role sync contracts in [Enterprise SSO/SCIM Integration Plan](./enterprise-sso-scim-integration-plan.md).
+3. Add Postgres schema + migration parity test suite mirroring SQLite migration tests.
+4. Add dual-run telemetry fields (request hash, backend result digest, mismatch category) to storage operation logs.
