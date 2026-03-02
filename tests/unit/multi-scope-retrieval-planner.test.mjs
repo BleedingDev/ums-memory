@@ -434,6 +434,64 @@ test("ums-memory-8as.2: cursor is rejected when policy context changes", async (
   }
 });
 
+test("ums-memory-8as.3: cursor is rejected when ranking weights change", async () => {
+  const { retrievalServiceModule, storageServiceModule } = await loadModules();
+  const db = new DatabaseSync(":memory:");
+
+  try {
+    const tenantId = "tenant-cursor-ranking";
+    const storageService = storageServiceModule.makeSqliteStorageService(db);
+    for (let index = 1; index <= 3; index += 1) {
+      upsertMemorySync(storageService, {
+        spaceId: tenantId,
+        memoryId: `memory-ranking-${index}`,
+        layer: "working",
+        payload: {
+          title: `ranking cursor token ${index}`,
+          updatedAtMillis: 200 + index,
+        },
+      });
+    }
+
+    const retrievalService = retrievalServiceModule.makeRetrievalService(
+      storageService,
+      makePolicyService(),
+    );
+    const firstPage = await Effect.runPromise(
+      retrievalService.retrieve({
+        spaceId: tenantId,
+        query: "ranking cursor token",
+        limit: 1,
+      }),
+    );
+    assert.ok(firstPage.nextCursor);
+
+    await assert.rejects(
+      Effect.runPromise(
+        retrievalService.retrieve({
+          spaceId: tenantId,
+          query: "ranking cursor token",
+          limit: 1,
+          cursor: firstPage.nextCursor,
+          ranking_weights: {
+            decay: 1,
+          },
+        }),
+      ),
+      (error) => {
+        const errorMessage =
+          typeof error?.message === "string" && error.message.length > 0
+            ? error.message
+            : String(error);
+        assert.match(errorMessage, /digest/i);
+        return true;
+      },
+    );
+  } finally {
+    db.close();
+  }
+});
+
 test("ums-memory-8as.2: partial scope selectors include descendant scopes", async () => {
   const { retrievalServiceModule, storageServiceModule } = await loadModules();
   const db = new DatabaseSync(":memory:");
@@ -522,6 +580,102 @@ test("ums-memory-8as.2: partial scope selectors include descendant scopes", asyn
       roleScoped.hits.map((hit) => hit.memoryId),
       ["memory-role-user-child", "memory-role-parent"],
     );
+  } finally {
+    db.close();
+  }
+});
+
+test("ums-memory-8as.3: ranking combines evidence, decay, human weight, and utility with request weight overrides", async () => {
+  const { retrievalServiceModule, storageServiceModule } = await loadModules();
+  const db = new DatabaseSync(":memory:");
+
+  try {
+    const tenantId = "tenant-ranking-signals";
+    const storageService = storageServiceModule.makeSqliteStorageService(db);
+
+    upsertMemorySync(storageService, {
+      spaceId: tenantId,
+      memoryId: "memory-weighted-signals",
+      layer: "working",
+      payload: {
+        title: "ranking signal token weighted profile",
+        updatedAtMillis: 100,
+        expiresAtMillis: 1_000,
+        evidencePointers: [
+          { sourceRef: "event://signal-weighted-1", relationKind: "supports" },
+          { sourceRef: "event://signal-weighted-2", relationKind: "supports" },
+          { sourceRef: "event://signal-weighted-3", relationKind: "supports" },
+        ],
+        humanWeight: 1,
+        utilityScore: 1,
+      },
+    });
+    upsertMemorySync(storageService, {
+      spaceId: tenantId,
+      memoryId: "memory-fresh-low-signals",
+      layer: "working",
+      payload: {
+        title: "ranking signal token fresh profile",
+        updatedAtMillis: 900,
+        expiresAtMillis: 901,
+        humanWeight: 0,
+        utilityScore: 0,
+      },
+    });
+
+    const retrievalService = retrievalServiceModule.makeRetrievalService(
+      storageService,
+      makePolicyService(),
+    );
+
+    const defaultWeightedResponse = await Effect.runPromise(
+      retrievalService.retrieve({
+        spaceId: tenantId,
+        query: "ranking signal token",
+        limit: 10,
+      }),
+    );
+    assert.deepEqual(
+      defaultWeightedResponse.hits.map((hit) => hit.memoryId),
+      ["memory-weighted-signals", "memory-fresh-low-signals"],
+    );
+    assert.ok(defaultWeightedResponse.hits.every((hit) => hit.score >= 0 && hit.score <= 1));
+
+    const decayWeightedResponse = await Effect.runPromise(
+      retrievalService.retrieve({
+        spaceId: tenantId,
+        query: "ranking signal token",
+        limit: 10,
+        ranking_weights: {
+          relevance: 0.15,
+          evidence_strength: 0,
+          decay: 0.85,
+          human_weight: 0,
+          utility_score: 0,
+        },
+      }),
+    );
+    assert.deepEqual(
+      decayWeightedResponse.hits.map((hit) => hit.memoryId),
+      ["memory-fresh-low-signals", "memory-weighted-signals"],
+    );
+    assert.ok(decayWeightedResponse.hits.every((hit) => hit.score >= 0 && hit.score <= 1));
+
+    const decayOnlyResponse = await Effect.runPromise(
+      retrievalService.retrieve({
+        spaceId: tenantId,
+        query: "ranking signal token",
+        limit: 10,
+        ranking_weights: {
+          decay: 1,
+        },
+      }),
+    );
+    assert.deepEqual(
+      decayOnlyResponse.hits.map((hit) => hit.memoryId),
+      ["memory-fresh-low-signals", "memory-weighted-signals"],
+    );
+    assert.ok(decayOnlyResponse.hits.every((hit) => hit.score >= 0 && hit.score <= 1));
   } finally {
     db.close();
   }

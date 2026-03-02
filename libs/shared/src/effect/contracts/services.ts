@@ -94,6 +94,20 @@ export const RetrievalPolicyInputSchema = Schema.Struct({
   context: Schema.optional(PolicyContextSchema),
 });
 
+const RetrievalRankingWeightSchema = Schema.Number.pipe(Schema.between(0, 1));
+
+export const RetrievalRankingWeightsSchema = Schema.Struct({
+  relevance: Schema.optional(RetrievalRankingWeightSchema),
+  evidenceStrength: Schema.optional(RetrievalRankingWeightSchema),
+  evidence_strength: Schema.optional(RetrievalRankingWeightSchema),
+  decay: Schema.optional(RetrievalRankingWeightSchema),
+  humanWeight: Schema.optional(RetrievalRankingWeightSchema),
+  human_weight: Schema.optional(RetrievalRankingWeightSchema),
+  utility: Schema.optional(RetrievalRankingWeightSchema),
+  utilityScore: Schema.optional(RetrievalRankingWeightSchema),
+  utility_score: Schema.optional(RetrievalRankingWeightSchema),
+});
+
 export const RetrievalRequestSchema = Schema.Struct({
   spaceId: SpaceIdSchema,
   query: Schema.String,
@@ -109,6 +123,8 @@ export const RetrievalRequestSchema = Schema.Struct({
   action: Schema.optional(Schema.String),
   evidenceIds: Schema.optional(Schema.Array(EvidenceIdSchema)),
   policyContext: Schema.optional(PolicyContextSchema),
+  rankingWeights: Schema.optional(RetrievalRankingWeightsSchema),
+  ranking_weights: Schema.optional(RetrievalRankingWeightsSchema),
 });
 
 export const RetrievalHitSchema = Schema.Struct({
@@ -220,6 +236,7 @@ export type StorageSnapshotImportResponse = Schema.Schema.Type<
 >;
 export type RetrievalScopeSelectors = Schema.Schema.Type<typeof RetrievalScopeSelectorsSchema>;
 export type RetrievalPolicyInput = Schema.Schema.Type<typeof RetrievalPolicyInputSchema>;
+export type RetrievalRankingWeights = Schema.Schema.Type<typeof RetrievalRankingWeightsSchema>;
 export type RetrievalRequest = Schema.Schema.Type<typeof RetrievalRequestSchema>;
 export type RetrievalHit = Schema.Schema.Type<typeof RetrievalHitSchema>;
 export type ActionableRetrievalPackSourceMetadata = Schema.Schema.Type<

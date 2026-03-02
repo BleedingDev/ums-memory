@@ -5,6 +5,7 @@ import type {
   PolicyRequest,
   RetrievalHit,
   RetrievalPolicyInput,
+  RetrievalRankingWeights,
   RetrievalRequest,
   RetrievalResponse,
   RetrievalScopeSelectors,
@@ -21,6 +22,7 @@ import type { StorageService } from "./storage-service.js";
 export type {
   RetrievalHit,
   RetrievalPolicyInput,
+  RetrievalRankingWeights,
   RetrievalRequest,
   RetrievalResponse,
   RetrievalScopeSelectors,
@@ -41,6 +43,23 @@ const defaultPolicyActorId = "retrieval-system" as PolicyRequest["actorId"];
 const defaultPolicyAction = "memory.retrieve";
 const emptyPolicyEvidenceIds = [] as unknown as PolicyRequest["evidenceIds"];
 const emptyPolicyContext = {} as unknown as PolicyRequest["context"];
+const neutralSignalScore = 0.5;
+
+interface NormalizedRankingWeights {
+  readonly relevance: number;
+  readonly evidenceStrength: number;
+  readonly decay: number;
+  readonly humanWeight: number;
+  readonly utility: number;
+}
+
+const defaultRankingWeights: NormalizedRankingWeights = Object.freeze({
+  relevance: 0.6,
+  evidenceStrength: 0.1,
+  decay: 0.15,
+  humanWeight: 0.075,
+  utility: 0.075,
+});
 
 type ScopeLevel = "common" | "project" | "job_role" | "user";
 
@@ -93,8 +112,29 @@ interface NormalizedRetrievalRequest {
   readonly request: RetrievalRequest;
   readonly selectors: NormalizedScopeSelectors;
   readonly policy: NormalizedPolicyInput;
+  readonly rankingWeights: NormalizedRankingWeights;
   readonly queryNormalized: string;
   readonly queryTokens: readonly string[];
+}
+
+interface RankingSignals {
+  readonly relevance: number;
+  readonly evidenceStrength: number;
+  readonly decay: number;
+  readonly humanWeight: number;
+  readonly utility: number;
+}
+
+interface PlannedHitCandidate {
+  readonly memoryId: RetrievalHit["memoryId"];
+  readonly layer: RetrievalHit["layer"];
+  readonly excerpt: string;
+  readonly scopeId: string;
+  readonly scopeLevel: ScopeLevel;
+  readonly scopeRank: number;
+  readonly updatedAtMillis: number;
+  readonly expiresAtMillis: number | null;
+  readonly rankingSignals: Omit<RankingSignals, "decay">;
 }
 
 interface CursorPayload {
@@ -343,36 +383,51 @@ const tokenize = (text: string): readonly string[] => {
   return Object.freeze([...new Set(matches)]);
 };
 
-const toExcerpt = (title: string, payloadJson: string): string => {
-  let excerpt = title;
+const clampScore = (value: number): number =>
+  Math.min(1, Math.max(0, Math.round(value * 1_000_000) / 1_000_000));
+
+const toOptionalRecord = (value: unknown): Record<string, unknown> | null =>
+  isRecord(value) ? value : null;
+
+const readRecordValue = (
+  record: Record<string, unknown> | null,
+  keys: readonly string[],
+): unknown => {
+  if (record === null) {
+    return undefined;
+  }
+  for (const key of keys) {
+    if (Object.hasOwn(record, key)) {
+      return record[key];
+    }
+  }
+  return undefined;
+};
+
+const parsePayloadRecord = (payloadJson: string): Record<string, unknown> | null => {
   try {
-    const payload: unknown = JSON.parse(payloadJson);
-    if (isRecord(payload)) {
-      const preferredKeys = [
-        "summary",
-        "content",
-        "text",
-        "description",
-        "note",
-        "details",
-      ] as const;
-      for (const key of preferredKeys) {
-        const value = payload[key];
-        if (typeof value === "string" && value.trim().length > 0) {
-          excerpt = value.trim();
-          break;
-        }
+    return toOptionalRecord(JSON.parse(payloadJson));
+  } catch {
+    return null;
+  }
+};
+
+const toExcerpt = (title: string, payloadRecord: Record<string, unknown> | null): string => {
+  let excerpt = title;
+
+  if (payloadRecord !== null) {
+    const preferredKeys = ["summary", "content", "text", "description", "note", "details"] as const;
+    for (const key of preferredKeys) {
+      const value = payloadRecord[key];
+      if (typeof value === "string" && value.trim().length > 0) {
+        excerpt = value.trim();
+        break;
       }
     }
-  } catch {
-    excerpt = title;
   }
 
   return excerpt.length > 220 ? `${excerpt.slice(0, 217)}...` : excerpt;
 };
-
-const clampScore = (value: number): number =>
-  Math.min(1, Math.max(0, Math.round(value * 1_000_000) / 1_000_000));
 
 const toScopeRank = (scopeLevel: ScopeLevel): number => {
   switch (scopeLevel) {
@@ -389,13 +444,148 @@ const toScopeRank = (scopeLevel: ScopeLevel): number => {
   }
 };
 
-const computeScore = (
+const toNormalizedRankingWeights = (
+  weights: NormalizedRankingWeights,
+): NormalizedRankingWeights => {
+  const totalWeight =
+    weights.relevance +
+    weights.evidenceStrength +
+    weights.decay +
+    weights.humanWeight +
+    weights.utility;
+  if (totalWeight <= 0) {
+    return defaultRankingWeights;
+  }
+  return Object.freeze({
+    relevance: clampScore(weights.relevance / totalWeight),
+    evidenceStrength: clampScore(weights.evidenceStrength / totalWeight),
+    decay: clampScore(weights.decay / totalWeight),
+    humanWeight: clampScore(weights.humanWeight / totalWeight),
+    utility: clampScore(weights.utility / totalWeight),
+  });
+};
+
+const resolveRankingWeights = (request: RetrievalRequest): NormalizedRankingWeights => {
+  const requestWithAliases = request as RetrievalRequest & {
+    readonly ranking_weights?: RetrievalRankingWeights;
+  };
+  const candidateWeights = request.rankingWeights ?? requestWithAliases.ranking_weights;
+  if (candidateWeights === undefined) {
+    return defaultRankingWeights;
+  }
+  const evidenceStrength = candidateWeights.evidenceStrength ?? candidateWeights.evidence_strength;
+  const humanWeight = candidateWeights.humanWeight ?? candidateWeights.human_weight;
+  const utility =
+    candidateWeights.utility ?? candidateWeights.utilityScore ?? candidateWeights.utility_score;
+
+  return toNormalizedRankingWeights({
+    relevance: candidateWeights.relevance ?? 0,
+    evidenceStrength: evidenceStrength ?? 0,
+    decay: candidateWeights.decay ?? 0,
+    humanWeight: humanWeight ?? 0,
+    utility: utility ?? 0,
+  });
+};
+
+const toOptionalFiniteNumber = (value: unknown): number | null =>
+  typeof value === "number" && Number.isFinite(value) ? value : null;
+
+const readNumericSignalFromContainers = (
+  containers: readonly (Record<string, unknown> | null)[],
+  keyGroups: readonly (readonly string[])[],
+): number | null => {
+  for (const keys of keyGroups) {
+    for (const container of containers) {
+      const candidateNumber = toOptionalFiniteNumber(readRecordValue(container, keys));
+      if (candidateNumber !== null) {
+        return candidateNumber;
+      }
+    }
+  }
+  return null;
+};
+
+const resolveSignalContainers = (
+  payloadRecord: Record<string, unknown> | null,
+): readonly (Record<string, unknown> | null)[] => {
+  const metadataRecord = toOptionalRecord(readRecordValue(payloadRecord, ["metadata"]));
+  const rankingRecord = toOptionalRecord(readRecordValue(payloadRecord, ["ranking", "scores"]));
+  const metadataRankingRecord = toOptionalRecord(
+    readRecordValue(metadataRecord, ["ranking", "scores"]),
+  );
+  const evidenceRecord = toOptionalRecord(readRecordValue(payloadRecord, ["evidence"]));
+  const metadataEvidenceRecord = toOptionalRecord(readRecordValue(metadataRecord, ["evidence"]));
+
+  return Object.freeze([
+    payloadRecord,
+    metadataRecord,
+    rankingRecord,
+    metadataRankingRecord,
+    evidenceRecord,
+    metadataEvidenceRecord,
+  ]);
+};
+
+const toEvidenceStrengthSignal = (payloadRecord: Record<string, unknown> | null): number => {
+  const signalContainers = resolveSignalContainers(payloadRecord);
+  const explicitEvidenceStrength = readNumericSignalFromContainers(signalContainers, [
+    ["evidenceStrength", "evidence_strength"],
+    ["evidenceScore", "evidence_score"],
+  ]);
+  if (explicitEvidenceStrength !== null) {
+    return clampScore(explicitEvidenceStrength);
+  }
+
+  const countKeyGroups = [
+    ["evidencePointers", "evidence_pointers", "pointers"],
+    ["evidenceLinks", "evidence_links", "links"],
+    ["evidenceIds", "evidence_ids", "ids"],
+    ["evidenceEventIds", "evidence_event_ids", "eventIds", "event_ids"],
+    ["evidenceEpisodeIds", "evidence_episode_ids", "episodeIds", "episode_ids"],
+  ] as const;
+
+  let evidenceCount = 0;
+  for (const keys of countKeyGroups) {
+    let maxCountForGroup = 0;
+    for (const container of signalContainers) {
+      const candidateValue = readRecordValue(container, keys);
+      if (Array.isArray(candidateValue)) {
+        maxCountForGroup = Math.max(maxCountForGroup, candidateValue.length);
+      }
+    }
+    evidenceCount += maxCountForGroup;
+  }
+
+  if (evidenceCount <= 0) {
+    return 0;
+  }
+  return clampScore(evidenceCount / (evidenceCount + 1));
+};
+
+const toHumanWeightSignal = (payloadRecord: Record<string, unknown> | null): number => {
+  const signalContainers = resolveSignalContainers(payloadRecord);
+  const explicitHumanWeight = readNumericSignalFromContainers(signalContainers, [
+    ["humanWeight", "human_weight"],
+    ["humanScore", "human_score"],
+  ]);
+  return clampScore(explicitHumanWeight ?? neutralSignalScore);
+};
+
+const toUtilitySignal = (payloadRecord: Record<string, unknown> | null): number => {
+  const signalContainers = resolveSignalContainers(payloadRecord);
+  const explicitUtility = readNumericSignalFromContainers(signalContainers, [
+    ["utility", "utilityScore", "utility_score"],
+    ["learnedUtility", "learned_utility"],
+  ]);
+  return clampScore(explicitUtility ?? neutralSignalScore);
+};
+
+const computeQueryRelevanceSignal = (
   queryTokens: readonly string[],
   queryNormalized: string,
   searchableText: string,
-  scopeRank: number,
 ): number | null => {
-  let baseScore = 0.5;
+  let relevanceSignal = neutralSignalScore;
   if (queryTokens.length > 0) {
     let matchedTokenCount = 0;
     for (const token of queryTokens) {
@@ -406,13 +596,124 @@ const computeScore = (
     if (matchedTokenCount === 0) {
       return null;
     }
-    baseScore = matchedTokenCount / queryTokens.length;
+    relevanceSignal = matchedTokenCount / queryTokens.length;
   }
 
-  const fullQueryBoost =
+  const exactQueryBoost =
     queryNormalized.length > 0 && searchableText.includes(queryNormalized) ? 0.15 : 0;
-  const scopeBoost = scopeRank * 0.02;
-  return clampScore(baseScore + fullQueryBoost + scopeBoost);
+  return clampScore(relevanceSignal + exactQueryBoost);
+};
+
+interface DecaySignalContext {
+  readonly minUpdatedAtMillis: number;
+  readonly maxUpdatedAtMillis: number;
+  readonly maxRemainingLifespanMillis: number;
+}
+
+const buildDecaySignalContext = (
+  candidates: readonly PlannedHitCandidate[],
+): DecaySignalContext => {
+  const firstCandidate = candidates[0];
+  if (firstCandidate === undefined) {
+    return {
+      minUpdatedAtMillis: 0,
+      maxUpdatedAtMillis: 0,
+      maxRemainingLifespanMillis: 0,
+    };
+  }
+
+  let minUpdatedAtMillis = firstCandidate.updatedAtMillis;
+  let maxUpdatedAtMillis = firstCandidate.updatedAtMillis;
+  let maxRemainingLifespanMillis = 0;
+
+  for (const candidate of candidates) {
+    minUpdatedAtMillis = Math.min(minUpdatedAtMillis, candidate.updatedAtMillis);
+    maxUpdatedAtMillis = Math.max(maxUpdatedAtMillis, candidate.updatedAtMillis);
+    if (candidate.expiresAtMillis !== null) {
+      maxRemainingLifespanMillis = Math.max(
+        maxRemainingLifespanMillis,
+        Math.max(0, candidate.expiresAtMillis - candidate.updatedAtMillis),
+      );
+    }
+  }
+
+  return {
+    minUpdatedAtMillis,
+    maxUpdatedAtMillis,
+    maxRemainingLifespanMillis,
+  };
+};
+
+const computeDecaySignal = (
+  context: DecaySignalContext,
+  updatedAtMillis: number,
+  expiresAtMillis: number | null,
+): number => {
+  const recencySignal =
+    context.maxUpdatedAtMillis === context.minUpdatedAtMillis
+      ? 1
+      : (updatedAtMillis - context.minUpdatedAtMillis) /
+        (context.maxUpdatedAtMillis - context.minUpdatedAtMillis);
+
+  let expirySignal = 1;
+  if (expiresAtMillis !== null) {
+    const remainingLifespanMillis = Math.max(0, expiresAtMillis - updatedAtMillis);
+    expirySignal =
+      context.maxRemainingLifespanMillis > 0
+        ? remainingLifespanMillis / context.maxRemainingLifespanMillis
+        : 1;
+  }
+
+  return clampScore(recencySignal * 0.7 + expirySignal * 0.3);
+};
+
+const computeRankingScore = (
+  rankingWeights: NormalizedRankingWeights,
+  rankingSignals: RankingSignals,
+): number =>
+  clampScore(
+    rankingWeights.relevance * rankingSignals.relevance +
+      rankingWeights.evidenceStrength * rankingSignals.evidenceStrength +
+      rankingWeights.decay * rankingSignals.decay +
+      rankingWeights.humanWeight * rankingSignals.humanWeight +
+      rankingWeights.utility * rankingSignals.utility,
+  );
+
+const toRankingSignals = (
+  payloadRecord: Record<string, unknown> | null,
+  relevanceSignal: number,
+): Omit<RankingSignals, "decay"> => ({
+  relevance: relevanceSignal,
+  evidenceStrength: toEvidenceStrengthSignal(payloadRecord),
+  humanWeight: toHumanWeightSignal(payloadRecord),
+  utility: toUtilitySignal(payloadRecord),
+});
+
+const createPlannedHit = (
+  candidate: PlannedHitCandidate,
+  rankingWeights: NormalizedRankingWeights,
+  decayContext: DecaySignalContext,
+): PlannedHit => {
+  const decaySignal = computeDecaySignal(
+    decayContext,
+    candidate.updatedAtMillis,
+    candidate.expiresAtMillis,
+  );
+  const rankingSignals: RankingSignals = {
+    ...candidate.rankingSignals,
+    decay: decaySignal,
+  };
+
+  return {
+    memoryId: candidate.memoryId,
+    layer: candidate.layer,
+    score: computeRankingScore(rankingWeights, rankingSignals),
+    excerpt: candidate.excerpt,
+    scopeId: candidate.scopeId,
+    scopeLevel: candidate.scopeLevel,
+    scopeRank: candidate.scopeRank,
+    updatedAtMillis: candidate.updatedAtMillis,
+  };
 };
 
 const comparePlannedHits = (left: PlannedHit, right: PlannedHit): number => {
@@ -503,6 +804,7 @@ const toCursorDigest = (
   request: RetrievalRequest,
   selectors: NormalizedScopeSelectors,
   policy: NormalizedPolicyInput,
+  rankingWeights: NormalizedRankingWeights,
   queryNormalized: string,
 ): string =>
   createHash("sha256")
@@ -517,6 +819,7 @@ const toCursorDigest = (
         action: policy.action,
         evidenceIds: [...policy.evidenceIds].sort((left, right) => left.localeCompare(right)),
         policyContext: toStableDomainValue(policy.context),
+        rankingWeights,
       }),
     )
     .digest("hex");
@@ -557,11 +860,13 @@ const normalizeRetrievalRequest = (request: RetrievalRequest): NormalizedRetriev
   const queryNormalized = request.query.trim().toLowerCase();
   const selectors = resolveScopeSelectors(request);
   const policy = resolvePolicyInput(request, selectors);
+  const rankingWeights = resolveRankingWeights(request);
 
   return {
     request,
     selectors,
     policy,
+    rankingWeights,
     queryNormalized,
     queryTokens: tokenize(queryNormalized),
   };
@@ -670,7 +975,7 @@ const buildPlannedHits = (
 ): readonly PlannedHit[] => {
   const scopeById = new Map(scopeRows.map((row) => [row.scopeId, row] as const));
   const allowedScopeIds = resolveAllowedScopeIds(scopeRows, normalized.selectors);
-  const plannedHits: PlannedHit[] = [];
+  const candidateHits: PlannedHitCandidate[] = [];
 
   for (const memoryRow of memoryRows) {
     if (memoryRow.status !== "active") {
@@ -696,31 +1001,37 @@ const buildPlannedHits = (
       );
     }
 
-    const excerpt = toExcerpt(memoryRow.title, memoryRow.payloadJson);
+    const payloadRecord = parsePayloadRecord(memoryRow.payloadJson);
+    const excerpt = toExcerpt(memoryRow.title, payloadRecord);
     const searchableText = `${memoryRow.title}\n${excerpt}\n${memoryRow.payloadJson}`.toLowerCase();
     const scopeRank = toScopeRank(scopeRow.scopeLevel);
-    const score = computeScore(
+    const relevanceSignal = computeQueryRelevanceSignal(
       normalized.queryTokens,
       normalized.queryNormalized,
       searchableText,
-      scopeRank,
     );
-    if (score === null) {
+    if (relevanceSignal === null) {
       continue;
     }
+    const rankingSignals = toRankingSignals(payloadRecord, relevanceSignal);
 
-    plannedHits.push({
+    candidateHits.push({
       memoryId: memoryRow.memoryId,
       layer: memoryRow.layer,
-      score,
       excerpt,
       scopeId: memoryRow.scopeId,
       scopeLevel: scopeRow.scopeLevel,
       scopeRank,
       updatedAtMillis: memoryRow.updatedAtMillis,
+      expiresAtMillis: memoryRow.expiresAtMillis,
+      rankingSignals,
     });
   }
 
+  const decayContext = buildDecaySignalContext(candidateHits);
+  const plannedHits = candidateHits.map((candidate) =>
+    createPlannedHit(candidate, normalized.rankingWeights, decayContext),
+  );
   plannedHits.sort(comparePlannedHits);
   return Object.freeze(plannedHits);
 };
@@ -779,6 +1090,7 @@ const paginateHits = (
     normalized.request,
     normalized.selectors,
     normalized.policy,
+    normalized.rankingWeights,
     normalized.queryNormalized,
   );
   const offset = decodeCursorOffset(normalized.request.cursor, digest);
