@@ -5231,12 +5231,14 @@ function runTemporalCandidateMaintenanceTick(state, timestamp) {
     }
 
     let mutated = false;
+    const candidateStatus = normalizeBoundedStringLenient(currentCandidate.status, 32) ?? "shadow";
+    const shadowEligible = candidateStatus === "shadow";
     const expiresAt = normalizeIsoTimestampOrFallback(currentCandidate.expiresAt, DEFAULT_VERSION_TIMESTAMP);
     const expired = expiresAt.localeCompare(timestamp) < 0;
     if (expired) {
       summary.expiredCandidateIds.push(candidateId);
     }
-    if (expired && currentCandidate.status !== "demoted") {
+    if (shadowEligible && expired && currentCandidate.status !== "demoted") {
       const demotion = applyCandidateDemotion(state, resolved, {
         demotedAt: timestamp,
         reasonCodes: [DEMOTION_REASON_CANDIDATE_EXPIRED],
@@ -5254,7 +5256,7 @@ function runTemporalCandidateMaintenanceTick(state, timestamp) {
       }
       continue;
     }
-    if (candidateAfterDemotion.status !== "demoted") {
+    if (shadowEligible && candidateAfterDemotion.status !== "demoted") {
       summary.eligibleForDecayCount += 1;
       const lastTemporalDecayAt = normalizeIsoTimestampOrFallback(
         candidateAfterDemotion.lastTemporalDecayAt ??

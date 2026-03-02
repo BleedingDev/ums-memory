@@ -2875,6 +2875,57 @@ test("ums-memory-hpl.8 review_schedule_clock demotes expired candidates with exp
   assert.deepEqual(second.candidateMaintenance.demotedCandidateIds, []);
 });
 
+test("ums-memory-hpl.8 review_schedule_clock does not expire promoted candidates or remove promoted rules", () => {
+  const storeId = "tenant-hpl8-promoted-preserved";
+  const profile = "hpl8-promoted-preserved";
+  const shadow = executeOperation("shadow_write", {
+    storeId,
+    profile,
+    statement: "Promoted rules should not be auto-demoted by shadow expiry maintenance.",
+    confidence: 0.72,
+    sourceEventIds: ["evt-hpl8-promoted-1"],
+    evidenceEventIds: ["evt-hpl8-promoted-1"],
+    createdAt: "2026-01-01T00:00:00.000Z",
+    expiresAt: "2026-01-10T00:00:00.000Z",
+  });
+  const candidateId = shadow.applied[0].candidateId;
+  executeOperation("replay_eval", {
+    storeId,
+    profile,
+    candidateId,
+    successRateDelta: 0.8,
+    evaluatedAt: "2026-01-02T00:00:00.000Z",
+  });
+  const promoted = executeOperation("promote", {
+    storeId,
+    profile,
+    candidateId,
+    promotedAt: "2026-01-03T00:00:00.000Z",
+  });
+  const ruleId = promoted.rule.ruleId;
+
+  const tick = executeOperation("review_schedule_clock", {
+    storeId,
+    profile,
+    mode: "interaction",
+    interactionIncrement: 0,
+    fatigueThreshold: 100,
+    noveltyWriteThreshold: 100,
+    timestamp: "2026-02-01T00:00:00.000Z",
+  });
+  const snapshot = snapshotProfile(profile, storeId);
+  const candidate = snapshot.shadowCandidates.find((entry) => entry.candidateId === candidateId);
+  const rule = snapshot.rules.find((entry) => entry.ruleId === ruleId);
+
+  assert.equal(tick.candidateMaintenance.demotedCount, 0);
+  assert.equal(tick.candidateMaintenance.decayAppliedCount, 0);
+  assert.equal(tick.candidateMaintenance.expiredCount, 1);
+  assert.ok(candidate);
+  assert.equal(candidate.status, "promoted");
+  assert.equal(candidate.demotedAt, null);
+  assert.ok(rule);
+});
+
 test("ums-memory-d6q.4.13 scheduler triggers consolidation when configurable fatigue threshold is exceeded", () => {
   const first = executeOperation("review_schedule_clock", {
     storeId: "tenant-d6q4-13-fatigue",
