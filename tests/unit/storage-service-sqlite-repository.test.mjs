@@ -1301,7 +1301,27 @@ test("ums-memory-5cb.5: upsert denies cross-tenant references and emits audit ev
     assert.equal(supersedesFailure._tag, "ContractValidationError");
     assert.equal(supersedesFailure.contract, "StorageTenantIsolationGuardrail");
 
-    assert.equal(tenantIsolationEvents.length, 3);
+    const repeatedProjectAnchorEither = Effect.runSync(
+      Effect.either(
+        storageService.upsertMemory({
+          spaceId: requesterTenantId,
+          memoryId: "memory-cross-project-anchor",
+          layer: "working",
+          payload: {
+            title: "Cross-tenant project anchor",
+            scope: {
+              projectId,
+            },
+            updatedAtMillis: 1_700_000_000_191,
+          },
+        }),
+      ),
+    );
+    const repeatedProjectAnchorFailure = unwrapFailure(repeatedProjectAnchorEither);
+    assert.equal(repeatedProjectAnchorFailure._tag, "ContractValidationError");
+    assert.equal(repeatedProjectAnchorFailure.contract, "StorageTenantIsolationGuardrail");
+
+    assert.equal(tenantIsolationEvents.length, 4);
     assert.equal(tenantIsolationEvents[0].operation, "upsert");
     assert.equal(tenantIsolationEvents[0].spaceId, requesterTenantId);
     assert.equal(tenantIsolationEvents[0].memoryId, "memory-cross-project-anchor");
@@ -1325,6 +1345,33 @@ test("ums-memory-5cb.5: upsert denies cross-tenant references and emits audit ev
     assert.equal(tenantIsolationEvents[2].referenceId, "memory-owner-base");
     assert.equal(tenantIsolationEvents[2].ownerTenantId, ownerTenantId);
     assert.equal(tenantIsolationEvents[2].reason, "cross_tenant_reference");
+    assert.equal(tenantIsolationEvents[3].operation, "upsert");
+    assert.equal(tenantIsolationEvents[3].spaceId, requesterTenantId);
+    assert.equal(tenantIsolationEvents[3].memoryId, "memory-cross-project-anchor");
+    assert.equal(tenantIsolationEvents[3].referenceKind, "project");
+    assert.equal(tenantIsolationEvents[3].referenceId, projectId);
+    assert.equal(tenantIsolationEvents[3].ownerTenantId, ownerTenantId);
+    assert.equal(tenantIsolationEvents[3].reason, "cross_tenant_reference");
+
+    const persistedAuditRows = db
+      .prepare(
+        [
+          "SELECT operation, outcome, reason, reference_kind, reference_id, owner_tenant_id",
+          "FROM audit_events",
+          "WHERE tenant_id = ?",
+          "ORDER BY event_id ASC;",
+        ].join("\n"),
+      )
+      .all(requesterTenantId);
+    assert.equal(persistedAuditRows.length, 4);
+    assert.ok(persistedAuditRows.every((row) => row.operation === "upsert"));
+    assert.ok(persistedAuditRows.every((row) => row.outcome === "denied"));
+    assert.ok(persistedAuditRows.every((row) => row.reason === "cross_tenant_reference"));
+    assert.equal(
+      persistedAuditRows.filter((row) => row.reference_kind === "project").length,
+      2,
+    );
+    assert.ok(persistedAuditRows.every((row) => row.owner_tenant_id === ownerTenantId));
   } finally {
     db.close();
   }
@@ -1378,6 +1425,23 @@ test("ums-memory-5cb.5: delete keeps not-found semantics and audits cross-tenant
     assert.equal(tenantIsolationEvents[0].referenceId, memoryId);
     assert.equal(tenantIsolationEvents[0].ownerTenantId, ownerTenantId);
     assert.equal(tenantIsolationEvents[0].reason, "cross_tenant_delete_probe");
+
+    const persistedAuditRows = db
+      .prepare(
+        [
+          "SELECT operation, outcome, reason, reference_kind, reference_id, owner_tenant_id",
+          "FROM audit_events",
+          "WHERE tenant_id = ? AND memory_id = ?;",
+        ].join("\n"),
+      )
+      .all(requesterTenantId, memoryId);
+    assert.equal(persistedAuditRows.length, 1);
+    assert.equal(persistedAuditRows[0].operation, "delete");
+    assert.equal(persistedAuditRows[0].outcome, "not_found");
+    assert.equal(persistedAuditRows[0].reason, "cross_tenant_delete_probe");
+    assert.equal(persistedAuditRows[0].reference_kind, "memory");
+    assert.equal(persistedAuditRows[0].reference_id, memoryId);
+    assert.equal(persistedAuditRows[0].owner_tenant_id, ownerTenantId);
   } finally {
     db.close();
   }
@@ -1503,6 +1567,38 @@ test("ums-memory-5cb.3: sqlite storage service upsert maps payload deterministic
     assert.equal(equalTimestampReplayResponse.persistedAtMillis, 1_700_000_000_400);
     assert.equal(equalTimestampReplayResponse.version, 1);
 
+    const duplicateStaleReplayResponse = Effect.runSync(
+      storageService.upsertMemory({
+        spaceId: "tenant-storage",
+        memoryId: "memory-a",
+        layer: "working",
+        payload: {
+          title: "Stale Replay Should Not Override",
+          status: "active",
+          createdAtMillis: 1_700_000_000_100,
+          updatedAtMillis: 1_700_000_000_300,
+        },
+      }),
+    );
+    assert.equal(duplicateStaleReplayResponse.accepted, true);
+    assert.equal(duplicateStaleReplayResponse.persistedAtMillis, 1_700_000_000_400);
+
+    const duplicateEqualTimestampReplayResponse = Effect.runSync(
+      storageService.upsertMemory({
+        spaceId: "tenant-storage",
+        memoryId: "memory-a",
+        layer: "working",
+        payload: {
+          title: "Equal Timestamp Replay Should Not Override",
+          status: "active",
+          createdAtMillis: 1_700_000_000_100,
+          updatedAtMillis: 1_700_000_000_400,
+        },
+      }),
+    );
+    assert.equal(duplicateEqualTimestampReplayResponse.accepted, true);
+    assert.equal(duplicateEqualTimestampReplayResponse.persistedAtMillis, 1_700_000_000_400);
+
     const rowCountAfterUpsert = db
       .prepare("SELECT COUNT(*) AS row_count FROM memory_items WHERE tenant_id = ? AND memory_id = ?;")
       .get("tenant-storage", "memory-a");
@@ -1545,6 +1641,31 @@ test("ums-memory-5cb.3: sqlite storage service upsert maps payload deterministic
       .prepare("SELECT COUNT(*) AS row_count FROM memory_items WHERE tenant_id = ? AND memory_id = ?;")
       .get("tenant-storage", "memory-a");
     assert.equal(rowCountAfterDelete.row_count, 0);
+
+    const persistedAuditRows = db
+      .prepare(
+        [
+          "SELECT operation, outcome, reason, recorded_at_ms",
+          "FROM audit_events",
+          "WHERE tenant_id = ? AND memory_id = ?",
+          "ORDER BY operation ASC, reason ASC;",
+        ].join("\n"),
+      )
+      .all("tenant-storage", "memory-a");
+    assert.equal(persistedAuditRows.length, 5);
+    assert.deepEqual(
+      persistedAuditRows.map((row) => row.reason),
+      ["deleted", "equal_replay", "inserted", "stale_replay", "updated"],
+    );
+    assert.ok(persistedAuditRows.every((row) => row.outcome === "accepted"));
+    assert.equal(
+      persistedAuditRows.filter((row) => row.reason === "stale_replay").length,
+      1,
+    );
+    assert.equal(
+      persistedAuditRows.filter((row) => row.reason === "equal_replay").length,
+      1,
+    );
   } finally {
     db.close();
   }
@@ -1569,6 +1690,36 @@ test("ums-memory-5cb.3: sqlite storage service maps missing deletes to StorageNo
     assert.equal(deleteFailure._tag, "StorageNotFoundError");
     assert.equal(deleteFailure.spaceId, "tenant-storage");
     assert.equal(deleteFailure.memoryId, "unknown-memory");
+
+    const replayDeleteEither = Effect.runSync(
+      Effect.either(
+        storageService.deleteMemory({
+          spaceId: "tenant-storage",
+          memoryId: "unknown-memory",
+        }),
+      ),
+    );
+    const replayDeleteFailure = unwrapFailure(replayDeleteEither);
+    assert.equal(replayDeleteFailure._tag, "StorageNotFoundError");
+    assert.equal(replayDeleteFailure.spaceId, "tenant-storage");
+    assert.equal(replayDeleteFailure.memoryId, "unknown-memory");
+
+    const persistedAuditRows = db
+      .prepare(
+        [
+          "SELECT operation, outcome, reason, reference_kind, reference_id, owner_tenant_id",
+          "FROM audit_events",
+          "WHERE tenant_id = ? AND memory_id = ?;",
+        ].join("\n"),
+      )
+      .all("tenant-storage", "unknown-memory");
+    assert.equal(persistedAuditRows.length, 2);
+    assert.ok(persistedAuditRows.every((row) => row.operation === "delete"));
+    assert.ok(persistedAuditRows.every((row) => row.outcome === "not_found"));
+    assert.ok(persistedAuditRows.every((row) => row.reason === "memory_not_found"));
+    assert.ok(persistedAuditRows.every((row) => row.reference_kind === null));
+    assert.ok(persistedAuditRows.every((row) => row.reference_id === null));
+    assert.ok(persistedAuditRows.every((row) => row.owner_tenant_id === null));
   } finally {
     db.close();
   }

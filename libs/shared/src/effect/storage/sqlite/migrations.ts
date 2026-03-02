@@ -325,6 +325,8 @@ const toDeterministicMigrationStatements = (statements: readonly string[]): read
 
 const hasMemoryItemsFtsSchemaObject = (statement: string): boolean =>
   statement.includes("memory_items_fts");
+const hasAuditEventsSchemaObject = (statement: string): boolean =>
+  statement.includes("audit_events");
 
 const enterpriseSqliteSchemaObjectStatements = toDeterministicMigrationStatements(
   enterpriseSqliteSchemaStatements,
@@ -332,7 +334,8 @@ const enterpriseSqliteSchemaObjectStatements = toDeterministicMigrationStatement
 
 const enterpriseSqliteV1Statements = Object.freeze(
   enterpriseSqliteSchemaObjectStatements.filter(
-    (statement) => !hasMemoryItemsFtsSchemaObject(statement),
+    (statement) =>
+      !hasMemoryItemsFtsSchemaObject(statement) && !hasAuditEventsSchemaObject(statement),
   ),
 );
 
@@ -347,6 +350,12 @@ const enterpriseSqliteV2Statements = Object.freeze([
     "WHERE rowid NOT IN (SELECT rowid FROM memory_items_fts);",
   ].join("\n"),
 ]);
+
+const enterpriseSqliteV3Statements = Object.freeze(
+  enterpriseSqliteSchemaObjectStatements.filter((statement) =>
+    hasAuditEventsSchemaObject(statement),
+  ),
+);
 
 const enterpriseInitialMigration = Object.freeze({
   version: 1,
@@ -376,9 +385,24 @@ const enterpriseFtsMigrationWithSql = Object.freeze({
   sql: `${enterpriseFtsMigration.statements.join("\n\n")}\n`,
 } as const satisfies SqliteMigrationDefinition<2>);
 
+const enterpriseAuditEventLedgerMigration = Object.freeze({
+  version: 3,
+  name: "enterprise_sqlite_v3_audit_event_ledger",
+  description:
+    "Adds append-only deterministic audit ledger tables, indexes, and triggers for storage operation forensics.",
+  statements: enterpriseSqliteV3Statements,
+  sql: "",
+} as const satisfies SqliteMigrationDefinition<3>);
+
+const enterpriseAuditEventLedgerMigrationWithSql = Object.freeze({
+  ...enterpriseAuditEventLedgerMigration,
+  sql: `${enterpriseAuditEventLedgerMigration.statements.join("\n\n")}\n`,
+} as const satisfies SqliteMigrationDefinition<3>);
+
 export const enterpriseSqliteMigrations = Object.freeze([
   enterpriseInitialMigrationWithSql,
   enterpriseFtsMigrationWithSql,
+  enterpriseAuditEventLedgerMigrationWithSql,
 ] as const satisfies readonly SqliteMigrationDefinition[]);
 
 export type EnterpriseSqliteMigration = (typeof enterpriseSqliteMigrations)[number];

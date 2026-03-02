@@ -17,6 +17,10 @@ import {
   type StorageServiceError,
 } from "../../errors.js";
 import {
+  type EnterpriseAuditEventOperation,
+  type EnterpriseAuditEventOutcome,
+  type EnterpriseAuditEventReason,
+  type EnterpriseAuditEventReferenceKind,
   type EnterpriseEvidenceRelationKind,
   type EnterpriseEvidenceSourceKind,
   type EnterpriseMemoryKind,
@@ -46,7 +50,27 @@ type CanonicalJsonValue =
   | { readonly [key: string]: CanonicalJsonValue };
 
 class StoragePayloadValidationFailure extends Error {}
-class MissingStorageDeleteFailure extends Error {}
+class MissingStorageDeleteFailure extends Error {
+  readonly ownerTenantId: string | null;
+  readonly reason: Extract<
+    EnterpriseAuditEventReason,
+    "memory_not_found" | "cross_tenant_delete_probe"
+  >;
+
+  constructor(ownerTenantId: string | null) {
+    const reason: Extract<
+      EnterpriseAuditEventReason,
+      "memory_not_found" | "cross_tenant_delete_probe"
+    > = ownerTenantId === null ? "memory_not_found" : "cross_tenant_delete_probe";
+    const details =
+      ownerTenantId === null
+        ? "Delete request targeted memory missing for tenant."
+        : "Delete request targeted memory owned by another tenant.";
+    super(details);
+    this.ownerTenantId = ownerTenantId;
+    this.reason = reason;
+  }
+}
 class TenantIsolationViolationFailure extends Error {
   readonly event: TenantIsolationViolationAuditEvent;
 
@@ -66,6 +90,20 @@ export interface TenantIsolationViolationAuditEvent {
   readonly ownerTenantId: string;
   readonly reason: "cross_tenant_reference" | "cross_tenant_delete_probe";
   readonly details: string;
+}
+
+interface StorageAuditLedgerEntry {
+  readonly eventId: string;
+  readonly tenantId: string;
+  readonly memoryId: string;
+  readonly operation: EnterpriseAuditEventOperation;
+  readonly outcome: EnterpriseAuditEventOutcome;
+  readonly reason: EnterpriseAuditEventReason;
+  readonly details: string;
+  readonly referenceKind: EnterpriseAuditEventReferenceKind | null;
+  readonly referenceId: string | null;
+  readonly ownerTenantId: string | null;
+  readonly recordedAtMillis: number;
 }
 
 interface StoragePayloadProjection {
@@ -303,6 +341,32 @@ const parseOptionalTrimmedStringArray = (
 };
 
 const toSha256Hex = (value: string): string => createHash("sha256").update(value).digest("hex");
+
+const toDeterministicAuditEventId = (event: Omit<StorageAuditLedgerEntry, "eventId">): string => {
+  const nullable = (value: string | null): string => value ?? "";
+  return `audit:${toSha256Hex(
+    [
+      event.tenantId,
+      event.memoryId,
+      event.operation,
+      event.outcome,
+      event.reason,
+      event.details,
+      nullable(event.referenceKind),
+      nullable(event.referenceId),
+      nullable(event.ownerTenantId),
+      String(event.recordedAtMillis),
+    ].join("\n"),
+  )}`;
+};
+
+const createStorageAuditLedgerEntry = (
+  event: Omit<StorageAuditLedgerEntry, "eventId">,
+): StorageAuditLedgerEntry =>
+  Object.freeze({
+    eventId: toDeterministicAuditEventId(event),
+    ...event,
+  });
 
 const toCanonicalJsonString = (value: DomainValue, path: string): string =>
   JSON.stringify(normalizeDomainValue(value, path));
@@ -1158,6 +1222,9 @@ export const makeSqliteStorageRepository = (
   const selectTenantMemoryStatement = database.prepare(
     "SELECT memory_id FROM memory_items WHERE tenant_id = ? AND memory_id = ? LIMIT 1;",
   );
+  const selectTenantMemoryUpdatedAtStatement = database.prepare(
+    "SELECT updated_at_ms FROM memory_items WHERE tenant_id = ? AND memory_id = ? LIMIT 1;",
+  );
   const selectForeignMemoryOwnerStatement = database.prepare(
     "SELECT tenant_id FROM memory_items WHERE memory_id = ? AND tenant_id <> ? ORDER BY tenant_id ASC LIMIT 1;",
   );
@@ -1175,6 +1242,38 @@ export const makeSqliteStorageRepository = (
   );
   const deleteMemoryStatement = database.prepare(
     "DELETE FROM memory_items WHERE tenant_id = ? AND memory_id = ?;",
+  );
+  const insertAuditEventStatement = database.prepare(
+    [
+      "INSERT OR IGNORE INTO audit_events (",
+      "  event_id,",
+      "  tenant_id,",
+      "  memory_id,",
+      "  operation,",
+      "  outcome,",
+      "  reason,",
+      "  details,",
+      "  reference_kind,",
+      "  reference_id,",
+      "  owner_tenant_id,",
+      "  recorded_at_ms",
+      ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);",
+    ].join("\n"),
+  );
+  const selectMaxAuditFailureRecordedAtStatement = database.prepare(
+    [
+      "SELECT MAX(recorded_at_ms) AS max_recorded_at_ms",
+      "FROM audit_events",
+      "WHERE tenant_id = ?",
+      "  AND memory_id = ?",
+      "  AND operation = ?",
+      "  AND outcome = ?",
+      "  AND reason = ?",
+      "  AND details = ?",
+      "  AND COALESCE(reference_kind, '') = ?",
+      "  AND COALESCE(reference_id, '') = ?",
+      "  AND COALESCE(owner_tenant_id, '') = ?;",
+    ].join("\n"),
   );
   const assertExpectedForeignKeysMode = () => {
     const effectiveForeignKeysMode = readSqliteForeignKeysMode(database);
@@ -1232,6 +1331,50 @@ export const makeSqliteStorageRepository = (
       // Guardrail audit hooks must never change repository behavior.
     }
   };
+  const persistAuditLedgerEntry = (event: StorageAuditLedgerEntry): void => {
+    insertAuditEventStatement.run(
+      event.eventId,
+      event.tenantId,
+      event.memoryId,
+      event.operation,
+      event.outcome,
+      event.reason,
+      event.details,
+      event.referenceKind,
+      event.referenceId,
+      event.ownerTenantId,
+      event.recordedAtMillis,
+    );
+  };
+  const persistAuditLedgerEntryBestEffort = (event: StorageAuditLedgerEntry): void => {
+    try {
+      persistAuditLedgerEntry(event);
+    } catch {
+      // Audit persistence must not mask the original storage failure mapping.
+    }
+  };
+  const toNullableAuditLookupKey = (value: string | null): string => value ?? "";
+  const allocateFailureAuditRecordedAtMillis = (
+    event: Omit<StorageAuditLedgerEntry, "eventId" | "recordedAtMillis">,
+  ): number => {
+    const existingFailureRow = selectMaxAuditFailureRecordedAtStatement.get(
+      event.tenantId,
+      event.memoryId,
+      event.operation,
+      event.outcome,
+      event.reason,
+      event.details,
+      toNullableAuditLookupKey(event.referenceKind),
+      toNullableAuditLookupKey(event.referenceId),
+      toNullableAuditLookupKey(event.ownerTenantId),
+    );
+    const maxRecordedAtValue = readRowColumn(existingFailureRow, "max_recorded_at_ms");
+    const maxRecordedAtMillis =
+      maxRecordedAtValue === null
+        ? -1
+        : toNonNegativeSafeInteger(maxRecordedAtValue, "audit_events.max_recorded_at_ms");
+    return maxRecordedAtMillis + 1;
+  };
   const denyTenantIsolationViolation = (
     operation: "upsert" | "delete",
     spaceId: string,
@@ -1254,6 +1397,69 @@ export const makeSqliteStorageRepository = (
     });
     auditTenantIsolationViolation(event);
     throw new TenantIsolationViolationFailure(event);
+  };
+  const persistUpsertFailureAuditEntry = (cause: unknown, request: StorageUpsertRequest): void => {
+    if (!(cause instanceof TenantIsolationViolationFailure)) {
+      return;
+    }
+
+    persistAuditLedgerEntryBestEffort(
+      createStorageAuditLedgerEntry({
+        tenantId: request.spaceId,
+        memoryId: request.memoryId,
+        operation: "upsert",
+        outcome: "denied",
+        reason: cause.event.reason,
+        details: cause.event.details,
+        referenceKind: cause.event.referenceKind,
+        referenceId: cause.event.referenceId,
+        ownerTenantId: cause.event.ownerTenantId,
+        recordedAtMillis: allocateFailureAuditRecordedAtMillis({
+          tenantId: request.spaceId,
+          memoryId: request.memoryId,
+          operation: "upsert",
+          outcome: "denied",
+          reason: cause.event.reason,
+          details: cause.event.details,
+          referenceKind: cause.event.referenceKind,
+          referenceId: cause.event.referenceId,
+          ownerTenantId: cause.event.ownerTenantId,
+        }),
+      }),
+    );
+  };
+  const persistDeleteFailureAuditEntry = (cause: unknown, request: StorageDeleteRequest): void => {
+    if (!(cause instanceof MissingStorageDeleteFailure)) {
+      return;
+    }
+
+    const referenceKind: EnterpriseAuditEventReferenceKind | null =
+      cause.ownerTenantId === null ? null : "memory";
+    const referenceId = cause.ownerTenantId === null ? null : request.memoryId;
+    persistAuditLedgerEntryBestEffort(
+      createStorageAuditLedgerEntry({
+        tenantId: request.spaceId,
+        memoryId: request.memoryId,
+        operation: "delete",
+        outcome: "not_found",
+        reason: cause.reason,
+        details: cause.message,
+        referenceKind,
+        referenceId,
+        ownerTenantId: cause.ownerTenantId,
+        recordedAtMillis: allocateFailureAuditRecordedAtMillis({
+          tenantId: request.spaceId,
+          memoryId: request.memoryId,
+          operation: "delete",
+          outcome: "not_found",
+          reason: cause.reason,
+          details: cause.message,
+          referenceKind,
+          referenceId,
+          ownerTenantId: cause.ownerTenantId,
+        }),
+      }),
+    );
   };
   const assertScopeAnchorExists = (
     scopeAnchorRow: unknown,
@@ -1623,6 +1829,35 @@ export const makeSqliteStorageRepository = (
               readRowColumn(persistedRow, "updated_at_ms"),
               "memory_items.updated_at_ms",
             );
+            const upsertReason: EnterpriseAuditEventReason =
+              upsertChanges > 0
+                ? existingMemoryRow === undefined
+                  ? "inserted"
+                  : "updated"
+                : payloadProjection.updatedAtMillis < persistedAtMillis
+                  ? "stale_replay"
+                  : "equal_replay";
+            const upsertAuditDetails = [
+              `layer=${request.layer}`,
+              `scope_id=${resolvedScopeId}`,
+              `requested_updated_at_ms=${payloadProjection.updatedAtMillis}`,
+              `persisted_updated_at_ms=${persistedAtMillis}`,
+              `payload_sha256=${toSha256Hex(payloadProjection.payloadJson)}`,
+            ].join(";");
+            persistAuditLedgerEntry(
+              createStorageAuditLedgerEntry({
+                tenantId: request.spaceId,
+                memoryId: request.memoryId,
+                operation: "upsert",
+                outcome: "accepted",
+                reason: upsertReason,
+                details: upsertAuditDetails,
+                referenceKind: null,
+                referenceId: null,
+                ownerTenantId: null,
+                recordedAtMillis: persistedAtMillis,
+              }),
+            );
 
             return {
               spaceId: request.spaceId,
@@ -1632,25 +1867,33 @@ export const makeSqliteStorageRepository = (
               version: 1,
             } satisfies StorageUpsertResponse;
           }),
-        catch: (cause) => mapUpsertFailure(cause, request),
+        catch: (cause) => {
+          persistUpsertFailureAuditEntry(cause, request);
+          return mapUpsertFailure(cause, request);
+        },
       }),
     deleteMemory: (request) =>
       Effect.try({
         try: () =>
           withImmediateTransaction(database, () => {
             assertExpectedForeignKeysMode();
+            const existingMemoryRow = selectTenantMemoryUpdatedAtStatement.get(
+              request.spaceId,
+              request.memoryId,
+            );
             const deleteResult = deleteMemoryStatement.run(request.spaceId, request.memoryId);
             const deletedCount = toNonNegativeSafeInteger(
               readRowColumn(deleteResult, "changes"),
               "sqlite delete changes",
             );
             if (deletedCount === 0) {
+              let ownerTenantId: string | null = null;
               const foreignMemoryOwnerRow = selectForeignMemoryOwnerStatement.get(
                 request.memoryId,
                 request.spaceId,
               );
               if (foreignMemoryOwnerRow !== undefined) {
-                const ownerTenantId = readOwnerTenantId(foreignMemoryOwnerRow);
+                ownerTenantId = readOwnerTenantId(foreignMemoryOwnerRow);
                 auditTenantIsolationViolation(
                   Object.freeze({
                     operation: "delete",
@@ -1664,8 +1907,29 @@ export const makeSqliteStorageRepository = (
                   }),
                 );
               }
-              throw new MissingStorageDeleteFailure();
+              throw new MissingStorageDeleteFailure(ownerTenantId);
             }
+            const deletedUpdatedAtMillis =
+              existingMemoryRow === undefined
+                ? 0
+                : toNonNegativeSafeInteger(
+                    readRowColumn(existingMemoryRow, "updated_at_ms"),
+                    "memory_items.updated_at_ms",
+                  );
+            persistAuditLedgerEntry(
+              createStorageAuditLedgerEntry({
+                tenantId: request.spaceId,
+                memoryId: request.memoryId,
+                operation: "delete",
+                outcome: "accepted",
+                reason: "deleted",
+                details: `deleted_updated_at_ms=${deletedUpdatedAtMillis}`,
+                referenceKind: null,
+                referenceId: null,
+                ownerTenantId: null,
+                recordedAtMillis: deletedUpdatedAtMillis,
+              }),
+            );
 
             return {
               spaceId: request.spaceId,
@@ -1673,7 +1937,10 @@ export const makeSqliteStorageRepository = (
               deleted: true,
             } satisfies StorageDeleteResponse;
           }),
-        catch: (cause) => mapDeleteFailure(cause, request),
+        catch: (cause) => {
+          persistDeleteFailureAuditEntry(cause, request);
+          return mapDeleteFailure(cause, request);
+        },
       }),
   };
 };

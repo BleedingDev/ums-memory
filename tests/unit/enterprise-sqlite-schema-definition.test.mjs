@@ -20,6 +20,7 @@ const expectedTableOrder = Object.freeze([
   "evidence",
   "memory_evidence_links",
   "feedback",
+  "audit_events",
 ]);
 
 const expectedIndexOrder = Object.freeze([
@@ -38,6 +39,8 @@ const expectedIndexOrder = Object.freeze([
   "idx_memory_evidence_links_memory",
   "idx_feedback_memory_status",
   "idx_feedback_actor_created",
+  "idx_audit_events_tenant_operation",
+  "idx_audit_events_owner_reference",
 ]);
 
 const expectedTriggerOrder = Object.freeze([
@@ -52,6 +55,8 @@ const expectedTriggerOrder = Object.freeze([
   "trg_memory_items_fts_insert",
   "trg_memory_items_fts_delete",
   "trg_memory_items_fts_update",
+  "trg_audit_events_append_only_update",
+  "trg_audit_events_append_only_delete",
 ]);
 
 let schemaModulePromise;
@@ -74,7 +79,7 @@ const loadSchemaModule = async () => {
 const expectConstraintFailure = (callback) => {
   assert.throws(
     callback,
-    /constraint|check|foreign key|scope_parent_level_invalid|scope_cycle_detected|scope_level_immutable|scope_anchor_immutable|memory_supersedes_cycle_detected/i,
+    /constraint|check|foreign key|scope_parent_level_invalid|scope_cycle_detected|scope_level_immutable|scope_anchor_immutable|memory_supersedes_cycle_detected|audit_events_append_only/i,
   );
 };
 
@@ -122,7 +127,7 @@ test("ums-memory-5cb.1: enterprise sqlite schema ordering is deterministic", asy
     schema.enterpriseSqliteSchemaSql,
     `${schema.enterpriseSqliteSchemaStatements.join("\n\n")}\n`,
   );
-  assert.equal(schema.enterpriseSqliteSchemaVersion, 2);
+  assert.equal(schema.enterpriseSqliteSchemaVersion, 3);
 });
 
 test("ums-memory-5cb.1: enterprise sqlite schema enforces key constraints at runtime", async () => {
@@ -252,6 +257,31 @@ test("ums-memory-5cb.1: enterprise sqlite schema enforces key constraints at run
     db.prepare(
       "INSERT INTO memory_evidence_links (tenant_id, memory_id, evidence_id, relation_kind, created_at_ms) VALUES (?, ?, ?, ?, ?)",
     ).run("tenant_a", "memory_ok", "evidence_ok", "supports", now);
+
+    db.prepare(
+      "INSERT INTO audit_events (event_id, tenant_id, memory_id, operation, outcome, reason, details, reference_kind, reference_id, owner_tenant_id, recorded_at_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    ).run(
+      "audit:test:event-1",
+      "tenant_a",
+      "memory_ok",
+      "upsert",
+      "accepted",
+      "inserted",
+      "deterministic test event",
+      null,
+      null,
+      null,
+      now,
+    );
+    expectConstraintFailure(() => {
+      db.prepare("UPDATE audit_events SET details = ? WHERE event_id = ?").run(
+        "attempted mutation",
+        "audit:test:event-1",
+      );
+    });
+    expectConstraintFailure(() => {
+      db.prepare("DELETE FROM audit_events WHERE event_id = ?").run("audit:test:event-1");
+    });
 
     db.prepare(
       "INSERT INTO feedback (tenant_id, feedback_id, memory_id, evidence_id, actor_user_id, feedback_kind, status, severity, comment, created_at_ms, resolved_at_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",

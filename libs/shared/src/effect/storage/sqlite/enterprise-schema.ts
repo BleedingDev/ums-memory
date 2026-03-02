@@ -52,6 +52,30 @@ export const enterpriseFeedbackKinds = Object.freeze([
   "policy_flag",
 ] as const);
 export const enterpriseFeedbackStatuses = Object.freeze(["open", "resolved", "dismissed"] as const);
+export const enterpriseAuditEventOperations = Object.freeze(["upsert", "delete"] as const);
+export const enterpriseAuditEventOutcomes = Object.freeze([
+  "accepted",
+  "denied",
+  "not_found",
+] as const);
+export const enterpriseAuditEventReasons = Object.freeze([
+  "inserted",
+  "updated",
+  "stale_replay",
+  "equal_replay",
+  "deleted",
+  "cross_tenant_reference",
+  "cross_tenant_delete_probe",
+  "memory_not_found",
+] as const);
+export const enterpriseAuditEventReferenceKinds = Object.freeze([
+  "scope",
+  "project",
+  "role",
+  "user",
+  "supersedes_memory",
+  "memory",
+] as const);
 
 export type EnterpriseScopeLevel = (typeof enterpriseScopeLevels)[number];
 export type EnterpriseUserStatus = (typeof enterpriseUserStatuses)[number];
@@ -64,6 +88,10 @@ export type EnterpriseEvidenceSourceKind = (typeof enterpriseEvidenceSourceKinds
 export type EnterpriseEvidenceRelationKind = (typeof enterpriseEvidenceRelationKinds)[number];
 export type EnterpriseFeedbackKind = (typeof enterpriseFeedbackKinds)[number];
 export type EnterpriseFeedbackStatus = (typeof enterpriseFeedbackStatuses)[number];
+export type EnterpriseAuditEventOperation = (typeof enterpriseAuditEventOperations)[number];
+export type EnterpriseAuditEventOutcome = (typeof enterpriseAuditEventOutcomes)[number];
+export type EnterpriseAuditEventReason = (typeof enterpriseAuditEventReasons)[number];
+export type EnterpriseAuditEventReferenceKind = (typeof enterpriseAuditEventReferenceKinds)[number];
 
 export const enterpriseSqliteTableNames = Object.freeze([
   "tenants",
@@ -78,6 +106,7 @@ export const enterpriseSqliteTableNames = Object.freeze([
   "evidence",
   "memory_evidence_links",
   "feedback",
+  "audit_events",
 ] as const);
 
 export type EnterpriseSqliteTableName = (typeof enterpriseSqliteTableNames)[number];
@@ -325,6 +354,40 @@ const feedbackTableDdl = createStrictTableDdl("feedback", [
   )`,
 ]);
 
+const auditEventsTableDdl = createStrictTableDdl("audit_events", [
+  "event_id TEXT NOT NULL",
+  "tenant_id TEXT NOT NULL",
+  "memory_id TEXT NOT NULL",
+  "operation TEXT NOT NULL",
+  "outcome TEXT NOT NULL",
+  "reason TEXT NOT NULL",
+  "details TEXT NOT NULL",
+  "reference_kind TEXT",
+  "reference_id TEXT",
+  "owner_tenant_id TEXT",
+  "recorded_at_ms INTEGER NOT NULL",
+  "PRIMARY KEY (event_id)",
+  "CHECK (length(trim(event_id)) > 0)",
+  "CHECK (length(trim(tenant_id)) > 0)",
+  "CHECK (length(trim(memory_id)) > 0)",
+  `CHECK (operation IN (${toSqlStringLiteralList(enterpriseAuditEventOperations)}))`,
+  `CHECK (outcome IN (${toSqlStringLiteralList(enterpriseAuditEventOutcomes)}))`,
+  `CHECK (reason IN (${toSqlStringLiteralList(enterpriseAuditEventReasons)}))`,
+  "CHECK (length(trim(details)) > 0)",
+  `CHECK (reference_kind IS NULL OR reference_kind IN (${toSqlStringLiteralList(enterpriseAuditEventReferenceKinds)}))`,
+  "CHECK (reference_id IS NULL OR length(trim(reference_id)) > 0)",
+  "CHECK (owner_tenant_id IS NULL OR length(trim(owner_tenant_id)) > 0)",
+  "CHECK (recorded_at_ms >= 0)",
+  `CHECK (
+    (owner_tenant_id IS NULL AND reference_kind IS NULL AND reference_id IS NULL) OR
+    (owner_tenant_id IS NOT NULL AND reference_kind IS NOT NULL AND reference_id IS NOT NULL)
+  )`,
+  `CHECK (
+    (reason IN ('cross_tenant_reference', 'cross_tenant_delete_probe') AND owner_tenant_id IS NOT NULL) OR
+    (reason NOT IN ('cross_tenant_reference', 'cross_tenant_delete_probe') AND owner_tenant_id IS NULL)
+  )`,
+]);
+
 export const enterpriseSqliteTables = Object.freeze([
   {
     name: "tenants",
@@ -385,6 +448,11 @@ export const enterpriseSqliteTables = Object.freeze([
     name: "feedback",
     ddl: feedbackTableDdl,
     dependencies: ["tenants", "memory_items", "evidence", "users"] as const,
+  },
+  {
+    name: "audit_events",
+    ddl: auditEventsTableDdl,
+    dependencies: [] as const,
   },
 ] as const satisfies readonly SqliteTableMetadata<EnterpriseSqliteTableName>[]);
 
@@ -593,6 +661,24 @@ const trgMemoryItemsFtsUpdateDdl = [
   "END;",
 ].join("\n");
 
+const trgAuditEventsAppendOnlyUpdateDdl = [
+  "CREATE TRIGGER IF NOT EXISTS trg_audit_events_append_only_update",
+  "BEFORE UPDATE ON audit_events",
+  "FOR EACH ROW",
+  "BEGIN",
+  "  SELECT RAISE(ABORT, 'AUDIT_EVENTS_APPEND_ONLY');",
+  "END;",
+].join("\n");
+
+const trgAuditEventsAppendOnlyDeleteDdl = [
+  "CREATE TRIGGER IF NOT EXISTS trg_audit_events_append_only_delete",
+  "BEFORE DELETE ON audit_events",
+  "FOR EACH ROW",
+  "BEGIN",
+  "  SELECT RAISE(ABORT, 'AUDIT_EVENTS_APPEND_ONLY');",
+  "END;",
+].join("\n");
+
 export const enterpriseSqliteTriggerNames = Object.freeze([
   "trg_scopes_scope_level_immutable",
   "trg_scopes_anchor_immutable",
@@ -605,6 +691,8 @@ export const enterpriseSqliteTriggerNames = Object.freeze([
   "trg_memory_items_fts_insert",
   "trg_memory_items_fts_delete",
   "trg_memory_items_fts_update",
+  "trg_audit_events_append_only_update",
+  "trg_audit_events_append_only_delete",
 ] as const);
 
 export type EnterpriseSqliteTriggerName = (typeof enterpriseSqliteTriggerNames)[number];
@@ -665,6 +753,16 @@ export const enterpriseSqliteTriggers = Object.freeze([
     table: "memory_items",
     ddl: trgMemoryItemsFtsUpdateDdl,
   },
+  {
+    name: "trg_audit_events_append_only_update",
+    table: "audit_events",
+    ddl: trgAuditEventsAppendOnlyUpdateDdl,
+  },
+  {
+    name: "trg_audit_events_append_only_delete",
+    table: "audit_events",
+    ddl: trgAuditEventsAppendOnlyDeleteDdl,
+  },
 ] as const);
 
 const idxUsersTenantStatusDdl =
@@ -720,6 +818,15 @@ const idxFeedbackActorCreatedDdl = [
   "(tenant_id, actor_user_id, created_at_ms DESC)",
   "WHERE actor_user_id IS NOT NULL;",
 ].join("\n");
+const idxAuditEventsTenantOperationDdl = [
+  "CREATE INDEX IF NOT EXISTS idx_audit_events_tenant_operation ON audit_events",
+  "(tenant_id, operation, outcome, reason, memory_id, recorded_at_ms, event_id);",
+].join("\n");
+const idxAuditEventsOwnerReferenceDdl = [
+  "CREATE INDEX IF NOT EXISTS idx_audit_events_owner_reference ON audit_events",
+  "(owner_tenant_id, reference_kind, reference_id, tenant_id, recorded_at_ms, event_id)",
+  "WHERE owner_tenant_id IS NOT NULL;",
+].join("\n");
 
 export const enterpriseSqliteIndexNames = Object.freeze([
   "idx_users_tenant_status",
@@ -737,6 +844,8 @@ export const enterpriseSqliteIndexNames = Object.freeze([
   "idx_memory_evidence_links_memory",
   "idx_feedback_memory_status",
   "idx_feedback_actor_created",
+  "idx_audit_events_tenant_operation",
+  "idx_audit_events_owner_reference",
 ] as const);
 
 export type EnterpriseSqliteIndexName = (typeof enterpriseSqliteIndexNames)[number];
@@ -832,6 +941,18 @@ export const enterpriseSqliteIndexes = Object.freeze([
     unique: false,
     ddl: idxFeedbackActorCreatedDdl,
   },
+  {
+    name: "idx_audit_events_tenant_operation",
+    table: "audit_events",
+    unique: false,
+    ddl: idxAuditEventsTenantOperationDdl,
+  },
+  {
+    name: "idx_audit_events_owner_reference",
+    table: "audit_events",
+    unique: false,
+    ddl: idxAuditEventsOwnerReferenceDdl,
+  },
 ] as const satisfies readonly SqliteIndexMetadata<
   EnterpriseSqliteIndexName,
   EnterpriseSqliteTableName
@@ -845,7 +966,7 @@ export const enterpriseSqliteSchemaStatements = Object.freeze([
 
 export const enterpriseSqliteSchemaSql = `${enterpriseSqliteSchemaStatements.join("\n\n")}\n`;
 
-export const enterpriseSqliteSchemaVersion = 2 as const;
+export const enterpriseSqliteSchemaVersion = 3 as const;
 
 export const enterpriseSqliteSchema: SqliteSchemaMetadata<
   EnterpriseSqliteTableName,
