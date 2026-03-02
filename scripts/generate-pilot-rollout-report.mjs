@@ -144,14 +144,32 @@ function parseTelemetryEvent(line, lineNumber) {
   return parsed;
 }
 
-export function parseTelemetryEvents(source) {
+function attachInvalidCount(events, invalidCount) {
+  Object.defineProperty(events, "invalidCount", {
+    value: invalidCount,
+    writable: true,
+    configurable: true,
+    enumerable: false,
+  });
+  return events;
+}
+
+export function parseTelemetryEvents(source, { allowInvalid = false } = {}) {
   if (Array.isArray(source)) {
-    return source.map((event, index) => {
+    const events = [];
+    let invalidCount = 0;
+    for (let index = 0; index < source.length; index += 1) {
+      const event = source[index];
       if (!event || typeof event !== "object" || Array.isArray(event)) {
+        if (allowInvalid) {
+          invalidCount += 1;
+          continue;
+        }
         throw new Error(`Telemetry array entry ${index} must be a JSON object.`);
       }
-      return event;
-    });
+      events.push(event);
+    }
+    return attachInvalidCount(events, invalidCount);
   }
 
   const text = String(source ?? "");
@@ -166,15 +184,19 @@ export function parseTelemetryEvents(source) {
       parsed = JSON.parse(trimmed);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      throw new Error(`Invalid JSON telemetry array: ${message}`);
+      if (!allowInvalid) {
+        throw new Error(`Invalid JSON telemetry array: ${message}`);
+      }
+      return attachInvalidCount([], 1);
     }
     if (!Array.isArray(parsed)) {
       throw new Error("Telemetry input must be a JSON array or NDJSON stream of objects.");
     }
-    return parseTelemetryEvents(parsed);
+    return parseTelemetryEvents(parsed, { allowInvalid });
   }
 
   const events = [];
+  let invalidCount = 0;
   const lines = text.split(/\r?\n/u);
   for (let index = 0; index < lines.length; index += 1) {
     const raw = lines[index];
@@ -182,9 +204,16 @@ export function parseTelemetryEvents(source) {
     if (!line) {
       continue;
     }
-    events.push(parseTelemetryEvent(line, index + 1));
+    try {
+      events.push(parseTelemetryEvent(line, index + 1));
+    } catch (error) {
+      if (!allowInvalid) {
+        throw error;
+      }
+      invalidCount += 1;
+    }
   }
-  return events;
+  return attachInvalidCount(events, invalidCount);
 }
 
 function parseOutcomeToken(value) {
@@ -226,12 +255,9 @@ function classifySuccess(record, index) {
     );
   }
   if (typeof explicit === "string") {
-    const token = normalizeToken(explicit);
-    if (token === "true" || token === "1") {
-      return true;
-    }
-    if (token === "false" || token === "0") {
-      return false;
+    const parsedExplicit = parseOutcomeToken(explicit);
+    if (typeof parsedExplicit === "boolean") {
+      return parsedExplicit;
     }
     throw new Error(
       `Telemetry event at index ${index} has unsupported explicit outcome value: ${JSON.stringify(explicit)}`,
@@ -244,7 +270,16 @@ function classifySuccess(record, index) {
   }
 
   const outcomeRaw = pickFirst(record, OUTCOME_KEYS);
+  if (typeof outcomeRaw === "boolean") {
+    return outcomeRaw;
+  }
   if (typeof outcomeRaw === "number" && Number.isFinite(outcomeRaw)) {
+    if (outcomeRaw === 1) {
+      return true;
+    }
+    if (outcomeRaw === 0) {
+      return false;
+    }
     if (outcomeRaw >= 200 && outcomeRaw < 400) {
       return true;
     }
@@ -327,7 +362,9 @@ function extractAnomalyType(record) {
 function extractTimestamp(record, index) {
   const timestamp = toIsoTimestamp(pickFirst(record, TIMESTAMP_KEYS));
   if (!timestamp) {
-    throw new Error(`Telemetry event at index ${index} is missing required field: timestamp.`);
+    throw new Error(
+      `Telemetry event at index ${index} is missing required field: timestamp (RFC3339 format required).`,
+    );
   }
   return timestamp;
 }
@@ -424,7 +461,8 @@ export function generatePilotRolloutReport(events, { allowInvalid = false } = {}
 
   const latencies = [];
   const timestamps = [];
-  let invalidEventCount = 0;
+  let invalidEventCount =
+    Number.isInteger(events.invalidCount) && events.invalidCount > 0 ? events.invalidCount : 0;
 
   for (let index = 0; index < events.length; index += 1) {
     const event = events[index];
@@ -616,7 +654,7 @@ export async function main(argv = process.argv.slice(2)) {
   }
 
   const rawInput = await readInput(parsed.input);
-  const events = parseTelemetryEvents(rawInput);
+  const events = parseTelemetryEvents(rawInput, { allowInvalid: parsed.allowInvalid });
   const report = generatePilotRolloutReport(events, { allowInvalid: parsed.allowInvalid });
   const output = `${JSON.stringify(report, null, parsed.compact ? 0 : 2)}\n`;
 

@@ -230,6 +230,14 @@ test("pilot rollout report parses numeric status codes and compatible outcome to
       latencyMs: 11,
     },
     {
+      timestamp: "2026-03-01T10:00:01.500Z",
+      team: "team-alpha",
+      project: "project-x",
+      operation: "policy_decision_update",
+      success: "success",
+      latencyMs: 11,
+    },
+    {
       timestamp: "2026-03-01T10:00:02.000Z",
       team: "team-alpha",
       project: "project-x",
@@ -246,12 +254,29 @@ test("pilot rollout report parses numeric status codes and compatible outcome to
       latencyMs: 13,
       failureCode: "INTERNAL",
     },
+    {
+      timestamp: "2026-03-01T10:00:03.100Z",
+      team: "team-alpha",
+      project: "project-x",
+      operation: "context",
+      status: 1,
+      latencyMs: 12,
+    },
+    {
+      timestamp: "2026-03-01T10:00:03.200Z",
+      team: "team-alpha",
+      project: "project-x",
+      operation: "context",
+      status: 0,
+      latencyMs: 12,
+      failureCode: "ZERO_STATUS",
+    },
   ]);
 
-  assert.equal(report.requestVolume, 4);
-  assert.equal(report.successCount, 3);
-  assert.equal(report.failureCount, 1);
-  assert.deepEqual(report.failureCodeHistogram, { INTERNAL: 1 });
+  assert.equal(report.requestVolume, 7);
+  assert.equal(report.successCount, 5);
+  assert.equal(report.failureCount, 2);
+  assert.deepEqual(report.failureCodeHistogram, { INTERNAL: 1, ZERO_STATUS: 1 });
 });
 
 test("pilot rollout report rejects ambiguous timestamp formats", () => {
@@ -272,29 +297,29 @@ test("pilot rollout report rejects ambiguous timestamp formats", () => {
 });
 
 test("pilot rollout report allow-invalid mode skips malformed events and reports invalid count", () => {
-  const report = generatePilotRolloutReport(
-    [
-      {
-        timestamp: "2026-03-01T10:00:00.000Z",
-        team: "team-alpha",
-        project: "project-x",
-        operation: "context",
-        status: "ok",
-        latencyMs: 10,
-      },
-      {
-        timestamp: "2026-03-01T10:00:01.000Z",
-        team: "team-alpha",
-        project: "project-x",
-        operation: "context",
-        latencyMs: 10,
-      },
-    ],
-    { allowInvalid: true },
-  );
+  const ndjson = [
+    JSON.stringify({
+      timestamp: "2026-03-01T10:00:00.000Z",
+      team: "team-alpha",
+      project: "project-x",
+      operation: "context",
+      status: "ok",
+      latencyMs: 10,
+    }),
+    "this is not json",
+    JSON.stringify({
+      timestamp: "2026-03-01T10:00:01.000Z",
+      team: "team-alpha",
+      project: "project-x",
+      operation: "context",
+      latencyMs: 10,
+    }),
+  ].join("\n");
+  const parsed = parseTelemetryEvents(ndjson, { allowInvalid: true });
+  const report = generatePilotRolloutReport(parsed, { allowInvalid: true });
 
   assert.equal(report.requestVolume, 1);
-  assert.equal(report.invalidEventCount, 1);
+  assert.equal(report.invalidEventCount, 2);
   assert.equal(report.successCount, 1);
   assert.equal(report.failureCount, 0);
 });
