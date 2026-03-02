@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { startApiServer } from "../src/server.mjs";
 import { resetStore } from "../src/core.mjs";
+import { createInMemoryApiTelemetry } from "../src/telemetry.mjs";
 
 const CLI_PATH = resolve(process.cwd(), "apps/cli/src/index.mjs");
 
@@ -32,9 +33,139 @@ function runCli(args, stdin = "") {
   });
 }
 
+test("http server exposes prometheus metrics and deterministic structured telemetry events", async () => {
+  resetStore();
+  const events = [];
+  const telemetry = createInMemoryApiTelemetry({
+    logger(event) {
+      events.push(event);
+    },
+  });
+  const { server, host, port } = await startApiServer({
+    host: "127.0.0.1",
+    port: 0,
+    stateFile: null,
+    telemetry,
+  });
+  const base = `http://${host}:${port}`;
+
+  try {
+    const initialMetricsRes = await fetch(`${base}/metrics`);
+    assert.equal(initialMetricsRes.status, 200);
+    assert.match(initialMetricsRes.headers.get("content-type") ?? "", /^text\/plain/i);
+    const initialMetrics = await initialMetricsRes.text();
+    assert.match(initialMetrics, /# HELP ums_api_operation_requests_total/);
+    assert.match(initialMetrics, /# TYPE ums_api_operation_latency_ms histogram/);
+
+    const shadowRes = await fetch(`${base}/v1/shadow_write`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-ums-store": "tenant-telemetry" },
+      body: JSON.stringify({
+        profile: "telemetry-http",
+        statement: "Structured telemetry should include trace context.",
+        sourceEventIds: ["evt-telemetry-shadow-1"],
+        evidenceEventIds: ["evt-telemetry-shadow-1"],
+      }),
+    });
+    assert.equal(shadowRes.status, 200);
+    const shadowBody = await shadowRes.json();
+    assert.equal(shadowBody.ok, true);
+    assert.equal(shadowBody.data.operation, "shadow_write");
+    assert.ok(shadowBody.data.trace);
+    assert.ok(shadowBody.data.trace.payload);
+
+    const failureRes = await fetch(`${base}/v1/misconception_update`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-ums-store": "tenant-telemetry" },
+      body: JSON.stringify({
+        profile: "telemetry-http",
+        misconceptionKey: "missing-evidence",
+        signal: "harmful",
+      }),
+    });
+    assert.equal(failureRes.status, 400);
+    const failureBody = await failureRes.json();
+    assert.equal(failureBody.ok, false);
+    assert.equal(failureBody.error.code, "BAD_REQUEST");
+
+    const unsupportedRes = await fetch(`${base}/v1/operation-never-implemented`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-ums-store": "tenant-telemetry" },
+      body: JSON.stringify({ profile: "telemetry-http" }),
+    });
+    assert.equal(unsupportedRes.status, 404);
+    const unsupportedBody = await unsupportedRes.json();
+    assert.equal(unsupportedBody.ok, false);
+    assert.equal(unsupportedBody.error.code, "UNSUPPORTED_OPERATION");
+
+    const metricsRes = await fetch(`${base}/metrics`);
+    assert.equal(metricsRes.status, 200);
+    assert.match(metricsRes.headers.get("content-type") ?? "", /^text\/plain/i);
+    const metrics = await metricsRes.text();
+    assert.match(
+      metrics,
+      /ums_api_operation_requests_total\{operation="misconception_update",result="failure"\} 1/,
+    );
+    assert.match(
+      metrics,
+      /ums_api_operation_requests_total\{operation="shadow_write",result="success"\} 1/,
+    );
+    assert.match(
+      metrics,
+      /ums_api_operation_latency_ms_count\{operation="misconception_update",result="failure"\} 1/,
+    );
+    assert.match(
+      metrics,
+      /ums_api_operation_latency_ms_count\{operation="shadow_write",result="success"\} 1/,
+    );
+    assert.doesNotMatch(
+      metrics,
+      /ums_api_operation_requests_total\{operation="operation-never-implemented",result="failure"\}/,
+    );
+
+    assert.equal(events.length, 2);
+    const shadowEvent = events.find((event) => event.operation === "shadow_write");
+    assert.ok(shadowEvent);
+    assert.equal(shadowEvent.event, "ums.api.operation.result");
+    assert.equal(shadowEvent.service, "ums-api");
+    assert.equal(shadowEvent.status, "success");
+    assert.equal(shadowEvent.statusCode, 200);
+    assert.equal(typeof shadowEvent.latencyMs, "number");
+    assert.equal(shadowEvent.latencyMs >= 0, true);
+    assert.equal(shadowEvent.deterministic, true);
+    assert.deepEqual(shadowEvent.tracePayload, shadowBody.data.trace.payload);
+    assert.equal(shadowEvent.traceId, shadowBody.data.trace.traceId);
+    assert.equal(shadowEvent.spanId, shadowBody.data.trace.spanId);
+    assert.equal(shadowEvent.parentSpanId, shadowBody.data.trace.parentSpanId);
+    assert.equal(shadowEvent.trace_id, shadowBody.data.trace.traceId);
+    assert.equal(shadowEvent.span_id, shadowBody.data.trace.spanId);
+    assert.equal(shadowEvent.parent_span_id, shadowBody.data.trace.parentSpanId);
+    assert.equal(shadowEvent.trace_flags, "01");
+
+    const failureEvent = events.find((event) => event.operation === "misconception_update");
+    assert.ok(failureEvent);
+    assert.equal(failureEvent.event, "ums.api.operation.result");
+    assert.equal(failureEvent.service, "ums-api");
+    assert.equal(failureEvent.status, "failure");
+    assert.equal(failureEvent.statusCode, 400);
+    assert.equal(failureEvent.failureCode, "BAD_REQUEST");
+    assert.equal(typeof failureEvent.latencyMs, "number");
+    assert.equal(failureEvent.latencyMs >= 0, true);
+    assert.equal(failureEvent.deterministic, true);
+  } finally {
+    await new Promise((resolvePromise, rejectPromise) => {
+      server.close((error) => (error ? rejectPromise(error) : resolvePromise()));
+    });
+  }
+});
+
 test("http server exposes deterministic JSON operation routes", async () => {
   resetStore();
-  const { server, host, port } = await startApiServer({ host: "127.0.0.1", port: 0, stateFile: null });
+  const { server, host, port } = await startApiServer({
+    host: "127.0.0.1",
+    port: 0,
+    stateFile: null,
+  });
   const address = server.address();
   assert(address && typeof address === "object");
   const base = `http://${host}:${address.port}`;
@@ -59,8 +190,8 @@ test("http server exposes deterministic JSON operation routes", async () => {
       headers: { "content-type": "application/json", "x-ums-store": "coding-agent" },
       body: JSON.stringify({
         profile: "api-test",
-        events: [{ type: "note", source: "test", content: "deterministic server response" }]
-      })
+        events: [{ type: "note", source: "test", content: "deterministic server response" }],
+      }),
     });
     assert.equal(ingestRes.status, 200);
     const ingestBody = await ingestRes.json();
@@ -560,7 +691,10 @@ test("ums-memory-d6q.3.11/ums-memory-d6q.4.11/ums-memory-d6q.4.12/ums-memory-d6q
     const curriculumBody = await curriculumRes.json();
     assert.equal(curriculumBody.ok, true);
     assert.equal(curriculumBody.data.action, "created");
-    assert.equal(curriculumBody.data.planItem.metadata.explanation.summary, "Deterministic recommendation with evidence-backed rationale.");
+    assert.equal(
+      curriculumBody.data.planItem.metadata.explanation.summary,
+      "Deterministic recommendation with evidence-backed rationale.",
+    );
 
     const curriculumReplayRes = await fetch(`${base}/v1/curriculum_plan_update`, {
       method: "POST",
@@ -640,8 +774,15 @@ test("ums-memory-d6q.3.11/ums-memory-d6q.4.11/ums-memory-d6q.4.12/ums-memory-d6q
         metadata: {
           security: { promptInjectionDetected: true, quarantined: true },
           allowlist: { requestedSpace: "space-b", allowedSpaces: ["space-a"], authorized: false },
-          degraded: { enabled: true, reason: "llm_unavailable", capabilities: { llm: false, index: false } },
-          audit: { decisionTraceId: "trace-http-pol-1", checklist: ["incident-response", "rollback"] },
+          degraded: {
+            enabled: true,
+            reason: "llm_unavailable",
+            capabilities: { llm: false, index: false },
+          },
+          audit: {
+            decisionTraceId: "trace-http-pol-1",
+            checklist: ["incident-response", "rollback"],
+          },
         },
       }),
     });
@@ -653,7 +794,10 @@ test("ums-memory-d6q.3.11/ums-memory-d6q.4.11/ums-memory-d6q.4.12/ums-memory-d6q
     assert.equal(policyBody.data.decision.metadata.security.quarantined, true);
     assert.equal(policyBody.data.decision.metadata.allowlist.authorized, false);
     assert.equal(policyBody.data.decision.metadata.degraded.enabled, true);
-    assert.deepEqual(policyBody.data.decision.metadata.audit.checklist, ["incident-response", "rollback"]);
+    assert.deepEqual(policyBody.data.decision.metadata.audit.checklist, [
+      "incident-response",
+      "rollback",
+    ]);
 
     const policyReplayRes = await fetch(`${base}/v1/policy_decision_update`, {
       method: "POST",
@@ -667,8 +811,15 @@ test("ums-memory-d6q.3.11/ums-memory-d6q.4.11/ums-memory-d6q.4.12/ums-memory-d6q
         metadata: {
           security: { promptInjectionDetected: true, quarantined: true },
           allowlist: { requestedSpace: "space-b", allowedSpaces: ["space-a"], authorized: false },
-          degraded: { enabled: true, reason: "llm_unavailable", capabilities: { llm: false, index: false } },
-          audit: { decisionTraceId: "trace-http-pol-1", checklist: ["incident-response", "rollback"] },
+          degraded: {
+            enabled: true,
+            reason: "llm_unavailable",
+            capabilities: { llm: false, index: false },
+          },
+          audit: {
+            decisionTraceId: "trace-http-pol-1",
+            checklist: ["incident-response", "rollback"],
+          },
         },
       }),
     });

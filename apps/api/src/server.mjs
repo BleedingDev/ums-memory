@@ -4,6 +4,7 @@ import {
   executeRuntimeOperation,
   listRuntimeOperations,
 } from "./runtime-adapter.mjs";
+import { createInMemoryApiTelemetry, PROMETHEUS_CONTENT_TYPE } from "./telemetry.mjs";
 
 const HOST = process.env.UMS_API_HOST ?? "127.0.0.1";
 const PORT = Number.parseInt(process.env.UMS_API_PORT ?? "8787", 10);
@@ -13,7 +14,16 @@ function json(res, statusCode, body) {
   const payload = JSON.stringify(body);
   res.writeHead(statusCode, {
     "content-type": "application/json; charset=utf-8",
-    "content-length": Buffer.byteLength(payload)
+    "content-length": Buffer.byteLength(payload),
+  });
+  res.end(payload);
+}
+
+function text(res, statusCode, body, contentType = PROMETHEUS_CONTENT_TYPE) {
+  const payload = String(body ?? "");
+  res.writeHead(statusCode, {
+    "content-type": contentType,
+    "content-length": Buffer.byteLength(payload),
   });
   res.end(payload);
 }
@@ -21,14 +31,14 @@ function json(res, statusCode, body) {
 function notFound(res) {
   return json(res, 404, {
     ok: false,
-    error: { code: "NOT_FOUND", message: "Route not found." }
+    error: { code: "NOT_FOUND", message: "Route not found." },
   });
 }
 
-function methodNotAllowed(res) {
+function methodNotAllowed(res, message = "Only POST is supported for operation routes.") {
   return json(res, 405, {
     ok: false,
-    error: { code: "METHOD_NOT_ALLOWED", message: "Only POST is supported for operation routes." }
+    error: { code: "METHOD_NOT_ALLOWED", message },
   });
 }
 
@@ -71,9 +81,9 @@ function toErrorResponse(error) {
         ok: false,
         error: {
           code: "INVALID_JSON",
-          message: "Request body must be valid JSON."
-        }
-      }
+          message: "Request body must be valid JSON.",
+        },
+      },
     };
   }
   if (error && typeof error === "object" && error.code === "UNSUPPORTED_OPERATION") {
@@ -83,9 +93,9 @@ function toErrorResponse(error) {
         ok: false,
         error: {
           code: "UNSUPPORTED_OPERATION",
-          message: error.message
-        }
-      }
+          message: error.message,
+        },
+      },
     };
   }
   if (error && typeof error === "object" && error.code === "STATE_LOCK_TIMEOUT") {
@@ -95,9 +105,9 @@ function toErrorResponse(error) {
         ok: false,
         error: {
           code: "STATE_LOCK_TIMEOUT",
-          message: error.message
-        }
-      }
+          message: error.message,
+        },
+      },
     };
   }
   if (error && typeof error === "object" && error.code === "STATE_FILE_CORRUPT") {
@@ -107,9 +117,9 @@ function toErrorResponse(error) {
         ok: false,
         error: {
           code: "STATE_FILE_CORRUPT",
-          message: error.message
-        }
-      }
+          message: error.message,
+        },
+      },
     };
   }
   if (error && typeof error === "object" && error.code === "RUNTIME_ADAPTER_LOAD_ERROR") {
@@ -119,9 +129,9 @@ function toErrorResponse(error) {
         ok: false,
         error: {
           code: "RUNTIME_ADAPTER_LOAD_ERROR",
-          message: error.message
-        }
-      }
+          message: error.message,
+        },
+      },
     };
   }
   if (error && typeof error === "object" && error.code === "RUNTIME_ADAPTER_CONTRACT_ERROR") {
@@ -131,9 +141,9 @@ function toErrorResponse(error) {
         ok: false,
         error: {
           code: "RUNTIME_ADAPTER_CONTRACT_ERROR",
-          message: error.message
-        }
-      }
+          message: error.message,
+        },
+      },
     };
   }
   return {
@@ -142,15 +152,28 @@ function toErrorResponse(error) {
       ok: false,
       error: {
         code: "BAD_REQUEST",
-        message: error instanceof Error ? error.message : "Bad request."
-      }
-    }
+        message: error instanceof Error ? error.message : "Bad request.",
+      },
+    },
   };
+}
+
+function resolveTelemetry(telemetry) {
+  if (
+    telemetry &&
+    typeof telemetry.recordOperationResult === "function" &&
+    typeof telemetry.renderPrometheusMetrics === "function"
+  ) {
+    return telemetry;
+  }
+  return createInMemoryApiTelemetry();
 }
 
 export function createApiServer({
   stateFile = DEFAULT_RUNTIME_STATE_FILE,
+  telemetry = createInMemoryApiTelemetry(),
 } = {}) {
+  const activeTelemetry = resolveTelemetry(telemetry);
   return createServer(async (req, res) => {
     const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
     if (url.pathname === "/" && req.method === "GET") {
@@ -174,17 +197,50 @@ export function createApiServer({
       }
     }
 
+    if (url.pathname === "/metrics") {
+      if (req.method !== "GET") {
+        return methodNotAllowed(res, "Only GET is supported for /metrics.");
+      }
+      return text(res, 200, activeTelemetry.renderPrometheusMetrics());
+    }
+
     const operation = parseOperation(url.pathname);
     if (!operation) {
       return notFound(res);
     }
+
+    const operationStart = process.hrtime.bigint();
+    const recordOperationTelemetry = ({
+      statusCode,
+      result,
+      responseData = null,
+      requestBody = null,
+      failureCode = null,
+    }) => {
+      const latencyMs = Number(process.hrtime.bigint() - operationStart) / 1_000_000;
+      try {
+        activeTelemetry.recordOperationResult({
+          operation,
+          result,
+          statusCode,
+          latencyMs,
+          responseData,
+          requestBody,
+          failureCode,
+        });
+      } catch {
+        // Telemetry failures must not alter API responses.
+      }
+    };
+
     if (req.method !== "POST") {
       return methodNotAllowed(res);
     }
 
+    let requestBody;
     try {
       const body = await parseJsonBody(req);
-      let requestBody = body;
+      requestBody = body;
       const headerStore = parseStoreHeader(req);
       if (
         headerStore &&
@@ -200,9 +256,30 @@ export function createApiServer({
         requestBody,
         stateFile,
       });
+      recordOperationTelemetry({
+        statusCode: 200,
+        result: "success",
+        responseData: data,
+        requestBody,
+      });
       return json(res, 200, { ok: true, data });
     } catch (error) {
       const failure = toErrorResponse(error);
+      const failureCode =
+        failure.body &&
+        typeof failure.body === "object" &&
+        failure.body.error &&
+        typeof failure.body.error === "object"
+          ? failure.body.error.code
+          : null;
+      if (failureCode !== "UNSUPPORTED_OPERATION") {
+        recordOperationTelemetry({
+          statusCode: failure.statusCode,
+          result: "failure",
+          requestBody,
+          failureCode,
+        });
+      }
       return json(res, failure.statusCode, failure.body);
     }
   });
@@ -212,8 +289,10 @@ export function startApiServer({
   host = HOST,
   port = PORT,
   stateFile = DEFAULT_RUNTIME_STATE_FILE,
+  telemetry = createInMemoryApiTelemetry(),
 } = {}) {
-  const server = createApiServer({ stateFile });
+  const activeTelemetry = resolveTelemetry(telemetry);
+  const server = createApiServer({ stateFile, telemetry: activeTelemetry });
   return new Promise((resolve, reject) => {
     const onError = (error) => {
       server.off("error", onError);
@@ -230,7 +309,8 @@ export function startApiServer({
       resolve({
         server,
         host,
-        port: resolvedPort
+        port: resolvedPort,
+        telemetry: activeTelemetry,
       });
     });
   });
@@ -251,7 +331,8 @@ if (isMainModule) {
         host: HOST,
         port: PORT,
         stateFile: DEFAULT_RUNTIME_STATE_FILE,
-      }))
+      }),
+    )
     .then(({ service, host, port }) => {
       activeServerHandle = service;
       process.stdout.write(`UMS API listening on http://${host}:${port}\n`);
@@ -259,7 +340,9 @@ if (isMainModule) {
         const snapshot = service.status();
         if (snapshot.phase === "failed") {
           clearInterval(supervisionWatcher);
-          process.stderr.write(`UMS API supervision failed: ${snapshot.lastError ?? "unknown failure"}\n`);
+          process.stderr.write(
+            `UMS API supervision failed: ${snapshot.lastError ?? "unknown failure"}\n`,
+          );
           process.exit(1);
           return;
         }
