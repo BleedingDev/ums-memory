@@ -387,6 +387,45 @@ export const AuthorizationResponseSchema = Schema.Struct({
   evaluatedAtMillis: NonNegativeIntSchema,
 });
 
+export const TenantRouteResolutionSourceSchema = Schema.Literals([
+  "tenant_id_claim",
+  "tenant_slug_claim",
+  "issuer_binding",
+]);
+
+export const TenantRouteDenyReasonCodeSchema = Schema.Literals([
+  "TENANT_ROUTE_MISSING",
+  "TENANT_ROUTE_CONFLICT",
+  "TENANT_ISSUER_MISMATCH",
+]);
+
+export const TenantCatalogEntrySchema = Schema.Struct({
+  tenantId: TenantIdSchema,
+  tenantSlug: NonEmptyTrimmedStringSchema,
+});
+
+export const TenantIssuerBindingSchema = Schema.Struct({
+  issuer: NonEmptyTrimmedStringSchema,
+  tenantId: TenantIdSchema,
+});
+
+export const TenantRoutingRequestSchema = Schema.Struct({
+  tenantIdClaim: Schema.optional(TenantIdSchema),
+  tenantSlugClaim: Schema.optional(NonEmptyTrimmedStringSchema),
+  issuer: Schema.optional(NonEmptyTrimmedStringSchema),
+  tenants: Schema.Array(TenantCatalogEntrySchema),
+  issuerBindings: Schema.Array(TenantIssuerBindingSchema),
+});
+
+export const TenantRoutingResponseSchema = Schema.Struct({
+  resolved: Schema.Boolean,
+  tenantId: Schema.optional(TenantIdSchema),
+  source: Schema.optional(TenantRouteResolutionSourceSchema),
+  denyReasonCode: Schema.optional(TenantRouteDenyReasonCodeSchema),
+  candidateTenantIds: Schema.Array(TenantIdSchema),
+  evaluatedAtMillis: NonNegativeIntSchema,
+});
+
 export const IngestionRecordSchema = Schema.Struct({
   recordId: EvidenceIdSchema,
   content: Schema.String,
@@ -670,6 +709,24 @@ export type AuthorizationRequest = Schema.Schema.Type<
 >;
 export type AuthorizationResponse = Schema.Schema.Type<
   typeof AuthorizationResponseSchema
+>;
+export type TenantRouteResolutionSource = Schema.Schema.Type<
+  typeof TenantRouteResolutionSourceSchema
+>;
+export type TenantRouteDenyReasonCode = Schema.Schema.Type<
+  typeof TenantRouteDenyReasonCodeSchema
+>;
+export type TenantCatalogEntry = Schema.Schema.Type<
+  typeof TenantCatalogEntrySchema
+>;
+export type TenantIssuerBinding = Schema.Schema.Type<
+  typeof TenantIssuerBindingSchema
+>;
+export type TenantRoutingRequest = Schema.Schema.Type<
+  typeof TenantRoutingRequestSchema
+>;
+export type TenantRoutingResponse = Schema.Schema.Type<
+  typeof TenantRoutingResponseSchema
 >;
 export type IngestionRecord = Schema.Schema.Type<typeof IngestionRecordSchema>;
 export type IngestionRequest = Schema.Schema.Type<

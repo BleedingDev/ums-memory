@@ -32,6 +32,10 @@ import {
   deterministicTestStorageLayer,
   noopStorageLayer,
 } from "./services/storage-service.js";
+import {
+  deterministicTestTenantRoutingLayer,
+  noopTenantRoutingLayer,
+} from "./services/tenant-routing-service.js";
 
 export const serviceBoundariesLayer = Layer.mergeAll(
   noopAuthorizationLayer,
@@ -41,7 +45,8 @@ export const serviceBoundariesLayer = Layer.mergeAll(
   noopPolicyPackPluginLayer,
   noopPolicyLayer,
   noopIngestionLayer,
-  noopMemoryLifecycleLayer
+  noopMemoryLifecycleLayer,
+  noopTenantRoutingLayer
 );
 
 export const deterministicTestServiceBoundariesLayer = Layer.mergeAll(
@@ -52,5 +57,6 @@ export const deterministicTestServiceBoundariesLayer = Layer.mergeAll(
   deterministicTestPolicyPackPluginLayer,
   deterministicTestPolicyLayer,
   deterministicTestIngestionLayer,
-  deterministicTestMemoryLifecycleLayer
+  deterministicTestMemoryLifecycleLayer,
+  deterministicTestTenantRoutingLayer
 );

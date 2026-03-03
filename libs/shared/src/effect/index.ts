@@ -15,3 +15,4 @@ export * from "./services/policy-pack-plugin-service.js";
 export * from "./services/policy-service.js";
 export * from "./services/retrieval-service.js";
 export * from "./services/storage-service.js";
+export * from "./services/tenant-routing-service.js";

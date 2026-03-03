@@ -4,6 +4,7 @@ import {
   EvidenceIdSchema,
   MemoryIdSchema,
   SpaceIdSchema,
+  TenantIdSchema,
   UserIdSchema,
 } from "./contracts/ids.js";
 import {
@@ -12,6 +13,7 @@ import {
   AuthorizationRoleSchema,
   MemoryLifecycleOperationSchema,
   MemoryLifecyclePreconditionReasonCodeSchema,
+  TenantRouteDenyReasonCodeSchema,
 } from "./contracts/services.js";
 
 const RetrievalScoreSchema = Schema.Number.check(
@@ -101,6 +103,17 @@ export class IngestionDuplicateError extends Schema.TaggedErrorClass<IngestionDu
   }
 ) {}
 
+export class TenantRoutingDeniedError extends Schema.TaggedErrorClass<TenantRoutingDeniedError>()(
+  "TenantRoutingDeniedError",
+  {
+    denyReasonCode: TenantRouteDenyReasonCodeSchema,
+    tenantId: Schema.optional(TenantIdSchema),
+    candidateTenantIds: Schema.Array(TenantIdSchema),
+    evaluatedAtMillis: NonNegativeIntSchema,
+    message: Schema.String,
+  }
+) {}
+
 export class MemoryLifecyclePreconditionError extends Schema.TaggedErrorClass<MemoryLifecyclePreconditionError>()(
   "MemoryLifecyclePreconditionError",
   {
@@ -134,6 +147,10 @@ export type AuthorizationServiceError =
 export type IngestionServiceError =
   | ContractValidationError
   | IngestionDuplicateError;
+
+export type TenantRoutingServiceError =
+  | ContractValidationError
+  | TenantRoutingDeniedError;
 
 export type MemoryLifecycleServiceError =
   | ContractValidationError

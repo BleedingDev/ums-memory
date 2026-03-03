@@ -13,6 +13,8 @@ import {
   PolicyRequestSchema,
   RetrievalRequestSchema,
   StorageDeleteRequestSchema,
+  TenantRoutingRequestSchema,
+  TenantRoutingResponseSchema,
   StorageUpsertRequestSchema,
 } from "./services.js";
 
@@ -128,6 +130,28 @@ export const validateAuthorizationResponse = validateUnknownSync(
 export const decodeAuthorizationResponseEffect = decodeUnknownEffect(
   AuthorizationResponseSchema,
   "AuthorizationResponse"
+);
+
+export const decodeTenantRoutingRequest = decodeUnknownSync(
+  TenantRoutingRequestSchema
+);
+export const validateTenantRoutingRequest = validateUnknownSync(
+  TenantRoutingRequestSchema
+);
+export const decodeTenantRoutingRequestEffect = decodeUnknownEffect(
+  TenantRoutingRequestSchema,
+  "TenantRoutingRequest"
+);
+
+export const decodeTenantRoutingResponse = decodeUnknownSync(
+  TenantRoutingResponseSchema
+);
+export const validateTenantRoutingResponse = validateUnknownSync(
+  TenantRoutingResponseSchema
+);
+export const decodeTenantRoutingResponseEffect = decodeUnknownEffect(
+  TenantRoutingResponseSchema,
+  "TenantRoutingResponse"
 );
 
 export const decodeIngestionRequest = decodeUnknownSync(IngestionRequestSchema);
