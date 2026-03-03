@@ -4,6 +4,12 @@
     { "path": "./libs/shared" },
     { "path": "./apps/api" },
     { "path": "./apps/cli" },
-    { "path": "./apps/ums" }
+    { "path": "./apps/ums" },
+    { "path": "./apps/api/test" },
+    { "path": "./apps/api/bench" },
+    { "path": "./apps/cli/test" },
+    { "path": "./scripts" },
+    { "path": "./tests" },
+    { "path": "./benchmarks" }
   ]
 }

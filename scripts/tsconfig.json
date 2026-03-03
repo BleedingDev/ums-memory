@@ -1,0 +1,10 @@
+{
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "composite": true,
+    "noEmit": true,
+    "tsBuildInfoFile": "../dist/typecheck/scripts.tsbuildinfo"
+  },
+  "include": ["**/*.ts"],
+  "references": [{ "path": "../apps/api" }, { "path": "../libs/shared" }]
+}
