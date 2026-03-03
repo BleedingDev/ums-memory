@@ -1,6 +1,7 @@
+// oxlint-disable-next-line typescript-eslint/ban-ts-comment
 // @ts-nocheck
-
 import { createHash, createHmac } from "node:crypto";
+
 import { Effect } from "effect";
 
 const OPS = [
@@ -1427,7 +1428,7 @@ function mergeLearnerProfile(existing, incoming, operationAction) {
   };
 
   const timelineTimestamp = base.updatedAt ?? DEFAULT_VERSION_TIMESTAMP;
-  const provided = new Set(incoming.providedAttributes ?? []);
+  const provided = new Set(incoming.providedAttributes);
   const lineage = isPlainObject(existing.attributeLineage)
     ? { ...existing.attributeLineage }
     : {};
@@ -1543,10 +1544,6 @@ const INCIDENT_ESCALATION_IMMEDIATE_QUARANTINE_SEVERITIES = new Set([
 const MANUAL_OVERRIDE_ACTIONS = new Set(["suppress", "promote"]);
 const CLOCK_MODES = new Set(["auto", "interaction", "sleep"]);
 const RECALL_AUTH_MODES = new Set(["check", "grant", "revoke", "replace"]);
-const DEGRADATION_WARNINGS = Object.freeze([
-  "LLM_UNAVAILABLE",
-  "INDEX_UNAVAILABLE",
-]);
 
 const INJECTION_PATTERNS = Object.freeze([
   {

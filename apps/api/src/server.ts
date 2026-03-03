@@ -1,3 +1,4 @@
+import { once } from "node:events";
 import {
   createServer,
   type IncomingMessage,
@@ -31,13 +32,13 @@ interface ApiTelemetry {
   renderPrometheusMetrics(): string;
 }
 
-type RecordOperationTelemetryInput = {
+interface RecordOperationTelemetryInput {
   statusCode: number;
   result: "success" | "failure";
   responseData?: unknown;
   requestBody?: unknown;
   failureCode?: string | null;
-};
+}
 
 interface StartApiServerOptions {
   host?: string;
@@ -81,14 +82,13 @@ const ENABLE_CONSOLE_UI = parseBooleanFlag(
   process.env["UMS_API_ENABLE_CONSOLE_UI"]
 );
 const API_PREFIX = "/v1";
-const CONSOLE_SECURITY_HEADERS: Readonly<Record<string, string>> = Object.freeze(
-  {
+const CONSOLE_SECURITY_HEADERS: Readonly<Record<string, string>> =
+  Object.freeze({
     "content-security-policy":
       "default-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self'",
     "x-frame-options": "DENY",
     "x-content-type-options": "nosniff",
-  }
-);
+  });
 const CONSOLE_ROUTES: Readonly<Record<string, ConsoleRoute>> = Object.freeze({
   "/console": {
     body: CONSOLE_HTML,
@@ -134,12 +134,18 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
-function isAddressInfo(address: string | AddressInfo | null): address is AddressInfo {
+function isAddressInfo(
+  address: string | AddressInfo | null
+): address is AddressInfo {
   return (
     typeof address === "object" &&
     address !== null &&
     typeof address.port === "number"
   );
+}
+
+function isAbortError(error: unknown): boolean {
+  return isRecord(error) && error["name"] === "AbortError";
 }
 
 function hasErrorCode(
@@ -223,9 +229,11 @@ function parseOperation(pathname: string): string | null {
 function parseStoreHeader(req: IncomingMessage): string | null {
   const value = req.headers["x-ums-store"];
   if (Array.isArray(value)) {
-    return (
-      value.find((entry) => typeof entry === "string" && entry.trim()) ?? null
-    );
+    const normalized = value
+      .filter((entry): entry is string => typeof entry === "string")
+      .map((entry) => entry.trim())
+      .find(Boolean);
+    return normalized ?? null;
   }
   if (typeof value === "string" && value.trim()) {
     return value.trim();
@@ -245,7 +253,10 @@ async function parseJsonBody(req: IncomingMessage): Promise<unknown> {
   return JSON.parse(raw) as unknown;
 }
 
-function toErrorResponse(error: unknown): { statusCode: number; body: ApiErrorBody } {
+function toErrorResponse(error: unknown): {
+  statusCode: number;
+  body: ApiErrorBody;
+} {
   if (error instanceof SyntaxError) {
     return {
       statusCode: 400,
@@ -313,7 +324,10 @@ function toErrorResponse(error: unknown): { statusCode: number; body: ApiErrorBo
         ok: false,
         error: {
           code: "RUNTIME_ADAPTER_CONTRACT_ERROR",
-          message: toErrorMessage(error, "Runtime adapter contract is invalid."),
+          message: toErrorMessage(
+            error,
+            "Runtime adapter contract is invalid."
+          ),
         },
       },
     };
@@ -352,12 +366,12 @@ function resolveTelemetry(telemetry: unknown): ApiTelemetry {
     typeof telemetry["renderPrometheusMetrics"] === "function"
   ) {
     return {
-      recordOperationResult:
-        telemetry["recordOperationResult"] as ApiTelemetry["recordOperationResult"],
-      renderPrometheusMetrics:
-        telemetry[
-          "renderPrometheusMetrics"
-        ] as ApiTelemetry["renderPrometheusMetrics"],
+      recordOperationResult: telemetry[
+        "recordOperationResult"
+      ] as ApiTelemetry["recordOperationResult"],
+      renderPrometheusMetrics: telemetry[
+        "renderPrometheusMetrics"
+      ] as ApiTelemetry["renderPrometheusMetrics"],
     };
   }
   return createInMemoryApiTelemetry() as ApiTelemetry;
@@ -371,10 +385,22 @@ export function createApiServer({
   const activeTelemetry = resolveTelemetry(telemetry);
   const consoleUiEnabled = normalizeConsoleUiToggle(enableConsoleUi);
   return createServer(async (req, res) => {
-    const url = new URL(
-      req.url ?? "/",
-      `http://${req.headers.host ?? "localhost"}`
-    );
+    let url: URL;
+    try {
+      url = new URL(
+        req.url ?? "/",
+        `http://${req.headers.host ?? "localhost"}`
+      );
+    } catch {
+      json(res, 400, {
+        ok: false,
+        error: {
+          code: "BAD_REQUEST",
+          message: "Invalid request URL.",
+        },
+      });
+      return;
+    }
     if (url.pathname === "/" && req.method === "GET") {
       try {
         const operations = await listRuntimeOperations();
@@ -505,7 +531,7 @@ export function createApiServer({
   });
 }
 
-export function startApiServer({
+export async function startApiServer({
   host = HOST,
   port = PORT,
   stateFile = DEFAULT_RUNTIME_STATE_FILE,
@@ -518,24 +544,61 @@ export function startApiServer({
     telemetry: activeTelemetry,
     enableConsoleUi,
   });
-  return new Promise((resolve, reject) => {
-    const onError = (error: Error) => {
-      server.off("error", onError);
-      reject(error);
-    };
-    server.once("error", onError);
-    server.listen(port, host, () => {
-      server.off("error", onError);
-      const address = server.address();
-      const resolvedPort = isAddressInfo(address) ? address.port : port;
-      resolve({
-        server,
-        host,
-        port: resolvedPort,
-        telemetry: activeTelemetry,
+  const startupAbortController = new AbortController();
+  const waitForListening = async (): Promise<Error | null> => {
+    try {
+      await once(server, "listening", {
+        signal: startupAbortController.signal,
       });
-    });
-  });
+      return null;
+    } catch (error) {
+      if (isAbortError(error)) {
+        return null;
+      }
+      return error instanceof Error
+        ? error
+        : new Error(toErrorMessage(error, "Failed to start API server."));
+    }
+  };
+  const waitForError = async (): Promise<Error | null> => {
+    try {
+      const [error] = await once(server, "error", {
+        signal: startupAbortController.signal,
+      });
+      return error instanceof Error
+        ? error
+        : new Error(toErrorMessage(error, "Failed to start API server."));
+    } catch (error) {
+      if (isAbortError(error)) {
+        return null;
+      }
+      return error instanceof Error
+        ? error
+        : new Error(toErrorMessage(error, "Failed to start API server."));
+    }
+  };
+
+  try {
+    server.listen(port, host);
+    const startupFailure = await Promise.race([
+      waitForListening(),
+      waitForError(),
+    ]);
+    if (startupFailure instanceof Error) {
+      throw startupFailure;
+    }
+  } finally {
+    startupAbortController.abort();
+  }
+
+  const address = server.address();
+  const resolvedPort = isAddressInfo(address) ? address.port : port;
+  return {
+    server,
+    host,
+    port: resolvedPort,
+    telemetry: activeTelemetry,
+  };
 }
 
 const importMeta = import.meta as ImportMeta & { main?: boolean };
@@ -547,57 +610,64 @@ const isMainModule =
 
 // Bun-compiled executables can be more aggressive with GC; keep a strong
 // process-lifetime reference so the listener stays active.
-let activeServerHandle: SupervisedApiService | null = null;
+const globalServerState = globalThis as typeof globalThis & {
+  __umsApiActiveServerHandle__?: SupervisedApiService;
+};
+
+async function runStandaloneServer(): Promise<void> {
+  const serviceRuntimeModulePath = "./service-runtime.ts";
+  const module = await import(serviceRuntimeModulePath);
+  const startSupervisedApiService = (module as Record<string, unknown>)[
+    "startSupervisedApiService"
+  ];
+  if (typeof startSupervisedApiService !== "function") {
+    throw new Error(
+      "Failed to start API: service-runtime is missing startSupervisedApiService."
+    );
+  }
+
+  const { service, host, port } = await (
+    startSupervisedApiService as (options: {
+      host?: string;
+      port?: number;
+      stateFile?: string | null;
+    }) => Promise<StartSupervisedApiServiceResult>
+  )({
+    host: HOST,
+    port: PORT,
+    stateFile: DEFAULT_RUNTIME_STATE_FILE,
+  });
+
+  globalServerState.__umsApiActiveServerHandle__ = service;
+  process.stdout.write(`UMS API listening on http://${host}:${port}\n`);
+  const supervisionWatcher = setInterval(() => {
+    const snapshot = service.status();
+    if (snapshot.phase === "failed") {
+      clearInterval(supervisionWatcher);
+      process.stderr.write(
+        `UMS API supervision failed: ${snapshot.lastError ?? "unknown failure"}\n`
+      );
+      process.exit(1);
+      return;
+    }
+    if (snapshot.phase === "stopped") {
+      clearInterval(supervisionWatcher);
+    }
+  }, 250);
+  if (typeof supervisionWatcher.unref === "function") {
+    supervisionWatcher.unref();
+  }
+}
 
 if (isMainModule) {
-  const serviceRuntimeModulePath = "./service-runtime.ts";
-  void import(serviceRuntimeModulePath)
-    .then((module): Promise<StartSupervisedApiServiceResult> => {
-      const startSupervisedApiService = (module as Record<string, unknown>)[
-        "startSupervisedApiService"
-      ];
-      if (typeof startSupervisedApiService !== "function") {
-        throw new Error(
-          "Failed to start API: service-runtime is missing startSupervisedApiService."
-        );
-      }
-      return (
-        startSupervisedApiService as (options: {
-          host?: string;
-          port?: number;
-          stateFile?: string | null;
-        }) => Promise<StartSupervisedApiServiceResult>
-      )({
-        host: HOST,
-        port: PORT,
-        stateFile: DEFAULT_RUNTIME_STATE_FILE,
-      });
-    })
-    .then(({ service, host, port }) => {
-      activeServerHandle = service;
-      process.stdout.write(`UMS API listening on http://${host}:${port}\n`);
-      const supervisionWatcher = setInterval(() => {
-        const snapshot = service.status();
-        if (snapshot.phase === "failed") {
-          clearInterval(supervisionWatcher);
-          process.stderr.write(
-            `UMS API supervision failed: ${snapshot.lastError ?? "unknown failure"}\n`
-          );
-          process.exit(1);
-          return;
-        }
-        if (snapshot.phase === "stopped") {
-          clearInterval(supervisionWatcher);
-        }
-      }, 250);
-      if (typeof supervisionWatcher.unref === "function") {
-        supervisionWatcher.unref();
-      }
-    })
-    .catch((error: unknown) => {
+  void (async (): Promise<void> => {
+    try {
+      await runStandaloneServer();
+    } catch (error) {
       process.stderr.write(
         `Failed to start API: ${toErrorMessage(error, "unknown error")}\n`
       );
       process.exit(1);
-    });
+    }
+  })();
 }

@@ -8,6 +8,7 @@ import {
   type FileHandle,
 } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 
 import {
   exportStoreSnapshot as exportStoreSnapshotFromCore,
@@ -42,15 +43,15 @@ type JsonValue =
   | JsonValue[]
   | { [key: string]: JsonValue };
 
-type StoreSnapshot = {
+interface StoreSnapshot {
   stores: Record<string, JsonValue>;
-};
+}
 
-type ExecuteOperationWithSharedStateOptions<T> = {
+interface ExecuteOperationWithSharedStateOptions<T> {
   operation?: string | null | undefined;
   stateFile?: string | null | undefined;
   executor: () => Promise<T> | T;
-};
+}
 
 const exportStoreSnapshot = exportStoreSnapshotFromCore as () => StoreSnapshot;
 const importStoreSnapshot = importStoreSnapshotFromCore as (
@@ -66,9 +67,11 @@ function hasStateFile(stateFile: unknown): stateFile is string {
 }
 
 function sleep(delayMs: number): Promise<void> {
-  return new Promise((resolvePromise) => {
-    setTimeout(resolvePromise, delayMs);
-  });
+  return delay(delayMs);
+}
+
+function ignoreCleanupError(_error: unknown): void {
+  void _error;
 }
 
 function withCode(error: Error, code: string): Error & { code: string } {
@@ -137,7 +140,7 @@ async function writeSnapshotAtomic(
     await writeFile(tempPath, `${JSON.stringify(snapshot, null, 2)}\n`, "utf8");
     await rename(tempPath, stateFilePath);
   } finally {
-    await rm(tempPath, { force: true }).catch(() => {});
+    await rm(tempPath, { force: true }).catch(ignoreCleanupError);
   }
 }
 
@@ -181,8 +184,8 @@ async function withExclusiveLock<T>(
   try {
     return await fn();
   } finally {
-    await lockHandle.close().catch(() => {});
-    await rm(lockPath, { force: true }).catch(() => {});
+    await lockHandle.close().catch(ignoreCleanupError);
+    await rm(lockPath, { force: true }).catch(ignoreCleanupError);
   }
 }
 

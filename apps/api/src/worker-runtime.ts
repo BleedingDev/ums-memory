@@ -6,6 +6,7 @@ import {
   Layer,
   ManagedRuntime,
 } from "effect";
+
 import { executeOperation, exportStoreSnapshot } from "./core.ts";
 import {
   DEFAULT_SHARED_STATE_FILE,
@@ -19,26 +20,134 @@ const DEFAULT_RESTART_LIMIT = 3;
 const DEFAULT_RESTART_DELAY_MS = 250;
 const DEFAULT_STORE_ID = "coding-agent";
 
-function nowIso() {
+interface StoreProfilePair {
+  storeId: string;
+  profile: string;
+}
+
+interface WorkerProfileSnapshot extends Record<string, unknown> {
+  shadowCandidates?: unknown[];
+}
+
+interface WorkerStoreEntrySnapshot extends Record<string, unknown> {
+  profiles?: Record<string, unknown>;
+}
+
+interface WorkerStoreSnapshot extends Record<string, unknown> {
+  stores?: Record<string, unknown>;
+  profiles?: Record<string, unknown>;
+}
+
+interface WorkerOperationRequestBody extends Record<string, unknown> {
+  storeId: string;
+  profile: string;
+  timestamp: string;
+  candidateId?: string;
+}
+
+interface RunOperationInput {
+  operation: string;
+  requestBody: unknown;
+  stateFile?: string | null | undefined;
+}
+
+interface LoadSnapshotInput {
+  stateFile?: string | null | undefined;
+}
+
+type RunOperation = (input: RunOperationInput) => Promise<unknown>;
+type LoadSnapshot = (input: LoadSnapshotInput) => Promise<WorkerStoreSnapshot>;
+
+interface WorkerCycleErrorEntry {
+  storeId: string;
+  profile: string;
+  operation: string;
+  candidateId: string | null;
+  code: string | null;
+  message: string;
+}
+
+interface WorkerCycleErrorInput {
+  storeId: string;
+  profile: string;
+  operation: string;
+  candidateId?: string | null;
+  error: unknown;
+}
+
+interface WorkerCycleCounter {
+  attempted: number;
+  succeeded: number;
+  failed: number;
+}
+
+interface WorkerReplayEvalCounter extends WorkerCycleCounter {
+  candidatesSeen: number;
+  skippedByLimit: number;
+}
+
+export interface WorkerCycleSummary {
+  startedAt: string;
+  completedAt: string | null;
+  durationMs: number;
+  stateFile: string | null;
+  profileCount: number;
+  replayEvalMaxPerProfile: number;
+  reviewScheduleClock: WorkerCycleCounter;
+  replayEval: WorkerReplayEvalCounter;
+  doctor: WorkerCycleCounter;
+  errorCount: number;
+  errorOverflowCount: number;
+  errors: WorkerCycleErrorEntry[];
+}
+
+interface CreateEmptyCycleSummaryInput {
+  startedAt: string;
+  stateFile?: string | null | undefined;
+  replayEvalMaxPerProfile: number;
+}
+
+export interface RunBackgroundWorkerCycleOptions {
+  stateFile?: string | null | undefined;
+  replayEvalMaxPerProfile?: unknown;
+  maxErrorEntries?: unknown;
+  timestamp?: unknown;
+  runOperation?: RunOperation;
+  loadSnapshot?: LoadSnapshot;
+}
+
+type RunCycle = (
+  options?: Partial<RunBackgroundWorkerCycleOptions>
+) => Promise<WorkerCycleSummary>;
+
+function nowIso(): string {
   return new Date().toISOString();
 }
 
-function toErrorMessage(cause) {
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function toErrorMessage(cause: unknown): string {
   if (cause instanceof Error) {
     return cause.message;
   }
   return String(cause);
 }
 
-function normalizeNonEmptyString(value) {
+function normalizeNonEmptyString(value: unknown): string | null {
   if (typeof value !== "string") {
     return null;
   }
   const normalized = value.trim();
-  return normalized ? normalized : null;
+  return normalized || null;
 }
 
-function normalizeNonNegativeInteger(value, fallback, fieldName) {
+function normalizeNonNegativeInteger(
+  value: unknown,
+  fallback: number,
+  fieldName: string
+): number {
   const parsed = Number.parseInt(String(value ?? ""), 10);
   if (!Number.isFinite(parsed)) {
     return fallback;
@@ -49,7 +158,11 @@ function normalizeNonNegativeInteger(value, fallback, fieldName) {
   return parsed;
 }
 
-function normalizePositiveInteger(value, fallback, fieldName) {
+function normalizePositiveInteger(
+  value: unknown,
+  fallback: number,
+  fieldName: string
+): number {
   const parsed = Number.parseInt(String(value ?? ""), 10);
   if (!Number.isFinite(parsed)) {
     return fallback;
@@ -60,41 +173,35 @@ function normalizePositiveInteger(value, fallback, fieldName) {
   return parsed;
 }
 
-async function loadSnapshotFromStateFile(
-  stateFile = DEFAULT_SHARED_STATE_FILE
-) {
-  return executeOperationWithSharedState({
+function loadSnapshotFromStateFile(
+  stateFile: string | null | undefined = DEFAULT_SHARED_STATE_FILE
+): Promise<WorkerStoreSnapshot> {
+  return executeOperationWithSharedState<WorkerStoreSnapshot>({
     operation: "doctor",
     stateFile,
-    executor: () => exportStoreSnapshot(),
+    executor: () => exportStoreSnapshot() as WorkerStoreSnapshot,
   });
 }
 
-function listStoreProfilePairs(snapshot) {
-  const pairs = [];
-  if (!snapshot || typeof snapshot !== "object") {
+function listStoreProfilePairs(
+  snapshot: WorkerStoreSnapshot | null | undefined
+): StoreProfilePair[] {
+  const pairs: StoreProfilePair[] = [];
+  if (!isRecord(snapshot)) {
     return pairs;
   }
 
-  if (
-    snapshot.stores &&
-    typeof snapshot.stores === "object" &&
-    !Array.isArray(snapshot.stores)
-  ) {
+  if (isRecord(snapshot.stores)) {
     const stores = snapshot.stores;
     for (const storeId of Object.keys(stores).sort((left, right) =>
       left.localeCompare(right)
     )) {
       const storeEntry = stores[storeId];
-      const profiles =
-        storeEntry &&
-        typeof storeEntry === "object" &&
-        storeEntry.profiles &&
-        typeof storeEntry.profiles === "object" &&
-        !Array.isArray(storeEntry.profiles)
-          ? storeEntry.profiles
-          : {};
-      for (const profile of Object.keys(profiles).sort((left, right) =>
+      const profiles = isRecord(storeEntry)
+        ? (storeEntry as WorkerStoreEntrySnapshot).profiles
+        : undefined;
+      const profileMap = isRecord(profiles) ? profiles : {};
+      for (const profile of Object.keys(profileMap).sort((left, right) =>
         left.localeCompare(right)
       )) {
         pairs.push({ storeId, profile });
@@ -103,13 +210,9 @@ function listStoreProfilePairs(snapshot) {
     return pairs;
   }
 
-  if (
-    snapshot.profiles &&
-    typeof snapshot.profiles === "object" &&
-    !Array.isArray(snapshot.profiles)
-  ) {
-    for (const profile of Object.keys(snapshot.profiles).sort((left, right) =>
-      left.localeCompare(right)
+  if (isRecord(snapshot["profiles"])) {
+    for (const profile of Object.keys(snapshot["profiles"]).sort(
+      (left, right) => left.localeCompare(right)
     )) {
       pairs.push({ storeId: DEFAULT_STORE_ID, profile });
     }
@@ -118,64 +221,52 @@ function listStoreProfilePairs(snapshot) {
   return pairs;
 }
 
-function getProfileSnapshot(snapshot, storeId, profile) {
-  if (!snapshot || typeof snapshot !== "object") {
+function getProfileSnapshot(
+  snapshot: WorkerStoreSnapshot | null | undefined,
+  storeId: string,
+  profile: string
+): WorkerProfileSnapshot | null {
+  if (!isRecord(snapshot)) {
     return null;
   }
 
-  if (
-    snapshot.stores &&
-    typeof snapshot.stores === "object" &&
-    !Array.isArray(snapshot.stores)
-  ) {
+  if (isRecord(snapshot.stores)) {
     const storeEntry = snapshot.stores[storeId];
-    if (
-      storeEntry &&
-      typeof storeEntry === "object" &&
-      storeEntry.profiles &&
-      typeof storeEntry.profiles === "object" &&
-      !Array.isArray(storeEntry.profiles)
-    ) {
-      const profileEntry = storeEntry.profiles[profile];
-      return profileEntry && typeof profileEntry === "object"
-        ? profileEntry
+    if (isRecord(storeEntry) && isRecord(storeEntry["profiles"])) {
+      const profileEntry = storeEntry["profiles"][profile];
+      return isRecord(profileEntry)
+        ? (profileEntry as WorkerProfileSnapshot)
         : null;
     }
     return null;
   }
 
-  if (
-    snapshot.profiles &&
-    typeof snapshot.profiles === "object" &&
-    !Array.isArray(snapshot.profiles)
-  ) {
-    const profileEntry = snapshot.profiles[profile];
-    return profileEntry && typeof profileEntry === "object"
-      ? profileEntry
+  if (isRecord(snapshot["profiles"])) {
+    const profileEntry = snapshot["profiles"][profile];
+    return isRecord(profileEntry)
+      ? (profileEntry as WorkerProfileSnapshot)
       : null;
   }
 
   return null;
 }
 
-function listShadowCandidateIds(profileState) {
-  if (
-    !profileState ||
-    typeof profileState !== "object" ||
-    !Array.isArray(profileState.shadowCandidates)
-  ) {
+function listShadowCandidateIds(
+  profileState: WorkerProfileSnapshot | null
+): string[] {
+  if (profileState === null || !Array.isArray(profileState.shadowCandidates)) {
     return [];
   }
-  const ids = new Set();
+  const ids = new Set<string>();
   for (const candidate of profileState.shadowCandidates) {
-    if (!candidate || typeof candidate !== "object") {
+    if (!isRecord(candidate)) {
       continue;
     }
-    const candidateId = normalizeNonEmptyString(candidate.candidateId);
+    const candidateId = normalizeNonEmptyString(candidate["candidateId"]);
     if (!candidateId) {
       continue;
     }
-    const status = normalizeNonEmptyString(candidate.status)?.toLowerCase();
+    const status = normalizeNonEmptyString(candidate["status"])?.toLowerCase();
     if (status && status !== "shadow") {
       continue;
     }
@@ -184,30 +275,31 @@ function listShadowCandidateIds(profileState) {
   return [...ids].sort((left, right) => left.localeCompare(right));
 }
 
-async function runOperationWithSharedState({
+function runOperationWithSharedState({
   operation,
   requestBody,
   stateFile = DEFAULT_SHARED_STATE_FILE,
-}) {
-  return executeOperationWithSharedState({
+}: RunOperationInput): Promise<unknown> {
+  return executeOperationWithSharedState<unknown>({
     operation,
     stateFile,
-    executor: () => executeOperation(operation, requestBody),
+    executor: () =>
+      executeOperation(operation, requestBody) as Promise<unknown> | unknown,
   });
 }
 
-function cloneJson(value) {
-  if (value == null) {
+function cloneJson<T>(value: T): T {
+  if (value === null || value === undefined) {
     return value;
   }
-  return JSON.parse(JSON.stringify(value));
+  return structuredClone(value) as T;
 }
 
 function createEmptyCycleSummary({
   startedAt,
   stateFile,
   replayEvalMaxPerProfile,
-}) {
+}: CreateEmptyCycleSummaryInput): WorkerCycleSummary {
   return {
     startedAt,
     completedAt: null,
@@ -234,11 +326,11 @@ function createEmptyCycleSummary({
     },
     errorCount: 0,
     errorOverflowCount: 0,
-    errors: [],
+    errors: [] as WorkerCycleErrorEntry[],
   };
 }
 
-function finalizeCycleSummary(summary) {
+function finalizeCycleSummary(summary: WorkerCycleSummary): WorkerCycleSummary {
   const completedAt = nowIso();
   summary.completedAt = completedAt;
   summary.durationMs = Math.max(
@@ -248,7 +340,9 @@ function finalizeCycleSummary(summary) {
   return summary;
 }
 
-export async function runBackgroundWorkerCycle(options = {}) {
+export async function runBackgroundWorkerCycle(
+  options: RunBackgroundWorkerCycleOptions = {}
+): Promise<WorkerCycleSummary> {
   const stateFile = Object.hasOwn(options, "stateFile")
     ? options.stateFile
     : DEFAULT_SHARED_STATE_FILE;
@@ -269,7 +363,7 @@ export async function runBackgroundWorkerCycle(options = {}) {
   const loadSnapshot =
     typeof options.loadSnapshot === "function"
       ? options.loadSnapshot
-      : ({ stateFile: currentStateFile }) =>
+      : ({ stateFile: currentStateFile }: LoadSnapshotInput) =>
           loadSnapshotFromStateFile(currentStateFile);
 
   const startedAt = nowIso();
@@ -289,15 +383,12 @@ export async function runBackgroundWorkerCycle(options = {}) {
     operation,
     candidateId = null,
     error,
-  }) => {
+  }: WorkerCycleErrorInput): void => {
     summary.errorCount += 1;
     if (summary.errors.length < maxErrorEntries) {
       const code =
-        error &&
-        typeof error === "object" &&
-        "code" in error &&
-        typeof error.code === "string"
-          ? error.code
+        isRecord(error) && "code" in error && typeof error["code"] === "string"
+          ? error["code"]
           : null;
       summary.errors.push({
         storeId,
@@ -313,7 +404,7 @@ export async function runBackgroundWorkerCycle(options = {}) {
   };
 
   for (const { storeId, profile } of pairs) {
-    const baseRequest = {
+    const baseRequest: WorkerOperationRequestBody = {
       storeId,
       profile,
       timestamp,
@@ -393,54 +484,130 @@ export async function runBackgroundWorkerCycle(options = {}) {
   return finalizeCycleSummary(summary);
 }
 
-export function createSupervisedWorkerService(options = {}) {
+type WorkerServicePhase =
+  | "idle"
+  | "starting"
+  | "running"
+  | "restarting"
+  | "stopping"
+  | "stopped"
+  | "failed";
+
+interface WorkerLastCycleSnapshot {
+  startedAt: string;
+  completedAt: string;
+  summary: WorkerCycleSummary | null;
+}
+
+export interface SupervisedWorkerStatusSnapshot {
+  phase: WorkerServicePhase;
+  stateFile: string | null;
+  intervalMs: number;
+  restartCount: number;
+  restartLimit: number;
+  cycleCount: number;
+  lastCycle: WorkerLastCycleSnapshot | null;
+  lastError: string | null;
+  startedAt: string | null;
+  stoppedAt: string | null;
+}
+
+interface SupervisedWorkerStatusState extends SupervisedWorkerStatusSnapshot {}
+
+interface WorkerReadinessSnapshot {
+  cycleCount: number;
+  lastCycle: WorkerLastCycleSnapshot | null;
+}
+
+export interface SupervisedWorkerService {
+  start: () => Promise<void>;
+  stop: () => Promise<void>;
+  ready: () => Promise<WorkerReadinessSnapshot>;
+  status: () => SupervisedWorkerStatusSnapshot;
+}
+
+interface CreateSupervisedWorkerServiceOptions {
+  stateFile?: string | null | undefined;
+  intervalMs?: unknown;
+  restartLimit?: unknown;
+  restartDelayMs?: unknown;
+  replayEvalMaxPerProfile?: unknown;
+  maxErrorEntries?: unknown;
+  captureProcessSignals?: boolean;
+  runCycle?: RunCycle;
+  runOperation?: RunOperation;
+}
+
+interface StartSupervisedWorkerServiceResult extends WorkerReadinessSnapshot {
+  service: SupervisedWorkerService;
+}
+
+interface CycleResultSuccess {
+  status: "success";
+  summary: WorkerCycleSummary;
+}
+
+interface CycleResultFailure {
+  status: "failure";
+  error: Error;
+}
+
+type WorkerCycleResult = CycleResultSuccess | CycleResultFailure;
+
+export function createSupervisedWorkerService(
+  options: CreateSupervisedWorkerServiceOptions = {}
+): SupervisedWorkerService {
   const stateFile = Object.hasOwn(options, "stateFile")
     ? options.stateFile
-    : (process.env.UMS_WORKER_STATE_FILE ?? DEFAULT_SHARED_STATE_FILE);
+    : (process.env["UMS_WORKER_STATE_FILE"] ?? DEFAULT_SHARED_STATE_FILE);
   const intervalMs = normalizePositiveInteger(
-    options.intervalMs ?? process.env.UMS_WORKER_INTERVAL_MS,
+    options.intervalMs ?? process.env["UMS_WORKER_INTERVAL_MS"],
     DEFAULT_WORKER_INTERVAL_MS,
     "intervalMs"
   );
   const restartLimit = normalizeNonNegativeInteger(
-    options.restartLimit ?? process.env.UMS_WORKER_RESTART_LIMIT,
+    options.restartLimit ?? process.env["UMS_WORKER_RESTART_LIMIT"],
     DEFAULT_RESTART_LIMIT,
     "restartLimit"
   );
   const restartDelayMs = normalizePositiveInteger(
-    options.restartDelayMs ?? process.env.UMS_WORKER_RESTART_DELAY_MS,
+    options.restartDelayMs ?? process.env["UMS_WORKER_RESTART_DELAY_MS"],
     DEFAULT_RESTART_DELAY_MS,
     "restartDelayMs"
   );
   const replayEvalMaxPerProfile = normalizeNonNegativeInteger(
     options.replayEvalMaxPerProfile ??
-      process.env.UMS_WORKER_REPLAY_EVAL_MAX_PER_PROFILE,
+      process.env["UMS_WORKER_REPLAY_EVAL_MAX_PER_PROFILE"],
     DEFAULT_REPLAY_EVAL_MAX_PER_PROFILE,
     "replayEvalMaxPerProfile"
   );
   const maxErrorEntries = normalizePositiveInteger(
-    options.maxErrorEntries ?? process.env.UMS_WORKER_MAX_ERROR_ENTRIES,
+    options.maxErrorEntries ?? process.env["UMS_WORKER_MAX_ERROR_ENTRIES"],
     DEFAULT_MAX_ERROR_ENTRIES,
     "maxErrorEntries"
   );
   const captureProcessSignals = options.captureProcessSignals !== false;
-  const runCycle =
+  const runCycle: RunCycle =
     typeof options.runCycle === "function"
       ? options.runCycle
-      : (cycleOptions = {}) =>
+      : (cycleOptions: Partial<RunBackgroundWorkerCycleOptions> = {}) =>
           runBackgroundWorkerCycle({
             stateFile,
             replayEvalMaxPerProfile,
             maxErrorEntries,
-            runOperation: options.runOperation,
+            ...(typeof options.runOperation === "function"
+              ? { runOperation: options.runOperation }
+              : {}),
             ...cycleOptions,
           });
 
   const runtime = ManagedRuntime.make(Layer.empty);
-  const readySignal = runtime.runSync(Deferred.make());
-  const shutdownSignal = runtime.runSync(Deferred.make());
+  const readySignal = runtime.runSync(
+    Deferred.make<WorkerReadinessSnapshot, Error>()
+  );
+  const shutdownSignal = runtime.runSync(Deferred.make<boolean>());
 
-  const status = {
+  const status: SupervisedWorkerStatusState = {
     phase: "idle",
     stateFile: stateFile ?? null,
     intervalMs,
@@ -453,22 +620,22 @@ export function createSupervisedWorkerService(options = {}) {
     stoppedAt: null,
   };
 
-  let serviceFiber = null;
+  let serviceFiber: Fiber.Fiber<void, Error> | null = null;
   let shutdownRequested = false;
-  let signalCleanup = null;
+  let signalCleanup: (() => void) | null = null;
   let startAttempted = false;
   let runtimeDisposed = false;
   let readySignaled = false;
 
-  const updateStatus = (next) => {
+  const updateStatus = (next: Partial<SupervisedWorkerStatusState>): void => {
     Object.assign(status, next);
   };
 
-  const installSignalHandlers = () => {
-    if (!captureProcessSignals || signalCleanup) {
+  const installSignalHandlers = (): void => {
+    if (!captureProcessSignals || signalCleanup !== null) {
       return;
     }
-    const onSignal = () => {
+    const onSignal = (): void => {
       void requestShutdown();
     };
     process.on("SIGINT", onSignal);
@@ -480,13 +647,13 @@ export function createSupervisedWorkerService(options = {}) {
     };
   };
 
-  const removeSignalHandlers = () => {
-    if (signalCleanup) {
+  const removeSignalHandlers = (): void => {
+    if (signalCleanup !== null) {
       signalCleanup();
     }
   };
 
-  const failReadyIfPending = async (error) => {
+  const failReadyIfPending = async (error: Error): Promise<void> => {
     if (readySignaled) {
       return;
     }
@@ -496,68 +663,13 @@ export function createSupervisedWorkerService(options = {}) {
     );
   };
 
-  const supervisorProgram = Effect.gen(function* () {
-    installSignalHandlers();
+  const supervisorProgram: Effect.Effect<void, Error> = Effect.gen(
+    function* () {
+      installSignalHandlers();
 
-    let restartCount = 0;
-    while (true) {
-      if (shutdownRequested) {
-        yield* Effect.sync(() => {
-          updateStatus({
-            phase: "stopped",
-            stoppedAt: nowIso(),
-          });
-        });
-        return;
-      }
-
-      const cycleStartedAt = nowIso();
-      const cycleResult = yield* Effect.tryPromise({
-        try: () => runCycle({ stateFile }),
-        catch: (cause) =>
-          cause instanceof Error
-            ? cause
-            : new Error(`Worker cycle failed: ${toErrorMessage(cause)}`),
-      }).pipe(
-        Effect.match({
-          onSuccess: (summary) => ({ status: "success", summary }),
-          onFailure: (error) => ({ status: "failure", error }),
-        })
-      );
-
-      if (cycleResult.status === "success") {
-        const nextCycleCount = status.cycleCount + 1;
-        updateStatus({
-          phase: "running",
-          restartCount,
-          cycleCount: nextCycleCount,
-          lastCycle: {
-            startedAt:
-              normalizeNonEmptyString(cycleResult.summary?.startedAt) ??
-              cycleStartedAt,
-            completedAt:
-              normalizeNonEmptyString(cycleResult.summary?.completedAt) ??
-              nowIso(),
-            summary: cycleResult.summary,
-          },
-          lastError: null,
-          stoppedAt: null,
-        });
-        if (!readySignaled) {
-          readySignaled = true;
-          yield* Deferred.succeed(readySignal, {
-            cycleCount: nextCycleCount,
-            lastCycle: status.lastCycle,
-          }).pipe(Effect.ignore);
-        }
-
-        const pauseSignal = yield* Effect.raceFirst(
-          Deferred.await(shutdownSignal).pipe(Effect.as("shutdown")),
-          Effect.sleep(Duration.millis(intervalMs)).pipe(
-            Effect.as("next_cycle")
-          )
-        );
-        if (pauseSignal === "shutdown" || shutdownRequested) {
+      let restartCount = 0;
+      while (true) {
+        if (shutdownRequested) {
           yield* Effect.sync(() => {
             updateStatus({
               phase: "stopped",
@@ -566,62 +678,131 @@ export function createSupervisedWorkerService(options = {}) {
           });
           return;
         }
-        continue;
-      }
 
-      const cycleFailure = cycleResult.error;
-      restartCount += 1;
-      updateStatus({
-        phase: "restarting",
-        restartCount,
-        lastError: toErrorMessage(cycleFailure),
-        lastCycle: {
-          startedAt: cycleStartedAt,
-          completedAt: nowIso(),
-          summary: null,
-        },
-      });
+        const cycleStartedAt = nowIso();
+        const cycleResult: WorkerCycleResult = yield* Effect.tryPromise({
+          try: () => runCycle({ stateFile }),
+          catch: (cause) =>
+            cause instanceof Error
+              ? cause
+              : new Error(`Worker cycle failed: ${toErrorMessage(cause)}`),
+        }).pipe(
+          Effect.match({
+            onSuccess: (summary): CycleResultSuccess => ({
+              status: "success",
+              summary,
+            }),
+            onFailure: (error): CycleResultFailure => ({
+              status: "failure",
+              error,
+            }),
+          })
+        );
 
-      if (restartCount > restartLimit) {
-        if (!readySignaled) {
-          readySignaled = true;
-          yield* Deferred.fail(readySignal, cycleFailure).pipe(Effect.ignore);
-        }
-        updateStatus({
-          phase: "failed",
-          stoppedAt: nowIso(),
-          lastError: toErrorMessage(cycleFailure),
-        });
-        return yield* Effect.fail(cycleFailure);
-      }
-
-      const restartSignal = yield* Effect.raceFirst(
-        Deferred.await(shutdownSignal).pipe(Effect.as("shutdown")),
-        Effect.sleep(Duration.millis(restartDelayMs)).pipe(Effect.as("restart"))
-      );
-      if (restartSignal === "shutdown" || shutdownRequested) {
-        yield* Effect.sync(() => {
+        if (cycleResult.status === "success") {
+          const nextCycleCount = status.cycleCount + 1;
           updateStatus({
-            phase: "stopped",
-            stoppedAt: nowIso(),
+            phase: "running",
+            restartCount,
+            cycleCount: nextCycleCount,
+            lastCycle: {
+              startedAt:
+                normalizeNonEmptyString(cycleResult.summary?.startedAt) ??
+                cycleStartedAt,
+              completedAt:
+                normalizeNonEmptyString(cycleResult.summary?.completedAt) ??
+                nowIso(),
+              summary: cycleResult.summary,
+            },
+            lastError: null,
+            stoppedAt: null,
           });
+          if (!readySignaled) {
+            readySignaled = true;
+            yield* Deferred.succeed(readySignal, {
+              cycleCount: nextCycleCount,
+              lastCycle: status.lastCycle,
+            }).pipe(Effect.ignore);
+          }
+
+          const pauseSignal = yield* Effect.raceFirst(
+            Deferred.await(shutdownSignal).pipe(Effect.as("shutdown")),
+            Effect.sleep(Duration.millis(intervalMs)).pipe(
+              Effect.as("next_cycle")
+            )
+          );
+          if (pauseSignal === "shutdown" || shutdownRequested) {
+            yield* Effect.sync(() => {
+              updateStatus({
+                phase: "stopped",
+                stoppedAt: nowIso(),
+              });
+            });
+            return;
+          }
+          continue;
+        }
+
+        const cycleFailure = cycleResult.error;
+        restartCount += 1;
+        updateStatus({
+          phase: "restarting",
+          restartCount,
+          lastError: toErrorMessage(cycleFailure),
+          lastCycle: {
+            startedAt: cycleStartedAt,
+            completedAt: nowIso(),
+            summary: null,
+          },
         });
-        return;
+
+        if (restartCount > restartLimit) {
+          if (!readySignaled) {
+            readySignaled = true;
+            yield* Deferred.fail(readySignal, cycleFailure).pipe(Effect.ignore);
+          }
+          updateStatus({
+            phase: "failed",
+            stoppedAt: nowIso(),
+            lastError: toErrorMessage(cycleFailure),
+          });
+          return yield* Effect.fail(cycleFailure);
+        }
+
+        const restartSignal = yield* Effect.raceFirst(
+          Deferred.await(shutdownSignal).pipe(Effect.as("shutdown")),
+          Effect.sleep(Duration.millis(restartDelayMs)).pipe(
+            Effect.as("restart")
+          )
+        );
+        if (restartSignal === "shutdown" || shutdownRequested) {
+          yield* Effect.sync(() => {
+            updateStatus({
+              phase: "stopped",
+              stoppedAt: nowIso(),
+            });
+          });
+          return;
+        }
       }
     }
-  }).pipe(
+  ).pipe(
     Effect.ensuring(
       Effect.sync(() => {
+        serviceFiber = null;
         removeSignalHandlers();
       })
     )
   );
 
-  const requestShutdown = async () => {
+  const requestShutdown = async (): Promise<void> => {
     if (runtimeDisposed) {
       return;
     }
     shutdownRequested = true;
+    await failReadyIfPending(
+      new Error("Supervised worker service stopped before readiness.")
+    );
     if (status.phase !== "failed" && status.phase !== "stopped") {
       updateStatus({ phase: "stopping" });
     }
@@ -630,21 +811,25 @@ export function createSupervisedWorkerService(options = {}) {
     );
   };
 
-  const start = async () => {
+  const start = (): Promise<void> => {
     if (runtimeDisposed) {
-      throw new Error(
-        "Supervised worker service runtime has been disposed and cannot be restarted."
+      return Promise.reject(
+        new Error(
+          "Supervised worker service runtime has been disposed and cannot be restarted."
+        )
       );
     }
-    if (serviceFiber) {
-      return;
+    if (serviceFiber !== null) {
+      return Promise.resolve();
     }
     if (
       startAttempted &&
       (status.phase === "stopped" || status.phase === "failed")
     ) {
-      throw new Error(
-        "Supervised worker service runtime cannot be restarted after stop/failure."
+      return Promise.reject(
+        new Error(
+          "Supervised worker service runtime cannot be restarted after stop/failure."
+        )
       );
     }
 
@@ -655,9 +840,10 @@ export function createSupervisedWorkerService(options = {}) {
       stoppedAt: null,
     });
     serviceFiber = runtime.runFork(supervisorProgram);
+    return Promise.resolve();
   };
 
-  const disposeRuntime = async () => {
+  const disposeRuntime = async (): Promise<void> => {
     if (runtimeDisposed) {
       return;
     }
@@ -665,8 +851,8 @@ export function createSupervisedWorkerService(options = {}) {
     await runtime.dispose();
   };
 
-  const stop = async () => {
-    if (!serviceFiber) {
+  const stop = async (): Promise<void> => {
+    if (serviceFiber === null) {
       if (status.phase !== "failed") {
         updateStatus({
           phase: "stopped",
@@ -711,10 +897,10 @@ export function createSupervisedWorkerService(options = {}) {
   return {
     start,
     stop,
-    ready() {
+    ready(): Promise<WorkerReadinessSnapshot> {
       return runtime.runPromise(Deferred.await(readySignal));
     },
-    status() {
+    status(): SupervisedWorkerStatusSnapshot {
       return {
         phase: status.phase,
         stateFile: status.stateFile,
@@ -731,7 +917,9 @@ export function createSupervisedWorkerService(options = {}) {
   };
 }
 
-export async function startSupervisedWorkerService(options = {}) {
+export async function startSupervisedWorkerService(
+  options: CreateSupervisedWorkerServiceOptions = {}
+): Promise<StartSupervisedWorkerServiceResult> {
   const service = createSupervisedWorkerService(options);
   await service.start();
   const readiness = await service.ready();

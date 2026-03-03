@@ -1,3 +1,6 @@
+import { setTimeout as sleep } from "node:timers/promises";
+import { promisify } from "node:util";
+
 import { startApiServer } from "./server.ts";
 
 const DEFAULT_RESTART_LIMIT = 3;
@@ -126,45 +129,48 @@ function nowIso(): string {
   return new Date().toISOString();
 }
 
-function delay(ms: number): Promise<void> {
-  return new Promise((resolvePromise) => {
-    const timer = setTimeout(resolvePromise, ms);
-    if (typeof timer.unref === "function") {
-      timer.unref();
-    }
-  });
+async function delay(ms: number): Promise<void> {
+  await sleep(ms, undefined, { ref: false });
 }
 
-function closeServer(server: ApiServer | null): Promise<void> {
-  return new Promise((resolvePromise, rejectPromise) => {
-    if (server === null || typeof server.close !== "function") {
-      resolvePromise();
-      return;
+async function closeServer(server: ApiServer | null): Promise<void> {
+  if (server === null || typeof server.close !== "function") {
+    return;
+  }
+
+  if (server.listening !== true) {
+    return;
+  }
+
+  server.closeIdleConnections?.();
+  server.closeAllConnections?.();
+  server.unref?.();
+
+  const closeOperation = async (): Promise<unknown> => {
+    try {
+      await promisify(
+        server.close.bind(server) as (
+          callback: (error?: Error | null) => void
+        ) => void
+      )();
+      return null;
+    } catch (error) {
+      return error;
     }
+  };
+  const timeoutToken = Symbol("server-close-timeout");
+  const closeResult = await Promise.race([
+    closeOperation(),
+    sleep(SERVER_CLOSE_TIMEOUT_MS, timeoutToken, { ref: false }),
+  ]);
 
-    if (server.listening !== true) {
-      resolvePromise();
-      return;
-    }
+  if (closeResult === timeoutToken || closeResult === null) {
+    return;
+  }
 
-    server.closeIdleConnections?.();
-    server.closeAllConnections?.();
-    server.unref?.();
-
-    const fallback = setTimeout(resolvePromise, SERVER_CLOSE_TIMEOUT_MS);
-    if (typeof fallback.unref === "function") {
-      fallback.unref();
-    }
-
-    server.close((error) => {
-      clearTimeout(fallback);
-      if (error) {
-        rejectPromise(error);
-        return;
-      }
-      resolvePromise();
-    });
-  });
+  throw closeResult instanceof Error
+    ? closeResult
+    : new Error(toErrorMessage(closeResult));
 }
 
 function wrapStartupError(cause: unknown): Error {
@@ -212,10 +218,17 @@ export function createSupervisedApiService(
   const startServer: StartServer =
     typeof options.startServer === "function"
       ? options.startServer
-      : ({ host, port, stateFile }) =>
-          stateFile === undefined
-            ? startApiServer({ host, port })
-            : startApiServer({ host, port, stateFile });
+      : (startOptions) =>
+          startOptions.stateFile === undefined
+            ? startApiServer({
+                host: startOptions.host,
+                port: startOptions.port,
+              })
+            : startApiServer({
+                host: startOptions.host,
+                port: startOptions.port,
+                stateFile: startOptions.stateFile,
+              });
 
   const status: StatusState = {
     phase: "idle",
@@ -235,12 +248,8 @@ export function createSupervisedApiService(
   let startAttempted = false;
 
   let readySettled = false;
-  let readyResolve: ((snapshot: ReadySnapshot) => void) | undefined;
-  let readyReject: ((error: Error) => void) | undefined;
-  const readyPromise = new Promise<ReadySnapshot>((resolvePromise, rejectPromise) => {
-    readyResolve = resolvePromise;
-    readyReject = rejectPromise;
-  });
+  let readySnapshot: ReadySnapshot | null = null;
+  let readyFailure: Error | null = null;
 
   const updateStatus = (next: Partial<StatusState>): void => {
     Object.assign(status, next);
@@ -251,7 +260,7 @@ export function createSupervisedApiService(
       return;
     }
     readySettled = true;
-    readyResolve?.(snapshot);
+    readySnapshot = snapshot;
   };
 
   const settleReadyFailure = (error: Error): void => {
@@ -259,7 +268,21 @@ export function createSupervisedApiService(
       return;
     }
     readySettled = true;
-    readyReject?.(error);
+    readyFailure = error;
+  };
+
+  const waitForReady = async (): Promise<ReadySnapshot> => {
+    while (true) {
+      if (readySnapshot !== null) {
+        return readySnapshot;
+      }
+      if (readyFailure !== null) {
+        throw readyFailure instanceof Error
+          ? readyFailure
+          : new Error(toErrorMessage(readyFailure));
+      }
+      await delay(monitorIntervalMs);
+    }
   };
 
   const installSignalHandlers = (): void => {
@@ -406,20 +429,23 @@ export function createSupervisedApiService(
       }
     } finally {
       currentServer = null;
+      supervisorPromise = null;
       removeSignalHandlers();
     }
   };
 
-  const start = async (): Promise<void> => {
+  const start = (): Promise<void> => {
     if (supervisorPromise !== null) {
-      return;
+      return Promise.resolve();
     }
     if (
       startAttempted &&
       (status.phase === "stopped" || status.phase === "failed")
     ) {
-      throw new Error(
-        "Supervised API service runtime cannot be restarted after stop/failure."
+      return Promise.reject(
+        new Error(
+          "Supervised API service runtime cannot be restarted after stop/failure."
+        )
       );
     }
     startAttempted = true;
@@ -430,6 +456,7 @@ export function createSupervisedApiService(
       stoppedAt: null,
     });
     supervisorPromise = runSupervisor();
+    return Promise.resolve();
   };
 
   const stop = async (): Promise<void> => {
@@ -437,6 +464,9 @@ export function createSupervisedApiService(
     if (status.phase !== "failed" && status.phase !== "stopped") {
       updateStatus({ phase: "stopping" });
     }
+    settleReadyFailure(
+      new Error("Supervised API service runtime stopped before readiness.")
+    );
 
     if (currentServer !== null) {
       try {
@@ -452,7 +482,6 @@ export function createSupervisedApiService(
       } catch {
         // status is already captured deterministically
       }
-      supervisorPromise = null;
     }
 
     if (status.phase !== "failed") {
@@ -469,7 +498,7 @@ export function createSupervisedApiService(
     start,
     stop,
     ready() {
-      return readyPromise;
+      return waitForReady();
     },
     status() {
       return {

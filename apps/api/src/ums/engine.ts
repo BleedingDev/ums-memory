@@ -1,5 +1,301 @@
 import { createHash } from "node:crypto";
-const DEFAULTS = Object.freeze({
+
+interface EngineDefaults {
+  seed: string;
+  defaultStore: string;
+  defaultSpace: string;
+  defaultMaxItems: number;
+  defaultTokenBudget: number;
+  maxMaxItems: number;
+  maxTokenBudget: number;
+}
+
+interface EventFlags {
+  hasSecret: boolean;
+  unsafeInstruction: boolean;
+}
+
+interface EventMetadata extends Record<string, unknown> {
+  role?: string;
+  conversationId?: string;
+  issueKey?: string;
+}
+
+interface EventIdentity {
+  id: string;
+  timestamp: string;
+}
+
+interface NormalizedEvent extends EventIdentity {
+  storeId: string;
+  space: string;
+  source: string;
+  content: string;
+  tags: string[];
+  metadata: EventMetadata;
+}
+
+interface StoredEvent extends NormalizedEvent {
+  flags: EventFlags;
+  tokenEstimate: number;
+}
+
+interface StoreState {
+  spaces: Map<string, Map<string, StoredEvent>>;
+}
+
+interface EngineContext {
+  storeId: string;
+  space: string;
+  source: string;
+  platform: string;
+  jiraBaseUrl: string;
+  conversationId?: string;
+  conversationOrdinal?: number;
+}
+
+interface ContextInput {
+  storeId?: unknown;
+  store?: unknown;
+  memoryStore?: unknown;
+  namespace?: unknown;
+  space?: unknown;
+  project?: unknown;
+  channel?: unknown;
+  source?: unknown;
+  connector?: unknown;
+  platform?: unknown;
+  jiraBaseUrl?: unknown;
+}
+
+interface MessageInput {
+  role?: unknown;
+  authorRole?: unknown;
+  speaker?: unknown;
+  conversationId?: unknown;
+  id?: unknown;
+  messageId?: unknown;
+  content?: unknown;
+  text?: unknown;
+  message?: unknown;
+  body?: unknown;
+  payload?: unknown;
+  createdAt?: unknown;
+  timestamp?: unknown;
+  ts?: unknown;
+  time?: unknown;
+  meta?: unknown;
+}
+
+interface ConversationInput {
+  id?: unknown;
+  conversationId?: unknown;
+  messages?: unknown;
+  title?: unknown;
+  description?: unknown;
+  lastMessageAt?: unknown;
+  updatedAt?: unknown;
+  url?: unknown;
+}
+
+interface JiraIssueInput {
+  key?: unknown;
+  id?: unknown;
+  fields?: unknown;
+  summary?: unknown;
+  createdAt?: unknown;
+  updatedAt?: unknown;
+  comments?: unknown;
+}
+
+interface JiraCommentInput {
+  id?: unknown;
+  author?: unknown;
+  public?: unknown;
+  created?: unknown;
+  createdAt?: unknown;
+  body?: unknown;
+  content?: unknown;
+  text?: unknown;
+}
+
+interface JiraFieldsInput {
+  description?: unknown;
+  summary?: unknown;
+  created?: unknown;
+  updated?: unknown;
+  comments?: unknown;
+  comment?: unknown;
+  status?: unknown;
+  priority?: unknown;
+}
+
+interface CommentContainerInput {
+  comments?: unknown;
+}
+
+interface ActorInput {
+  displayName?: unknown;
+  name?: unknown;
+  accountId?: unknown;
+}
+
+interface NameFieldInput {
+  name?: unknown;
+}
+
+interface SpaceEntryInput {
+  space?: unknown;
+  events?: unknown;
+}
+
+interface SnapshotStoreEntryInput {
+  storeId?: unknown;
+  spaces?: unknown;
+}
+
+interface SnapshotInput {
+  stores?: unknown;
+  spaces?: unknown;
+}
+
+interface RawEventInput extends ContextInput {
+  id?: unknown;
+  profile?: unknown;
+  origin?: unknown;
+  timestamp?: unknown;
+  createdAt?: unknown;
+  occurredAt?: unknown;
+  updatedAt?: unknown;
+  content?: unknown;
+  text?: unknown;
+  message?: unknown;
+  body?: unknown;
+  payload?: unknown;
+  summary?: unknown;
+  tags?: unknown;
+  metadata?: unknown;
+  role?: unknown;
+  authorRole?: unknown;
+  conversationId?: unknown;
+  issueKey?: unknown;
+  events?: unknown;
+  conversations?: unknown;
+  issues?: unknown;
+}
+
+interface RecallRequestInput {
+  query?: unknown;
+  text?: unknown;
+  storeId?: unknown;
+  store?: unknown;
+  memoryStore?: unknown;
+  space?: unknown;
+  includeUnsafe?: unknown;
+  maxItems?: unknown;
+  tokenBudget?: unknown;
+}
+
+interface RankedEvent {
+  event: StoredEvent;
+  score: number;
+}
+
+interface RecallResultItem {
+  id: string;
+  storeId: string;
+  space: string;
+  source: string;
+  timestamp: string;
+  content: string;
+  score: number;
+  flags: EventFlags;
+  evidence: {
+    episodeId: string;
+    source: string;
+  };
+}
+
+interface RecallResult {
+  query: string;
+  storeId: string;
+  space: string;
+  maxItems: number;
+  tokenBudget: number;
+  estimatedTokens: number;
+  payloadBytes: number;
+  truncated: boolean;
+  items: RecallResultItem[];
+  guardrails: {
+    filteredUnsafe: number;
+    redactedSecrets: number;
+    storeIsolationEnforced: true;
+    spaceIsolationEnforced: true;
+  };
+}
+
+interface IngestResult {
+  accepted: number;
+  duplicates: number;
+  rejected: number;
+  stats: {
+    storeCount: number;
+    spaceCount: number;
+    totalEvents: number;
+    redactedSecrets: number;
+    unsafeInstructions: number;
+  };
+}
+
+interface ExportedEvent {
+  id: string;
+  storeId: string;
+  space: string;
+  source: string;
+  timestamp: string;
+  content: string;
+  tags: string[];
+  metadata: EventMetadata;
+  flags: EventFlags;
+}
+
+interface ExportedSpaceEntry {
+  space: string;
+  events: ExportedEvent[];
+}
+
+interface ExportedStoreEntry {
+  storeId: string;
+  spaces: ExportedSpaceEntry[];
+  totals: {
+    spaceCount: number;
+    eventCount: number;
+  };
+}
+
+interface ExportedState {
+  stores: ExportedStoreEntry[];
+  totals: {
+    storeCount: number;
+    spaceCount: number;
+    eventCount: number;
+  };
+}
+
+interface UmsEngineOptions extends Partial<EngineDefaults> {
+  unsafePatterns?: readonly RegExp[];
+  initialState?: unknown;
+}
+
+interface UmsEngine {
+  ingest: (input: unknown) => IngestResult;
+  recall: (request?: unknown) => RecallResult;
+  getEventCount: (space?: string, storeId?: unknown) => number;
+  exportState: () => ExportedState;
+  stateDigest: () => string;
+}
+
+const DEFAULTS: Readonly<EngineDefaults> = Object.freeze({
   seed: "ums-engine-v1",
   defaultStore: "default",
   defaultSpace: "default",
@@ -9,26 +305,27 @@ const DEFAULTS = Object.freeze({
   maxTokenBudget: 8192,
 });
 
-const UNSAFE_PATTERNS = Object.freeze([
+const UNSAFE_PATTERNS: readonly RegExp[] = Object.freeze([
   /ignore\s+previous\s+instructions/i,
   /reveal\s+system\s+prompt/i,
   /\bexfiltrate\b/i,
 ]);
+const HASH_UNIT_DENOMINATOR = 281_474_976_710_655;
 
-function estimateTokens(content) {
+function estimateTokens(content: unknown): number {
   return Math.max(1, Math.ceil(String(content).length / 4));
 }
 
-function sha256(input) {
+function sha256(input: unknown): string {
   return createHash("sha256").update(String(input)).digest("hex");
 }
 
-function hashToUnit(input) {
+function hashToUnit(input: unknown): number {
   const hex = sha256(input).slice(0, 12);
-  return Number.parseInt(hex, 16) / 0xffffffffffff;
+  return Number.parseInt(hex, 16) / HASH_UNIT_DENOMINATOR;
 }
 
-function normalizeTimestamp(value) {
+function normalizeTimestamp(value: unknown): string {
   if (!value) {
     return "1970-01-01T00:00:00.000Z";
   }
@@ -39,14 +336,14 @@ function normalizeTimestamp(value) {
   return date.toISOString();
 }
 
-function normalizeText(value) {
-  if (value == null) {
+function normalizeText(value: unknown): string {
+  if (value === null || value === undefined) {
     return "";
   }
   return String(value).trim();
 }
 
-function stableStringify(value) {
+function stableStringify(value: unknown): string {
   if (value === null || typeof value !== "object") {
     return JSON.stringify(value);
   }
@@ -56,14 +353,15 @@ function stableStringify(value) {
     return `[${serializedItems.join(",")}]`;
   }
 
-  const keys = Object.keys(value).sort();
+  const objectValue = value as Record<string, unknown>;
+  const keys = Object.keys(objectValue).sort();
   const serializedPairs = keys.map(
-    (key) => `${JSON.stringify(key)}:${stableStringify(value[key])}`
+    (key) => `${JSON.stringify(key)}:${stableStringify(objectValue[key])}`
   );
   return `{${serializedPairs.join(",")}}`;
 }
 
-function tokenize(text) {
+function tokenize(text: unknown): Set<string> {
   return new Set(
     normalizeText(text)
       .toLowerCase()
@@ -72,14 +370,17 @@ function tokenize(text) {
   );
 }
 
-function compareEvents(a, b) {
+function compareEvents(
+  a: { timestamp: string; id: string },
+  b: { timestamp: string; id: string }
+): number {
   if (a.timestamp !== b.timestamp) {
     return b.timestamp.localeCompare(a.timestamp);
   }
   return a.id.localeCompare(b.id);
 }
 
-function redactSecrets(content) {
+function redactSecrets(content: unknown): { text: string; count: number } {
   let output = String(content);
   let count = 0;
 
@@ -104,23 +405,23 @@ function redactSecrets(content) {
   return { text: output, count };
 }
 
-function normalizeStoreId(value, fallback) {
+function normalizeStoreId(value: unknown, fallback: string): string {
   const normalized = normalizeText(value);
   return normalized || fallback;
 }
 
-function toObject(value) {
+function toObject<T extends object>(value: unknown): Partial<T> {
   if (value && typeof value === "object" && !Array.isArray(value)) {
-    return value;
+    return value as Partial<T>;
   }
   return {};
 }
 
-function toBodyText(value) {
+function toBodyText(value: unknown): string {
   if (typeof value === "string") {
     return value;
   }
-  if (value == null) {
+  if (value === null || value === undefined) {
     return "";
   }
   if (Array.isArray(value)) {
@@ -130,7 +431,11 @@ function toBodyText(value) {
       .join("\n");
   }
   if (typeof value === "object") {
-    const candidate = value;
+    const candidate = toObject<{
+      text?: unknown;
+      value?: unknown;
+      content?: unknown;
+    }>(value);
     if (typeof candidate.text === "string") {
       return candidate.text;
     }
@@ -150,14 +455,14 @@ function toBodyText(value) {
   return stableStringify(value);
 }
 
-function joinNonEmpty(lines) {
+function joinNonEmpty(lines: unknown[]): string {
   return lines
     .map((entry) => normalizeText(entry))
     .filter(Boolean)
     .join("\n");
 }
 
-function createSyntheticId(event) {
+function createSyntheticId(event: NormalizedEvent): string {
   const fingerprint = stableStringify({
     storeId: event.storeId,
     space: event.space,
@@ -170,28 +475,31 @@ function createSyntheticId(event) {
   return `evt-${sha256(fingerprint).slice(0, 16)}`;
 }
 
-function looksLikeJiraIssue(value) {
+function looksLikeJiraIssue(value: unknown): boolean {
+  const issue = toObject<JiraIssueInput>(value);
+  const hasFieldsObject =
+    issue.fields !== null &&
+    issue.fields !== undefined &&
+    typeof issue.fields === "object" &&
+    !Array.isArray(issue.fields);
+  return Boolean(typeof issue.key === "string" || hasFieldsObject);
+}
+
+function looksLikeConversation(value: unknown): boolean {
+  const conversation = toObject<ConversationInput>(value);
   return Boolean(
-    value &&
-    typeof value === "object" &&
-    (typeof value.key === "string" ||
-      (value.fields &&
-        typeof value.fields === "object" &&
-        !Array.isArray(value.fields)))
+    Array.isArray(conversation.messages) &&
+    (typeof conversation.id === "string" ||
+      typeof conversation.conversationId === "string")
   );
 }
 
-function looksLikeConversation(value) {
-  return Boolean(
-    value &&
-    typeof value === "object" &&
-    Array.isArray(value.messages) &&
-    (typeof value.id === "string" || typeof value.conversationId === "string")
-  );
-}
-
-function makeContext(input, defaults, inherited = {}) {
-  const raw = toObject(input);
+function makeContext(
+  input: unknown,
+  defaults: EngineDefaults,
+  inherited: Partial<EngineContext> = {}
+): EngineContext {
+  const raw = toObject<ContextInput>(input);
   return {
     storeId: normalizeStoreId(
       raw.storeId ??
@@ -213,8 +521,12 @@ function makeContext(input, defaults, inherited = {}) {
   };
 }
 
-function normalizeConversationMessage(rawMessage, context, index) {
-  const message = toObject(rawMessage);
+function normalizeConversationMessage(
+  rawMessage: unknown,
+  context: EngineContext,
+  index: number
+): NormalizedEvent {
+  const message = toObject<MessageInput>(rawMessage);
   const role =
     normalizeText(
       message.role || message.authorRole || message.speaker
@@ -245,22 +557,29 @@ function normalizeConversationMessage(rawMessage, context, index) {
       message.createdAt || message.timestamp || message.ts || message.time
     ),
     content: normalizedContent,
-    tags: [context.platform || "conversation", role].filter(Boolean),
+    tags: [context.platform || "conversation", role].filter(
+      Boolean
+    ) as string[],
     metadata: {
       role,
       conversationId,
       platform: context.platform || "unknown",
       messageIndex: index,
       meta:
-        message.meta && typeof message.meta === "object"
-          ? message.meta
+        message.meta &&
+        typeof message.meta === "object" &&
+        !Array.isArray(message.meta)
+          ? (message.meta as Record<string, unknown>)
           : undefined,
     },
   };
 }
 
-function normalizeFerndeskConversation(rawConversation, context) {
-  const conversation = toObject(rawConversation);
+function normalizeFerndeskConversation(
+  rawConversation: unknown,
+  context: EngineContext
+): NormalizedEvent[] {
+  const conversation = toObject<ConversationInput>(rawConversation);
   const explicitConversationId = normalizeText(
     conversation.id || conversation.conversationId
   );
@@ -271,13 +590,16 @@ function normalizeFerndeskConversation(rawConversation, context) {
     space: context.space,
     source: context.source,
     ordinal: context.conversationOrdinal ?? 0,
-    sample: messages.slice(0, 2).map((entry) => ({
-      id: normalizeText(entry?.id),
-      role: normalizeText(entry?.role),
-      text: normalizeText(
-        entry?.text ?? entry?.message ?? entry?.content ?? ""
-      ),
-    })),
+    sample: messages.slice(0, 2).map((entry: unknown) => {
+      const sampleEntry = toObject<MessageInput>(entry);
+      return {
+        id: normalizeText(sampleEntry.id),
+        role: normalizeText(sampleEntry.role),
+        text: normalizeText(
+          sampleEntry.text ?? sampleEntry.message ?? sampleEntry.content ?? ""
+        ),
+      };
+    }),
   });
   const conversationId =
     explicitConversationId ||
@@ -285,7 +607,7 @@ function normalizeFerndeskConversation(rawConversation, context) {
   const platform = context.platform || "jira-ferndesk";
 
   if (messages.length > 0) {
-    return messages.map((message, index) =>
+    return messages.map((message: unknown, index: number) =>
       normalizeConversationMessage(
         message,
         { ...context, conversationId, platform },
@@ -321,9 +643,13 @@ function normalizeFerndeskConversation(rawConversation, context) {
   ];
 }
 
-function normalizeJiraIssue(rawIssue, context, index) {
-  const issue = toObject(rawIssue);
-  const fields = toObject(issue.fields);
+function normalizeJiraIssue(
+  rawIssue: unknown,
+  context: EngineContext,
+  index: number
+): NormalizedEvent[] {
+  const issue = toObject<JiraIssueInput>(rawIssue);
+  const fields = toObject<JiraFieldsInput>(issue.fields);
   const issueKey = normalizeText(
     issue.key || issue.id || `jira-issue-${index}`
   );
@@ -332,12 +658,12 @@ function normalizeJiraIssue(rawIssue, context, index) {
   const createdAt = normalizeTimestamp(
     fields.created || issue.createdAt || fields.updated || issue.updatedAt
   );
-  const commentsFromField = Array.isArray(fields.comments)
+  const commentsFromField: unknown[] = Array.isArray(fields.comments)
     ? fields.comments
-    : Array.isArray(toObject(fields.comment).comments)
-      ? toObject(fields.comment).comments
+    : Array.isArray(toObject<CommentContainerInput>(fields.comment).comments)
+      ? (toObject<CommentContainerInput>(fields.comment).comments as unknown[])
       : [];
-  const comments = Array.isArray(issue.comments)
+  const comments: unknown[] = Array.isArray(issue.comments)
     ? issue.comments
     : commentsFromField;
 
@@ -355,55 +681,70 @@ function normalizeJiraIssue(rawIssue, context, index) {
     metadata: {
       issueKey,
       issueId: normalizeText(issue.id) || undefined,
-      status: normalizeText(toObject(fields.status).name) || undefined,
-      priority: normalizeText(toObject(fields.priority).name) || undefined,
+      status:
+        normalizeText(toObject<NameFieldInput>(fields.status).name) ||
+        undefined,
+      priority:
+        normalizeText(toObject<NameFieldInput>(fields.priority).name) ||
+        undefined,
       url: context.jiraBaseUrl
         ? `${context.jiraBaseUrl.replace(/\/$/, "")}/browse/${issueKey}`
         : undefined,
     },
   };
 
-  const commentEvents = comments.map((rawComment, commentIndex) => {
-    const comment = toObject(rawComment);
-    const author = toObject(comment.author);
-    const authorName =
-      normalizeText(author.displayName || author.name || author.accountId) ||
-      "unknown-author";
-    const publicFlag =
-      comment.public == null
-        ? undefined
-        : comment.public
-          ? "public"
-          : "private";
-    return {
-      id: `jira-${issueKey}-comment-${normalizeText(comment.id) || commentIndex}`,
-      storeId: context.storeId,
-      space: context.space,
-      source: context.source || "jira-comment",
-      timestamp: normalizeTimestamp(
-        comment.created || comment.createdAt || issueEvent.timestamp
-      ),
-      content: joinNonEmpty([
-        `Comment by ${authorName}`,
-        publicFlag ? `Visibility: ${publicFlag}` : "",
-        toBodyText(comment.body || comment.content || comment.text),
-      ]),
-      tags: ["jira", "comment"],
-      metadata: {
-        issueKey,
-        commentId: normalizeText(comment.id) || undefined,
-        author: authorName,
-        public: comment.public == null ? undefined : Boolean(comment.public),
-      },
-    };
-  });
+  const commentEvents = comments.map(
+    (rawComment: unknown, commentIndex: number) => {
+      const comment = toObject<JiraCommentInput>(rawComment);
+      const author = toObject<ActorInput>(comment.author);
+      const authorName =
+        normalizeText(author.displayName || author.name || author.accountId) ||
+        "unknown-author";
+      const publicFlag =
+        comment.public === null || comment.public === undefined
+          ? undefined
+          : comment.public
+            ? "public"
+            : "private";
+      return {
+        id: `jira-${issueKey}-comment-${normalizeText(comment.id) || commentIndex}`,
+        storeId: context.storeId,
+        space: context.space,
+        source: context.source || "jira-comment",
+        timestamp: normalizeTimestamp(
+          comment.created || comment.createdAt || issueEvent.timestamp
+        ),
+        content: joinNonEmpty([
+          `Comment by ${authorName}`,
+          publicFlag ? `Visibility: ${publicFlag}` : "",
+          toBodyText(comment.body || comment.content || comment.text),
+        ]),
+        tags: ["jira", "comment"],
+        metadata: {
+          issueKey,
+          commentId: normalizeText(comment.id) || undefined,
+          author: authorName,
+          public:
+            comment.public === null || comment.public === undefined
+              ? undefined
+              : Boolean(comment.public),
+        },
+      };
+    }
+  );
 
   return [issueEvent, ...commentEvents];
 }
 
-function toRawEvents(input, defaults, inherited = {}) {
+function toRawEvents(
+  input: unknown,
+  defaults: EngineDefaults,
+  inherited: Partial<EngineContext> = {}
+): unknown[] {
   if (Array.isArray(input)) {
-    return input.flatMap((entry) => toRawEvents(entry, defaults, inherited));
+    return input.flatMap((entry: unknown) =>
+      toRawEvents(entry, defaults, inherited)
+    );
   }
 
   if (!input || typeof input !== "object") {
@@ -421,30 +762,33 @@ function toRawEvents(input, defaults, inherited = {}) {
   }
 
   const context = makeContext(input, defaults, inherited);
-  const envelope = toObject(input);
+  const envelope = toObject<RawEventInput>(input);
 
   if (Array.isArray(envelope.events)) {
-    return envelope.events.flatMap((event) =>
+    return envelope.events.flatMap((event: unknown) =>
       toRawEvents(event, defaults, {
         ...context,
-        source: context.source || normalizeText(toObject(event).source),
+        source:
+          context.source ||
+          normalizeText(toObject<RawEventInput>(event).source),
       })
     );
   }
 
   if (Array.isArray(envelope.conversations)) {
-    return envelope.conversations.flatMap((conversation, conversationOrdinal) =>
-      normalizeFerndeskConversation(conversation, {
-        ...context,
-        source: context.source || "jira",
-        platform: context.platform || "jira-ferndesk",
-        conversationOrdinal,
-      })
+    return envelope.conversations.flatMap(
+      (conversation: unknown, conversationOrdinal: number) =>
+        normalizeFerndeskConversation(conversation, {
+          ...context,
+          source: context.source || "jira",
+          platform: context.platform || "jira-ferndesk",
+          conversationOrdinal,
+        })
     );
   }
 
   if (Array.isArray(envelope.issues)) {
-    return envelope.issues.flatMap((issue, index) =>
+    return envelope.issues.flatMap((issue: unknown, index: number) =>
       normalizeJiraIssue(
         issue,
         { ...context, source: context.source || "jira" },
@@ -472,21 +816,22 @@ function toRawEvents(input, defaults, inherited = {}) {
   return [envelope];
 }
 
-function normalizeEvent(rawEvent, defaults) {
-  if (!rawEvent || typeof rawEvent !== "object") {
+function normalizeEvent(
+  rawEvent: unknown,
+  defaults: EngineDefaults
+): NormalizedEvent | null {
+  if (!rawEvent || typeof rawEvent !== "object" || Array.isArray(rawEvent)) {
     return null;
   }
+  const event = rawEvent as RawEventInput;
 
   const storeId = normalizeStoreId(
-    rawEvent.storeId ?? rawEvent.store ?? rawEvent.memoryStore,
+    event.storeId ?? event.store ?? event.memoryStore,
     defaults.defaultStore
   );
   const space =
     normalizeText(
-      rawEvent.space ||
-        rawEvent.project ||
-        rawEvent.profile ||
-        defaults.defaultSpace
+      event.space || event.project || event.profile || defaults.defaultSpace
     ) || defaults.defaultSpace;
   if (!space) {
     return null;
@@ -494,55 +839,47 @@ function normalizeEvent(rawEvent, defaults) {
 
   const source =
     normalizeText(
-      rawEvent.source ||
-        rawEvent.connector ||
-        rawEvent.platform ||
-        rawEvent.origin
+      event.source || event.connector || event.platform || event.origin
     ) || "unknown";
   const contentCandidate =
-    rawEvent.content ??
-    rawEvent.text ??
-    rawEvent.message ??
-    rawEvent.body ??
-    rawEvent.payload ??
-    rawEvent.summary ??
+    event.content ??
+    event.text ??
+    event.message ??
+    event.body ??
+    event.payload ??
+    event.summary ??
     "";
   const content = toBodyText(contentCandidate);
   const timestamp = normalizeTimestamp(
-    rawEvent.timestamp ||
-      rawEvent.createdAt ||
-      rawEvent.occurredAt ||
-      rawEvent.updatedAt
+    event.timestamp || event.createdAt || event.occurredAt || event.updatedAt
   );
-  const tags = Array.isArray(rawEvent.tags)
+  const tags = Array.isArray(event.tags)
     ? [
         ...new Set(
-          rawEvent.tags.map((tag) => normalizeText(tag)).filter(Boolean)
+          event.tags.map((tag: unknown) => normalizeText(tag)).filter(Boolean)
         ),
       ].sort()
     : [];
-  const metadata =
-    rawEvent.metadata &&
-    typeof rawEvent.metadata === "object" &&
-    !Array.isArray(rawEvent.metadata)
-      ? { ...rawEvent.metadata }
+  const metadata: EventMetadata =
+    event.metadata &&
+    typeof event.metadata === "object" &&
+    !Array.isArray(event.metadata)
+      ? { ...(event.metadata as Record<string, unknown>) }
       : {};
 
-  const role = normalizeText(
-    rawEvent.role || rawEvent.authorRole
-  ).toLowerCase();
+  const role = normalizeText(event.role || event.authorRole).toLowerCase();
   if (role && !metadata.role) {
     metadata.role = role;
   }
-  if (rawEvent.conversationId && !metadata.conversationId) {
-    metadata.conversationId = normalizeText(rawEvent.conversationId);
+  if (event.conversationId && !metadata.conversationId) {
+    metadata.conversationId = normalizeText(event.conversationId);
   }
-  if (rawEvent.issueKey && !metadata.issueKey) {
-    metadata.issueKey = normalizeText(rawEvent.issueKey);
+  if (event.issueKey && !metadata.issueKey) {
+    metadata.issueKey = normalizeText(event.issueKey);
   }
 
-  const normalized = {
-    id: normalizeText(rawEvent.id),
+  const normalized: NormalizedEvent = {
+    id: normalizeText(event.id),
     storeId,
     space,
     source,
@@ -558,7 +895,11 @@ function normalizeEvent(rawEvent, defaults) {
   return normalized;
 }
 
-function eventScore(query, event, seed) {
+function eventScore(
+  query: string,
+  event: Pick<StoredEvent, "id" | "timestamp" | "content">,
+  seed: string
+): number {
   const queryTokens = tokenize(query);
   const contentTokens = tokenize(event.content);
   let overlap = 0;
@@ -572,7 +913,12 @@ function eventScore(query, event, seed) {
   return overlap + tieBreaker;
 }
 
-function clampInteger(value, min, max, fallback) {
+function clampInteger(
+  value: unknown,
+  min: number,
+  max: number,
+  fallback: number
+): number {
   const numeric = Number.parseInt(String(value), 10);
   if (Number.isNaN(numeric)) {
     return fallback;
@@ -580,21 +926,29 @@ function clampInteger(value, min, max, fallback) {
   return Math.max(min, Math.min(max, numeric));
 }
 
-function getStoreState(stores, storeId) {
+function getStoreState(
+  stores: Map<string, StoreState>,
+  storeId: string
+): StoreState {
   if (!stores.has(storeId)) {
-    stores.set(storeId, { spaces: new Map() });
+    stores.set(storeId, {
+      spaces: new Map<string, Map<string, StoredEvent>>(),
+    });
   }
-  return stores.get(storeId);
+  return stores.get(storeId) as StoreState;
 }
 
-function getSpaceBucket(storeState, space) {
+function getSpaceBucket(
+  storeState: StoreState,
+  space: string
+): Map<string, StoredEvent> {
   if (!storeState.spaces.has(space)) {
-    storeState.spaces.set(space, new Map());
+    storeState.spaces.set(space, new Map<string, StoredEvent>());
   }
-  return storeState.spaces.get(space);
+  return storeState.spaces.get(space) as Map<string, StoredEvent>;
 }
 
-function exportEvent(record) {
+function exportEvent(record: StoredEvent): ExportedEvent {
   return {
     id: record.id,
     storeId: record.storeId,
@@ -608,19 +962,31 @@ function exportEvent(record) {
   };
 }
 
-function importStoreEntry(stores, rawStoreId, rawSpaces, defaults) {
+function importStoreEntry(
+  stores: Map<string, StoreState>,
+  rawStoreId: unknown,
+  rawSpaces: unknown,
+  defaults: EngineDefaults
+): void {
   const storeId = normalizeStoreId(rawStoreId, defaults.defaultStore);
   const storeState = getStoreState(stores, storeId);
   const spaces = Array.isArray(rawSpaces) ? rawSpaces : [];
 
   for (const spaceEntry of spaces) {
+    const parsedSpaceEntry = toObject<SpaceEntryInput>(spaceEntry);
     const entrySpace =
-      normalizeText(spaceEntry?.space || defaults.defaultSpace) ||
+      normalizeText(parsedSpaceEntry.space || defaults.defaultSpace) ||
       defaults.defaultSpace;
-    const events = Array.isArray(spaceEntry?.events) ? spaceEntry.events : [];
+    const events = Array.isArray(parsedSpaceEntry.events)
+      ? parsedSpaceEntry.events
+      : [];
     for (const rawEvent of events) {
       const normalized = normalizeEvent(
-        { ...rawEvent, storeId, space: entrySpace },
+        {
+          ...(toObject<RawEventInput>(rawEvent) as RawEventInput),
+          storeId,
+          space: entrySpace,
+        },
         defaults
       );
       if (!normalized) {
@@ -644,17 +1010,20 @@ function importStoreEntry(stores, rawStoreId, rawSpaces, defaults) {
   }
 }
 
-function importSnapshot(stores, snapshot, defaults) {
-  if (!snapshot || typeof snapshot !== "object") {
-    return;
-  }
+function importSnapshot(
+  stores: Map<string, StoreState>,
+  snapshot: unknown,
+  defaults: EngineDefaults
+): void {
+  const parsedSnapshot = toObject<SnapshotInput>(snapshot);
 
-  if (Array.isArray(snapshot.stores)) {
-    for (const storeEntry of snapshot.stores) {
+  if (Array.isArray(parsedSnapshot.stores)) {
+    for (const storeEntry of parsedSnapshot.stores) {
+      const parsedStoreEntry = toObject<SnapshotStoreEntryInput>(storeEntry);
       importStoreEntry(
         stores,
-        storeEntry?.storeId,
-        storeEntry?.spaces,
+        parsedStoreEntry.storeId,
+        parsedStoreEntry.spaces,
         defaults
       );
     }
@@ -662,23 +1031,29 @@ function importSnapshot(stores, snapshot, defaults) {
   }
 
   if (
-    snapshot.stores &&
-    typeof snapshot.stores === "object" &&
-    !Array.isArray(snapshot.stores)
+    parsedSnapshot.stores &&
+    typeof parsedSnapshot.stores === "object" &&
+    !Array.isArray(parsedSnapshot.stores)
   ) {
-    for (const storeId of Object.keys(snapshot.stores).sort()) {
-      const entry = snapshot.stores[storeId];
-      importStoreEntry(stores, storeId, entry?.spaces, defaults);
+    const storesById = parsedSnapshot.stores as Record<string, unknown>;
+    for (const storeId of Object.keys(storesById).sort()) {
+      const entry = toObject<SnapshotStoreEntryInput>(storesById[storeId]);
+      importStoreEntry(stores, storeId, entry.spaces, defaults);
     }
     return;
   }
 
-  if (Array.isArray(snapshot.spaces)) {
-    importStoreEntry(stores, defaults.defaultStore, snapshot.spaces, defaults);
+  if (Array.isArray(parsedSnapshot.spaces)) {
+    importStoreEntry(
+      stores,
+      defaults.defaultStore,
+      parsedSnapshot.spaces,
+      defaults
+    );
   }
 }
 
-function totalEventsForStore(storeState) {
+function totalEventsForStore(storeState: StoreState): number {
   let total = 0;
   for (const bucket of storeState.spaces.values()) {
     total += bucket.size;
@@ -686,7 +1061,7 @@ function totalEventsForStore(storeState) {
   return total;
 }
 
-function totalEvents(stores) {
+function totalEvents(stores: Map<string, StoreState>): number {
   let total = 0;
   for (const storeState of stores.values()) {
     total += totalEventsForStore(storeState);
@@ -694,7 +1069,7 @@ function totalEvents(stores) {
   return total;
 }
 
-function totalSpaces(stores) {
+function totalSpaces(stores: Map<string, StoreState>): number {
   let total = 0;
   for (const storeState of stores.values()) {
     total += storeState.spaces.size;
@@ -702,14 +1077,14 @@ function totalSpaces(stores) {
   return total;
 }
 
-export function createUmsEngine(options = {}) {
-  const config = { ...DEFAULTS, ...options };
+export function createUmsEngine(options: UmsEngineOptions = {}): UmsEngine {
+  const config: EngineDefaults = { ...DEFAULTS, ...options };
   const unsafePatterns = options.unsafePatterns ?? UNSAFE_PATTERNS;
-  const stores = new Map();
+  const stores = new Map<string, StoreState>();
 
   importSnapshot(stores, options.initialState, config);
 
-  function ingest(input) {
+  function ingest(input: unknown): IngestResult {
     const rawEvents = toRawEvents(input, config);
     let accepted = 0;
     let duplicates = 0;
@@ -766,9 +1141,11 @@ export function createUmsEngine(options = {}) {
     };
   }
 
-  function recall(request = {}) {
+  function recall(request: unknown = {}): RecallResult {
     const payload =
-      typeof request === "string" ? { query: request } : toObject(request);
+      typeof request === "string"
+        ? ({ query: request } as RecallRequestInput)
+        : toObject<RecallRequestInput>(request);
     const storeId = normalizeStoreId(
       payload.storeId ?? payload.store ?? payload.memoryStore,
       config.defaultStore
@@ -791,9 +1168,12 @@ export function createUmsEngine(options = {}) {
       config.defaultTokenBudget
     );
 
-    const storeState = stores.get(storeId) ?? { spaces: new Map() };
-    const bucket = storeState.spaces.get(space) ?? new Map();
-    const ranked = [];
+    const storeState =
+      stores.get(storeId) ??
+      ({ spaces: new Map<string, Map<string, StoredEvent>>() } as StoreState);
+    const bucket =
+      storeState.spaces.get(space) ?? new Map<string, StoredEvent>();
+    const ranked: RankedEvent[] = [];
     let filteredUnsafe = 0;
 
     for (const event of bucket.values()) {
@@ -814,7 +1194,7 @@ export function createUmsEngine(options = {}) {
       return compareEvents(a.event, b.event);
     });
 
-    const items = [];
+    const items: RecallResultItem[] = [];
     let estimatedTokens = 0;
 
     for (const rankedEvent of ranked) {
@@ -863,9 +1243,14 @@ export function createUmsEngine(options = {}) {
     };
   }
 
-  function getEventCount(space, storeId = config.defaultStore) {
+  function getEventCount(
+    space?: string,
+    storeId: unknown = config.defaultStore
+  ): number {
     const normalizedStore = normalizeStoreId(storeId, config.defaultStore);
-    const storeState = stores.get(normalizedStore) ?? { spaces: new Map() };
+    const storeState =
+      stores.get(normalizedStore) ??
+      ({ spaces: new Map<string, Map<string, StoredEvent>>() } as StoreState);
 
     if (space) {
       return (storeState.spaces.get(space) ?? new Map()).size;
@@ -873,7 +1258,7 @@ export function createUmsEngine(options = {}) {
     return totalEventsForStore(storeState);
   }
 
-  function exportState() {
+  function exportState(): ExportedState {
     const serializedStores = [...stores.entries()]
       .sort(([storeA], [storeB]) => storeA.localeCompare(storeB))
       .map(([storeId, storeState]) => {
@@ -915,7 +1300,7 @@ export function createUmsEngine(options = {}) {
     };
   }
 
-  function stateDigest() {
+  function stateDigest(): string {
     return sha256(stableStringify(exportState()));
   }
 

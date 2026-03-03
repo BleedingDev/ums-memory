@@ -144,7 +144,9 @@ function escapeLabelValue(value: string | number): string {
     .replaceAll('"', '\\"');
 }
 
-function formatLabels(labels: Readonly<Record<string, string | number>>): string {
+function formatLabels(
+  labels: Readonly<Record<string, string | number>>
+): string {
   const entries = Object.entries(labels);
   if (entries.length === 0) {
     return "";
@@ -181,7 +183,10 @@ function extractTraceContext(responseData: unknown): ExtractedTraceContext {
   };
 }
 
-function resolveStoreId(responseData: unknown, requestBody: unknown): string | null {
+function resolveStoreId(
+  responseData: unknown,
+  requestBody: unknown
+): string | null {
   const typedResponse = asObject<TelemetryEventSource>(responseData);
   const typedRequest = asObject<RequestBodySource>(requestBody);
   return (
@@ -196,8 +201,12 @@ function resolveRequestDigest(
 ): string | null {
   const typedResponse = asObject<TelemetryEventSource>(responseData);
   const digestFromTracePayload =
-    tracePayload !== null ? asNonEmptyString(tracePayload["requestDigest"]) : null;
-  return asNonEmptyString(typedResponse?.requestDigest) ?? digestFromTracePayload;
+    tracePayload !== null
+      ? asNonEmptyString(tracePayload["requestDigest"])
+      : null;
+  return (
+    asNonEmptyString(typedResponse?.requestDigest) ?? digestFromTracePayload
+  );
 }
 
 function normalizeLatencyBuckets(
@@ -206,13 +215,13 @@ function normalizeLatencyBuckets(
   const normalized =
     latencyBucketsMs?.length !== undefined
       ? [...latencyBucketsMs]
-          .map((value) => Number(value))
+          .map(Number)
           .filter((value) => Number.isFinite(value) && value > 0)
           .sort((left, right) => left - right)
       : [];
   const deduped: number[] = [];
   for (const value of normalized) {
-    const lastValue = deduped[deduped.length - 1];
+    const lastValue = deduped.at(-1);
     if (lastValue !== value) {
       deduped.push(value);
     }
@@ -220,17 +229,15 @@ function normalizeLatencyBuckets(
   return deduped.length > 0 ? deduped : DEFAULT_LATENCY_BUCKETS_MS;
 }
 
-export function buildOperationTelemetryEvent(
-  {
-    operation,
-    result,
-    statusCode,
-    latencyMs,
-    responseData = null,
-    requestBody = null,
-    failureCode = null,
-  }: BuildOperationTelemetryEventOptions = {}
-): OperationTelemetryEvent {
+export function buildOperationTelemetryEvent({
+  operation,
+  result,
+  statusCode,
+  latencyMs,
+  responseData = null,
+  requestBody = null,
+  failureCode = null,
+}: BuildOperationTelemetryEventOptions = {}): OperationTelemetryEvent {
   const normalizedOperation = normalizeOperation(operation);
   const normalizedResult = normalizeResult(result);
   const normalizedStatusCode = normalizeStatusCode(statusCode);
@@ -285,12 +292,10 @@ export function defaultTelemetryLogger(event: OperationTelemetryEvent): void {
   process.stdout.write(`${JSON.stringify(event)}\n`);
 }
 
-export function createInMemoryApiTelemetry(
-  {
-    logger = defaultTelemetryLogger,
-    latencyBucketsMs = DEFAULT_LATENCY_BUCKETS_MS,
-  }: CreateInMemoryApiTelemetryOptions = {}
-): InMemoryApiTelemetry {
+export function createInMemoryApiTelemetry({
+  logger = defaultTelemetryLogger,
+  latencyBucketsMs = DEFAULT_LATENCY_BUCKETS_MS,
+}: CreateInMemoryApiTelemetryOptions = {}): InMemoryApiTelemetry {
   const buckets = normalizeLatencyBuckets(latencyBucketsMs);
   const seriesByKey = new Map<string, TelemetrySeries>();
 

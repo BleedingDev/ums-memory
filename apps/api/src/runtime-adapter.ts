@@ -42,14 +42,12 @@ interface RuntimeAdapter {
   listOperations: (
     options?: RuntimeAdapterListOptions
   ) => Promise<unknown> | unknown;
-  executeOperation: (
-    options: {
-      operation: string;
-      requestBody?: unknown;
-      stateFile?: string | null;
-      env?: NodeJS.ProcessEnv;
-    }
-  ) => Promise<unknown> | unknown;
+  executeOperation: (options: {
+    operation: string;
+    requestBody?: unknown;
+    stateFile?: string | null;
+    env?: NodeJS.ProcessEnv;
+  }) => Promise<unknown> | unknown;
 }
 
 interface RuntimeAdapterFactoryInput {
@@ -178,7 +176,10 @@ function toContractError(message: string): CodedError {
   return toCodedError(message, RUNTIME_ADAPTER_CONTRACT_ERROR_CODE);
 }
 
-function assertRuntimeAdapter(adapter: unknown, source: string): RuntimeAdapter {
+function assertRuntimeAdapter(
+  adapter: unknown,
+  source: string
+): RuntimeAdapter {
   if (typeof adapter !== "object" || adapter === null) {
     throw toContractError(
       `Runtime adapter '${source}' must resolve to an object.`
@@ -218,7 +219,7 @@ async function resolveRuntimeAdapterFromModule(
       ? runtimeModule["default"]
       : undefined);
 
-  if (exportedValue == null) {
+  if (exportedValue === null || exportedValue === undefined) {
     throw toContractError(
       `Runtime adapter module '${config.modulePath}' does not export '${config.exportName}'.`
     );
@@ -300,7 +301,7 @@ async function resolvePolicyPackPluginFromModule(
       ? pluginModule["default"]
       : undefined);
 
-  if (exportedValue == null) {
+  if (exportedValue === null || exportedValue === undefined) {
     throw toContractError(
       `Policy pack plugin module '${config.modulePath}' does not export '${config.exportName}'.`
     );
@@ -312,7 +313,7 @@ async function resolvePolicyPackPluginFromModule(
   return exportedValue;
 }
 
-async function configureLegacyPolicyPackPlugin(
+function configureLegacyPolicyPackPlugin(
   env: NodeJS.ProcessEnv = process.env
 ): Promise<void> {
   const config = getPolicyPackPluginConfig(env);
@@ -324,27 +325,27 @@ async function configureLegacyPolicyPackPlugin(
     return cachedPolicyPackPluginPromise;
   }
 
-  const configurePromise = (async () => {
-    if (config.modulePath === null) {
-      resetPolicyPackPlugin();
-      return;
-    }
-
+  const configurePromise = (async (): Promise<void> => {
     try {
+      if (config.modulePath === null) {
+        resetPolicyPackPlugin();
+        return;
+      }
       const plugin = await resolvePolicyPackPluginFromModule(config);
       setPolicyPackPlugin(plugin);
     } catch (error) {
-      resetPolicyPackPlugin();
-      throw toPolicyPackPluginLoadError(config, error);
+      cachedPolicyPackPluginKey = undefined;
+      cachedPolicyPackPluginPromise = undefined;
+      if (config.modulePath !== null) {
+        resetPolicyPackPlugin();
+        throw toPolicyPackPluginLoadError(config, error);
+      }
+      throw error;
     }
   })();
 
   cachedPolicyPackPluginKey = cacheKey;
-  cachedPolicyPackPluginPromise = configurePromise.catch((error: unknown) => {
-    cachedPolicyPackPluginKey = undefined;
-    cachedPolicyPackPluginPromise = undefined;
-    throw error;
-  });
+  cachedPolicyPackPluginPromise = configurePromise;
   return cachedPolicyPackPluginPromise;
 }
 
@@ -352,9 +353,10 @@ export function createLegacyRuntimeAdapter(): RuntimeAdapter {
   return LEGACY_RUNTIME_ADAPTER;
 }
 
-export async function resolveRuntimeAdapter(
-  { env = process.env, reload = false }: ResolveRuntimeAdapterOptions = {}
-): Promise<RuntimeAdapter> {
+export function resolveRuntimeAdapter({
+  env = process.env,
+  reload = false,
+}: ResolveRuntimeAdapterOptions = {}): Promise<RuntimeAdapter> {
   const config = getRuntimeAdapterConfig(env);
   const cacheKey = makeRuntimeAdapterCacheKey(config);
 
@@ -378,6 +380,8 @@ export async function resolveRuntimeAdapter(
     try {
       return await resolveRuntimeAdapterFromModule(config);
     } catch (error) {
+      cachedRuntimeAdapterKey = undefined;
+      cachedRuntimeAdapterPromise = undefined;
       throw toAdapterLoadError(config, error);
     }
   })();
@@ -398,7 +402,9 @@ export async function listRuntimeOperations(
       "Runtime adapter listOperations() must return an array."
     );
   }
-  return operations.map((entry) => normalizeOperationName(entry)).filter(Boolean);
+  return operations
+    .map((entry) => normalizeOperationName(entry))
+    .filter(Boolean);
 }
 
 export async function executeRuntimeOperation(
