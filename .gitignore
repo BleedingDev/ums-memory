@@ -13,3 +13,7 @@ node_modules/
 .ums-state.json
 .ums-state.json.lock
 .DS_Store
+
+# Dolt database files (added by bd init)
+.dolt/
+*.db
