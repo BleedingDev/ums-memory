@@ -3,7 +3,7 @@ import { exportStoreSnapshot } from "./core.mjs";
 import {
   DEFAULT_SHARED_STATE_FILE,
   executeOperationWithSharedState,
-} from "./persistence.mjs";
+} from "./persistence.ts";
 import { executeRuntimeOperation } from "./runtime-adapter.mjs";
 
 const DEFAULT_REPLAY_EVAL_MAX_PER_PROFILE = 5;

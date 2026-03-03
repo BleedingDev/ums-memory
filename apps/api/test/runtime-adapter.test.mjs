@@ -4,7 +4,7 @@ import { resolve } from "node:path";
 import test from "node:test";
 
 import { executeOperation, listOperations, resetStore } from "../src/core.mjs";
-import { executeOperationWithSharedState } from "../src/persistence.mjs";
+import { executeOperationWithSharedState } from "../src/persistence.ts";
 import {
   clearRuntimeAdapterCache,
   executeRuntimeOperation,

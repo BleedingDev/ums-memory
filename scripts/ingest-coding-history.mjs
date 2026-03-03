@@ -2,7 +2,7 @@ import { createReadStream, existsSync, mkdirSync, readdirSync, readFileSync, wri
 import { extname, join, relative, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { executeOperation } from "../apps/api/src/core.mjs";
-import { DEFAULT_SHARED_STATE_FILE, executeOperationWithSharedState } from "../apps/api/src/persistence.mjs";
+import { DEFAULT_SHARED_STATE_FILE, executeOperationWithSharedState } from "../apps/api/src/persistence.ts";
 
 const DEFAULT_STORE_ID = "coding-agent";
 const DEFAULT_PROFILE = "agent-lessons-curated-v9";

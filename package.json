@@ -40,7 +40,7 @@
     "bench:ums": "UMS_IMPL_MODULE=./apps/api/src/ums/engine.mjs UMS_IMPL_EXPORT=createUmsEngine node benchmarks/ums-latency-benchmark.mjs",
     "bench": "npm run bench:api && npm run bench:ums",
     "validate:ingestion": "node scripts/validate-ingestion.mjs",
-    "ingest:coding-history": "node scripts/ingest-coding-history.mjs",
+    "ingest:coding-history": "node --import tsx scripts/ingest-coding-history.mjs",
     "pilot:report": "node scripts/generate-pilot-rollout-report.mjs",
     "pilot:dashboard": "node scripts/generate-pilot-kpi-dashboard.mjs",
     "pilot:tune": "node scripts/generate-ranking-decay-tuning.mjs",

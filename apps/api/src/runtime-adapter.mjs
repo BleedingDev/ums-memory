@@ -6,7 +6,7 @@ import {
   resetPolicyPackPlugin,
   setPolicyPackPlugin,
 } from "./core.mjs";
-import { DEFAULT_SHARED_STATE_FILE, executeOperationWithSharedState } from "./persistence.mjs";
+import { DEFAULT_SHARED_STATE_FILE, executeOperationWithSharedState } from "./persistence.ts";
 
 export const DEFAULT_RUNTIME_ADAPTER_EXPORT = "createRuntimeAdapter";
 export const DEFAULT_RUNTIME_STATE_FILE = DEFAULT_SHARED_STATE_FILE;
