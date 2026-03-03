@@ -4,6 +4,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import test from "node:test";
+
 import { resetStore } from "../src/core.ts";
 import { startApiServer } from "../src/server.ts";
 import { createInMemoryApiTelemetry } from "../src/telemetry.ts";
@@ -12,9 +13,13 @@ const CLI_PATH = resolve(process.cwd(), "apps/cli/src/index.ts");
 
 function runCli(args, stdin = "") {
   return new Promise((resolvePromise) => {
-    const proc = spawn(process.execPath, ["--import", "tsx", CLI_PATH, ...args], {
-      stdio: ["pipe", "pipe", "pipe"],
-    });
+    const proc = spawn(
+      process.execPath,
+      ["--import", "tsx", CLI_PATH, ...args],
+      {
+        stdio: ["pipe", "pipe", "pipe"],
+      }
+    );
     let stdout = "";
     let stderr = "";
     proc.stdout.on("data", (chunk) => {

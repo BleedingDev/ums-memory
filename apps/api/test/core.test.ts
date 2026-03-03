@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+
 import { Effect } from "effect";
 
 import {
@@ -987,14 +988,8 @@ test("shadow_write returns canonical candidate metadata and preserves it on dete
   assert.equal(replay.applied[0].action, "noop");
 
   for (const field of requiredFields) {
-    assert.equal(
-      Object.hasOwn(created.applied[0], field),
-      true
-    );
-    assert.equal(
-      Object.hasOwn(replay.applied[0], field),
-      true
-    );
+    assert.equal(Object.hasOwn(created.applied[0], field), true);
+    assert.equal(Object.hasOwn(replay.applied[0], field), true);
     assert.deepEqual(replay.applied[0][field], created.applied[0][field]);
   }
 });

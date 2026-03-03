@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { resolve } from "node:path";
 import test from "node:test";
+
 import { executeOperation, listOperations, resetStore } from "../src/core.ts";
 import { executeOperationWithSharedState } from "../src/persistence.ts";
 import {
@@ -29,10 +30,14 @@ const ORIGINAL_POLICY_PACK_PLUGIN_EXPORT =
 
 function runCli(args, stdin = "", { env = process.env } = {}) {
   return new Promise((resolvePromise) => {
-    const proc = spawn(process.execPath, ["--import", "tsx", CLI_PATH, ...args], {
-      stdio: ["pipe", "pipe", "pipe"],
-      env,
-    });
+    const proc = spawn(
+      process.execPath,
+      ["--import", "tsx", CLI_PATH, ...args],
+      {
+        stdio: ["pipe", "pipe", "pipe"],
+        env,
+      }
+    );
     let stdout = "";
     let stderr = "";
     proc.stdout.on("data", (chunk) => {

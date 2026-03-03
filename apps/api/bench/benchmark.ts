@@ -1,5 +1,6 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
+
 import { executeOperation, resetStore } from "../src/core.ts";
 
 const PROFILE = "bench";
