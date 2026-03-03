@@ -1,6 +1,12 @@
-import { createServer } from "node:http";
+import {
+  createServer,
+  type IncomingMessage,
+  type Server,
+  type ServerResponse,
+} from "node:http";
+import type { AddressInfo } from "node:net";
 
-import { CONSOLE_CSS, CONSOLE_HTML, CONSOLE_JS } from "./console-ui.mjs";
+import { CONSOLE_CSS, CONSOLE_HTML, CONSOLE_JS } from "./console-ui.ts";
 import {
   DEFAULT_RUNTIME_STATE_FILE,
   executeRuntimeOperation,
@@ -8,22 +14,82 @@ import {
 } from "./runtime-adapter.mjs";
 import {
   createInMemoryApiTelemetry,
+  type BuildOperationTelemetryEventOptions,
   PROMETHEUS_CONTENT_TYPE,
 } from "./telemetry.ts";
 
-const HOST = process.env.UMS_API_HOST ?? "127.0.0.1";
-const PORT = Number.parseInt(process.env.UMS_API_PORT ?? "8787", 10);
+interface ApiErrorBody {
+  ok: false;
+  error: {
+    code: string;
+    message: string;
+  };
+}
+
+interface ApiTelemetry {
+  recordOperationResult(event: BuildOperationTelemetryEventOptions): void;
+  renderPrometheusMetrics(): string;
+}
+
+type RecordOperationTelemetryInput = {
+  statusCode: number;
+  result: "success" | "failure";
+  responseData?: unknown;
+  requestBody?: unknown;
+  failureCode?: string | null;
+};
+
+interface StartApiServerOptions {
+  host?: string;
+  port?: number;
+  stateFile?: string | null;
+  telemetry?: ApiTelemetry;
+  enableConsoleUi?: boolean | string;
+}
+
+interface StartedApiServer {
+  server: Server;
+  host: string;
+  port: number;
+  telemetry: ApiTelemetry;
+}
+
+interface ConsoleRoute {
+  body: string;
+  contentType: string;
+  methodError: string;
+}
+
+interface SupervisionSnapshot {
+  phase: string;
+  lastError?: string | null;
+}
+
+interface SupervisedApiService {
+  status(): SupervisionSnapshot;
+}
+
+interface StartSupervisedApiServiceResult {
+  service: SupervisedApiService;
+  host: string;
+  port: number;
+}
+
+const HOST = process.env["UMS_API_HOST"] ?? "127.0.0.1";
+const PORT = Number.parseInt(process.env["UMS_API_PORT"] ?? "8787", 10);
 const ENABLE_CONSOLE_UI = parseBooleanFlag(
-  process.env.UMS_API_ENABLE_CONSOLE_UI
+  process.env["UMS_API_ENABLE_CONSOLE_UI"]
 );
 const API_PREFIX = "/v1";
-const CONSOLE_SECURITY_HEADERS = Object.freeze({
-  "content-security-policy":
-    "default-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self'",
-  "x-frame-options": "DENY",
-  "x-content-type-options": "nosniff",
-});
-const CONSOLE_ROUTES = Object.freeze({
+const CONSOLE_SECURITY_HEADERS: Readonly<Record<string, string>> = Object.freeze(
+  {
+    "content-security-policy":
+      "default-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self'",
+    "x-frame-options": "DENY",
+    "x-content-type-options": "nosniff",
+  }
+);
+const CONSOLE_ROUTES: Readonly<Record<string, ConsoleRoute>> = Object.freeze({
   "/console": {
     body: CONSOLE_HTML,
     contentType: "text/html; charset=utf-8",
@@ -41,7 +107,7 @@ const CONSOLE_ROUTES = Object.freeze({
   },
 });
 
-function parseBooleanFlag(value) {
+function parseBooleanFlag(value: unknown): boolean {
   if (typeof value !== "string") {
     return false;
   }
@@ -54,7 +120,7 @@ function parseBooleanFlag(value) {
   );
 }
 
-function normalizeConsoleUiToggle(value) {
+function normalizeConsoleUiToggle(value: unknown): boolean {
   if (typeof value === "boolean") {
     return value;
   }
@@ -64,7 +130,44 @@ function normalizeConsoleUiToggle(value) {
   return false;
 }
 
-function json(res, statusCode, body) {
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function isAddressInfo(address: string | AddressInfo | null): address is AddressInfo {
+  return (
+    typeof address === "object" &&
+    address !== null &&
+    typeof address.port === "number"
+  );
+}
+
+function hasErrorCode(
+  error: unknown,
+  code: string
+): error is { code: string; message?: unknown } {
+  return (
+    isRecord(error) &&
+    typeof error["code"] === "string" &&
+    error["code"] === code
+  );
+}
+
+function toErrorMessage(error: unknown, fallback: string): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  if (isRecord(error) && typeof error["message"] === "string") {
+    return error["message"];
+  }
+  return fallback;
+}
+
+function json(
+  res: ServerResponse<IncomingMessage>,
+  statusCode: number,
+  body: unknown
+): void {
   const payload = JSON.stringify(body);
   res.writeHead(statusCode, {
     "content-type": "application/json; charset=utf-8",
@@ -74,12 +177,12 @@ function json(res, statusCode, body) {
 }
 
 function text(
-  res,
-  statusCode,
-  body,
-  contentType = PROMETHEUS_CONTENT_TYPE,
-  additionalHeaders
-) {
+  res: ServerResponse<IncomingMessage>,
+  statusCode: number,
+  body: unknown,
+  contentType: string = PROMETHEUS_CONTENT_TYPE,
+  additionalHeaders?: Readonly<Record<string, string>>
+): void {
   const payload = String(body ?? "");
   res.writeHead(statusCode, {
     "content-type": contentType,
@@ -89,24 +192,24 @@ function text(
   res.end(payload);
 }
 
-function notFound(res) {
-  return json(res, 404, {
+function notFound(res: ServerResponse<IncomingMessage>): void {
+  json(res, 404, {
     ok: false,
     error: { code: "NOT_FOUND", message: "Route not found." },
   });
 }
 
 function methodNotAllowed(
-  res,
+  res: ServerResponse<IncomingMessage>,
   message = "Only POST is supported for operation routes."
-) {
-  return json(res, 405, {
+): void {
+  json(res, 405, {
     ok: false,
     error: { code: "METHOD_NOT_ALLOWED", message },
   });
 }
 
-function parseOperation(pathname) {
+function parseOperation(pathname: string): string | null {
   if (!pathname.startsWith(`${API_PREFIX}/`)) {
     return null;
   }
@@ -117,7 +220,7 @@ function parseOperation(pathname) {
   return operation || null;
 }
 
-function parseStoreHeader(req) {
+function parseStoreHeader(req: IncomingMessage): string | null {
   const value = req.headers["x-ums-store"];
   if (Array.isArray(value)) {
     return (
@@ -130,8 +233,8 @@ function parseStoreHeader(req) {
   return null;
 }
 
-async function parseJsonBody(req) {
-  const chunks = [];
+async function parseJsonBody(req: IncomingMessage): Promise<unknown> {
+  const chunks: Buffer[] = [];
   for await (const chunk of req) {
     chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
   }
@@ -139,10 +242,10 @@ async function parseJsonBody(req) {
   if (!raw) {
     return {};
   }
-  return JSON.parse(raw);
+  return JSON.parse(raw) as unknown;
 }
 
-function toErrorResponse(error) {
+function toErrorResponse(error: unknown): { statusCode: number; body: ApiErrorBody } {
   if (error instanceof SyntaxError) {
     return {
       statusCode: 400,
@@ -155,82 +258,62 @@ function toErrorResponse(error) {
       },
     };
   }
-  if (
-    error &&
-    typeof error === "object" &&
-    error.code === "UNSUPPORTED_OPERATION"
-  ) {
+  if (hasErrorCode(error, "UNSUPPORTED_OPERATION")) {
     return {
       statusCode: 404,
       body: {
         ok: false,
         error: {
           code: "UNSUPPORTED_OPERATION",
-          message: error.message,
+          message: toErrorMessage(error, "Operation is not supported."),
         },
       },
     };
   }
-  if (
-    error &&
-    typeof error === "object" &&
-    error.code === "STATE_LOCK_TIMEOUT"
-  ) {
+  if (hasErrorCode(error, "STATE_LOCK_TIMEOUT")) {
     return {
       statusCode: 503,
       body: {
         ok: false,
         error: {
           code: "STATE_LOCK_TIMEOUT",
-          message: error.message,
+          message: toErrorMessage(error, "State lock timed out."),
         },
       },
     };
   }
-  if (
-    error &&
-    typeof error === "object" &&
-    error.code === "STATE_FILE_CORRUPT"
-  ) {
+  if (hasErrorCode(error, "STATE_FILE_CORRUPT")) {
     return {
       statusCode: 500,
       body: {
         ok: false,
         error: {
           code: "STATE_FILE_CORRUPT",
-          message: error.message,
+          message: toErrorMessage(error, "State file is corrupt."),
         },
       },
     };
   }
-  if (
-    error &&
-    typeof error === "object" &&
-    error.code === "RUNTIME_ADAPTER_LOAD_ERROR"
-  ) {
+  if (hasErrorCode(error, "RUNTIME_ADAPTER_LOAD_ERROR")) {
     return {
       statusCode: 500,
       body: {
         ok: false,
         error: {
           code: "RUNTIME_ADAPTER_LOAD_ERROR",
-          message: error.message,
+          message: toErrorMessage(error, "Runtime adapter load failed."),
         },
       },
     };
   }
-  if (
-    error &&
-    typeof error === "object" &&
-    error.code === "RUNTIME_ADAPTER_CONTRACT_ERROR"
-  ) {
+  if (hasErrorCode(error, "RUNTIME_ADAPTER_CONTRACT_ERROR")) {
     return {
       statusCode: 500,
       body: {
         ok: false,
         error: {
           code: "RUNTIME_ADAPTER_CONTRACT_ERROR",
-          message: error.message,
+          message: toErrorMessage(error, "Runtime adapter contract is invalid."),
         },
       },
     };
@@ -256,28 +339,35 @@ function toErrorResponse(error) {
       ok: false,
       error: {
         code: "BAD_REQUEST",
-        message: error instanceof Error ? error.message : "Bad request.",
+        message: toErrorMessage(error, "Bad request."),
       },
     },
   };
 }
 
-function resolveTelemetry(telemetry) {
+function resolveTelemetry(telemetry: unknown): ApiTelemetry {
   if (
-    telemetry &&
-    typeof telemetry.recordOperationResult === "function" &&
-    typeof telemetry.renderPrometheusMetrics === "function"
+    isRecord(telemetry) &&
+    typeof telemetry["recordOperationResult"] === "function" &&
+    typeof telemetry["renderPrometheusMetrics"] === "function"
   ) {
-    return telemetry;
+    return {
+      recordOperationResult:
+        telemetry["recordOperationResult"] as ApiTelemetry["recordOperationResult"],
+      renderPrometheusMetrics:
+        telemetry[
+          "renderPrometheusMetrics"
+        ] as ApiTelemetry["renderPrometheusMetrics"],
+    };
   }
-  return createInMemoryApiTelemetry();
+  return createInMemoryApiTelemetry() as ApiTelemetry;
 }
 
 export function createApiServer({
   stateFile = DEFAULT_RUNTIME_STATE_FILE,
-  telemetry = createInMemoryApiTelemetry(),
+  telemetry = createInMemoryApiTelemetry() as ApiTelemetry,
   enableConsoleUi = ENABLE_CONSOLE_UI,
-} = {}) {
+}: Omit<StartApiServerOptions, "host" | "port"> = {}): Server {
   const activeTelemetry = resolveTelemetry(telemetry);
   const consoleUiEnabled = normalizeConsoleUiToggle(enableConsoleUi);
   return createServer(async (req, res) => {
@@ -288,12 +378,12 @@ export function createApiServer({
     if (url.pathname === "/" && req.method === "GET") {
       try {
         const operations = await listRuntimeOperations();
-        return json(res, 200, {
+        json(res, 200, {
           ok: true,
           service: "ums-api",
           version: "v1",
           operations: operations.map(
-            (operation) => `${API_PREFIX}/${operation}`
+            (operation: string) => `${API_PREFIX}/${operation}`
           ),
           deterministic: true,
           storeSelection: {
@@ -306,39 +396,48 @@ export function createApiServer({
             routes: consoleUiEnabled ? Object.keys(CONSOLE_ROUTES) : [],
           },
         });
+        return;
       } catch (error) {
         const failure = toErrorResponse(error);
-        return json(res, failure.statusCode, failure.body);
+        json(res, failure.statusCode, failure.body);
+        return;
       }
     }
 
     if (url.pathname === "/metrics") {
       if (req.method !== "GET") {
-        return methodNotAllowed(res, "Only GET is supported for /metrics.");
+        methodNotAllowed(res, "Only GET is supported for /metrics.");
+        return;
       }
-      return text(res, 200, activeTelemetry.renderPrometheusMetrics());
+      text(res, 200, activeTelemetry.renderPrometheusMetrics());
+      return;
     }
 
-    const consoleRoute = CONSOLE_ROUTES[url.pathname];
+    const consoleRoute =
+      CONSOLE_ROUTES[url.pathname as keyof typeof CONSOLE_ROUTES];
     if (consoleRoute) {
       if (!consoleUiEnabled) {
-        return notFound(res);
+        notFound(res);
+        return;
       }
       if (req.method !== "GET") {
-        return methodNotAllowed(res, consoleRoute.methodError);
+        methodNotAllowed(res, consoleRoute.methodError);
+        return;
       }
-      return text(
+      text(
         res,
         200,
         consoleRoute.body,
         consoleRoute.contentType,
         CONSOLE_SECURITY_HEADERS
       );
+      return;
     }
 
     const operation = parseOperation(url.pathname);
     if (!operation) {
-      return notFound(res);
+      notFound(res);
+      return;
     }
 
     const operationStart = process.hrtime.bigint();
@@ -348,7 +447,7 @@ export function createApiServer({
       responseData = null,
       requestBody = null,
       failureCode = null,
-    }) => {
+    }: RecordOperationTelemetryInput): void => {
       const latencyMs =
         Number(process.hrtime.bigint() - operationStart) / 1_000_000;
       try {
@@ -367,21 +466,15 @@ export function createApiServer({
     };
 
     if (req.method !== "POST") {
-      return methodNotAllowed(res);
+      methodNotAllowed(res);
+      return;
     }
 
-    let requestBody;
+    let requestBody: unknown;
     try {
-      const body = await parseJsonBody(req);
-      requestBody = body;
+      requestBody = await parseJsonBody(req);
       const headerStore = parseStoreHeader(req);
-      if (
-        headerStore &&
-        requestBody &&
-        typeof requestBody === "object" &&
-        !Array.isArray(requestBody) &&
-        !requestBody.storeId
-      ) {
+      if (headerStore && isRecord(requestBody) && !requestBody["storeId"]) {
         requestBody = { ...requestBody, storeId: headerStore };
       }
       const data = await executeRuntimeOperation({
@@ -395,16 +488,10 @@ export function createApiServer({
         responseData: data,
         requestBody,
       });
-      return json(res, 200, { ok: true, data });
+      json(res, 200, { ok: true, data });
     } catch (error) {
       const failure = toErrorResponse(error);
-      const failureCode =
-        failure.body &&
-        typeof failure.body === "object" &&
-        failure.body.error &&
-        typeof failure.body.error === "object"
-          ? failure.body.error.code
-          : null;
+      const failureCode = failure.body.error.code;
       if (failureCode !== "UNSUPPORTED_OPERATION") {
         recordOperationTelemetry({
           statusCode: failure.statusCode,
@@ -413,7 +500,7 @@ export function createApiServer({
           failureCode,
         });
       }
-      return json(res, failure.statusCode, failure.body);
+      json(res, failure.statusCode, failure.body);
     }
   });
 }
@@ -422,9 +509,9 @@ export function startApiServer({
   host = HOST,
   port = PORT,
   stateFile = DEFAULT_RUNTIME_STATE_FILE,
-  telemetry = createInMemoryApiTelemetry(),
+  telemetry = createInMemoryApiTelemetry() as ApiTelemetry,
   enableConsoleUi = ENABLE_CONSOLE_UI,
-} = {}) {
+}: StartApiServerOptions = {}): Promise<StartedApiServer> {
   const activeTelemetry = resolveTelemetry(telemetry);
   const server = createApiServer({
     stateFile,
@@ -432,7 +519,7 @@ export function startApiServer({
     enableConsoleUi,
   });
   return new Promise((resolve, reject) => {
-    const onError = (error) => {
+    const onError = (error: Error) => {
       server.off("error", onError);
       reject(error);
     };
@@ -440,12 +527,7 @@ export function startApiServer({
     server.listen(port, host, () => {
       server.off("error", onError);
       const address = server.address();
-      const resolvedPort =
-        address &&
-        typeof address === "object" &&
-        typeof address.port === "number"
-          ? address.port
-          : port;
+      const resolvedPort = isAddressInfo(address) ? address.port : port;
       resolve({
         server,
         host,
@@ -456,25 +538,41 @@ export function startApiServer({
   });
 }
 
+const importMeta = import.meta as ImportMeta & { main?: boolean };
 const isStandaloneServerInvocation = process.argv.slice(2).length === 0;
 const isMainModule =
   isStandaloneServerInvocation &&
-  ((typeof import.meta.main === "boolean" && import.meta.main) ||
-    import.meta.url === `file://${process.argv[1]}`);
+  ((typeof importMeta.main === "boolean" && importMeta.main) ||
+    importMeta.url === `file://${process.argv[1]}`);
 
 // Bun-compiled executables can be more aggressive with GC; keep a strong
 // process-lifetime reference so the listener stays active.
-let activeServerHandle = null;
+let activeServerHandle: SupervisedApiService | null = null;
 
 if (isMainModule) {
-  import("./service-runtime.mjs")
-    .then(({ startSupervisedApiService }) =>
-      startSupervisedApiService({
+  const serviceRuntimeModulePath = "./service-runtime.mjs";
+  void import(serviceRuntimeModulePath)
+    .then((module): Promise<StartSupervisedApiServiceResult> => {
+      const startSupervisedApiService = (module as Record<string, unknown>)[
+        "startSupervisedApiService"
+      ];
+      if (typeof startSupervisedApiService !== "function") {
+        throw new Error(
+          "Failed to start API: service-runtime is missing startSupervisedApiService."
+        );
+      }
+      return (
+        startSupervisedApiService as (options: {
+          host?: string;
+          port?: number;
+          stateFile?: string | null;
+        }) => Promise<StartSupervisedApiServiceResult>
+      )({
         host: HOST,
         port: PORT,
         stateFile: DEFAULT_RUNTIME_STATE_FILE,
-      })
-    )
+      });
+    })
     .then(({ service, host, port }) => {
       activeServerHandle = service;
       process.stdout.write(`UMS API listening on http://${host}:${port}\n`);
@@ -496,8 +594,10 @@ if (isMainModule) {
         supervisionWatcher.unref();
       }
     })
-    .catch((error) => {
-      process.stderr.write(`Failed to start API: ${error.message}\n`);
+    .catch((error: unknown) => {
+      process.stderr.write(
+        `Failed to start API: ${toErrorMessage(error, "unknown error")}\n`
+      );
       process.exit(1);
     });
 }

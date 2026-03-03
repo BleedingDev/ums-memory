@@ -7,7 +7,7 @@ import test from "node:test";
 
 const ROOT = process.cwd();
 const CLI_PATH = resolve(ROOT, "apps/cli/src/index.ts");
-const API_PATH = resolve(ROOT, "apps/api/src/server.mjs");
+const API_PATH = resolve(ROOT, "apps/api/src/server.ts");
 const TSX_LOADER_PATH = resolve(ROOT, "node_modules/tsx/dist/loader.mjs");
 
 function cleanSharedStateEnv() {
@@ -47,7 +47,10 @@ function runNode(scriptPath, args, { cwd, env, stdin = "" }) {
 
 function startSourceApiServer({ cwd, env }) {
   return new Promise((resolvePromise, rejectPromise) => {
-    const proc = spawn(process.execPath, [API_PATH], {
+    const commandArgs = API_PATH.endsWith(".ts")
+      ? ["--import", TSX_LOADER_PATH, API_PATH]
+      : [API_PATH];
+    const proc = spawn(process.execPath, commandArgs, {
       cwd,
       env: {
         ...env,

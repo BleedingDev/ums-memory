@@ -1,5 +1,5 @@
 import { Deferred, Duration, Effect, Fiber, Layer, ManagedRuntime } from "effect";
-import { startApiServer } from "./server.mjs";
+import { startApiServer } from "./server.ts";
 
 const DEFAULT_RESTART_LIMIT = 3;
 const DEFAULT_RESTART_DELAY_MS = 250;

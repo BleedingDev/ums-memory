@@ -7,7 +7,7 @@ const DEFAULT_APPS = ["single"];
 const SUPPORTED_APPS = new Map([
   ["single", { entry: "apps/ums/src/index.ts", artifact: "ums" }],
   ["cli", { entry: "apps/cli/src/index.ts", artifact: "ums-cli" }],
-  ["api", { entry: "apps/api/src/server.mjs", artifact: "ums-api" }],
+  ["api", { entry: "apps/api/src/server.ts", artifact: "ums-api" }],
 ]);
 
 function parseCsv(value) {

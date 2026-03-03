@@ -10,7 +10,7 @@ import {
   executeRuntimeOperation,
   listRuntimeOperations,
 } from "../src/runtime-adapter.mjs";
-import { startApiServer } from "../src/server.mjs";
+import { startApiServer } from "../src/server.ts";
 
 const CLI_PATH = resolve(process.cwd(), "apps/cli/src/index.ts");
 const RUNTIME_ADAPTER_FIXTURE = resolve(

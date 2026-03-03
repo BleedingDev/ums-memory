@@ -14,12 +14,6 @@
       "notes": "Temporary compatibility entrypoint while strict TypeScript + Effect cutover completes."
     },
     {
-      "path": "apps/api/src/server.mjs",
-      "kind": "runtime_entrypoint",
-      "followUpBeadId": "ums-memory-n4m.6",
-      "notes": "Temporary compatibility entrypoint while strict TypeScript + Effect cutover completes."
-    },
-    {
       "path": "apps/api/src/service-runtime.mjs",
       "kind": "runtime_entrypoint",
       "followUpBeadId": "ums-memory-n4m.6",

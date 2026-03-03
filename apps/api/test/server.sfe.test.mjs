@@ -134,7 +134,7 @@ test.before(async () => {
       "--minify",
       "--sourcemap",
       "--bytecode",
-      "apps/api/src/server.mjs",
+      "apps/api/src/server.ts",
       "--outfile",
       apiBinaryPath,
     ],
