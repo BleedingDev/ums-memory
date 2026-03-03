@@ -1,6 +1,13 @@
-import test from "node:test";
 import assert from "node:assert/strict";
+import test from "node:test";
+
 import { Effect } from "effect";
+
+import {
+  createIdentityGraphEdge,
+  IdentityGraphRelationKind,
+} from "../../../libs/shared/src/entities.ts";
+import { ErrorCode } from "../../../libs/shared/src/errors.ts";
 import {
   executeOperation,
   exportStoreSnapshot,
@@ -11,8 +18,6 @@ import {
   setPolicyPackPlugin,
   snapshotProfile,
 } from "../src/core.mjs";
-import { createIdentityGraphEdge, IdentityGraphRelationKind } from "../../../libs/shared/src/entities.js";
-import { ErrorCode } from "../../../libs/shared/src/errors.js";
 
 test.beforeEach(() => {
   resetStore();
@@ -57,7 +62,7 @@ test("core exposes the full required operation surface", () => {
     "outcome",
     "audit",
     "export",
-    "doctor"
+    "doctor",
   ]);
 });
 
@@ -67,8 +72,12 @@ test("ingest is deterministic for identical request payload", () => {
     profile: "demo",
     events: [
       { type: "commit", source: "git", content: "fix: normalize ids" },
-      { type: "note", source: "chat", content: "remember deterministic output" }
-    ]
+      {
+        type: "note",
+        source: "chat",
+        content: "remember deterministic output",
+      },
+    ],
   };
 
   const first = executeOperation("ingest", request);
@@ -89,7 +98,9 @@ test("ums-memory-yji.6 memory_console operations return deterministic bounded op
     profile,
     learnerId: "learner-yji6",
     goals: ["timeline", "auditability"],
-    identityRefs: [{ namespace: "email", value: "yji6@example.com", isPrimary: true }],
+    identityRefs: [
+      { namespace: "email", value: "yji6@example.com", isPrimary: true },
+    ],
     evidenceEventIds: ["ep-profile-yji6-1"],
     timestamp: "2026-03-01T10:00:00.000Z",
   });
@@ -136,16 +147,24 @@ test("ums-memory-yji.6 memory_console operations return deterministic bounded op
     limit: 8,
   };
   const timeline = executeOperation("memory_console_timeline", timelineRequest);
-  const timelineReplay = executeOperation("memory_console_timeline", timelineRequest);
+  const timelineReplay = executeOperation(
+    "memory_console_timeline",
+    timelineRequest
+  );
   assert.deepEqual(timeline, timelineReplay);
   assert.equal(timeline.events.length >= 2, true);
   assert.equal(
     timeline.events.every(
-      (event) => event.timestamp >= timelineRequest.since && event.timestamp <= timelineRequest.until,
+      (event) =>
+        event.timestamp >= timelineRequest.since &&
+        event.timestamp <= timelineRequest.until
     ),
-    true,
+    true
   );
-  assert.equal(timeline.events.some((event) => event.entityType === "policy_decision"), true);
+  assert.equal(
+    timeline.events.some((event) => event.entityType === "policy_decision"),
+    true
+  );
 
   const provenance = executeOperation("memory_console_provenance", {
     storeId,
@@ -153,7 +172,10 @@ test("ums-memory-yji.6 memory_console operations return deterministic bounded op
     entityRefs: [
       { entityType: "learner_profile", entityId: profileUpdate.profileId },
       { entityType: "policy_decision", entityId: decision.decisionId },
-      { entityType: "policy_audit_event", entityId: decision.policyAuditEventId },
+      {
+        entityType: "policy_audit_event",
+        entityId: decision.policyAuditEventId,
+      },
       { entityType: "policy_decision", entityId: "pol_missing" },
     ],
   });
@@ -164,15 +186,21 @@ test("ums-memory-yji.6 memory_console operations return deterministic bounded op
     unresolved: 1,
     linkedSourceIdCount: provenance.linkedSourceIds.length,
   });
-  const decisionRef = provenance.entities.find((entry) => entry.entityId === decision.decisionId);
+  const decisionRef = provenance.entities.find(
+    (entry) => entry.entityId === decision.decisionId
+  );
   assert.ok(decisionRef);
   assert.equal(decisionRef.found, true);
   assert.equal(decisionRef.linkedSourceIds.includes("evt-pol-yji6-1"), true);
-  const learnerRef = provenance.entities.find((entry) => entry.entityId === profileUpdate.profileId);
+  const learnerRef = provenance.entities.find(
+    (entry) => entry.entityId === profileUpdate.profileId
+  );
   assert.ok(learnerRef);
   assert.equal(
-    learnerRef.provenancePointers.some((pointer) => pointer.pointerId === "ep-profile-yji6-1"),
-    true,
+    learnerRef.provenancePointers.some(
+      (pointer) => pointer.pointerId === "ep-profile-yji6-1"
+    ),
+    true
   );
 
   const policyAuditRequest = {
@@ -184,13 +212,24 @@ test("ums-memory-yji.6 memory_console operations return deterministic bounded op
     policyKey: "operator-safety",
     limit: 4,
   };
-  const policyAudit = executeOperation("memory_console_policy_audit", policyAuditRequest);
-  const policyAuditReplay = executeOperation("memory_console_policy_audit", policyAuditRequest);
+  const policyAudit = executeOperation(
+    "memory_console_policy_audit",
+    policyAuditRequest
+  );
+  const policyAuditReplay = executeOperation(
+    "memory_console_policy_audit",
+    policyAuditRequest
+  );
   assert.deepEqual(policyAudit, policyAuditReplay);
   assert.equal(policyAudit.operation, "memory_console_policy_audit");
   assert.equal(policyAudit.totalPolicyDecisions, 1);
   assert.equal(policyAudit.policyDecisions[0].decisionId, decision.decisionId);
-  assert.equal(policyAudit.auditTrail.some((entry) => entry.operation === "policy_decision_update"), true);
+  assert.equal(
+    policyAudit.auditTrail.some(
+      (entry) => entry.operation === "policy_decision_update"
+    ),
+    true
+  );
   assert.equal(policyAudit.summary.deniedDecisions, 1);
 });
 
@@ -233,7 +272,8 @@ test("ums-memory-hpl.2 replay_eval computes score breakdown and canary safety de
   const shadow = executeOperation("shadow_write", {
     storeId,
     profile,
-    statement: "Replay score engine should expose deterministic breakdown and canary signals.",
+    statement:
+      "Replay score engine should expose deterministic breakdown and canary signals.",
     sourceEventIds: ["evt-hpl2-breakdown-1"],
     evidenceEventIds: ["evt-hpl2-breakdown-1"],
   });
@@ -265,7 +305,10 @@ test("ums-memory-hpl.2 replay_eval computes score breakdown and canary safety de
 
   assert.equal(evaluated.action, "created");
   assert.equal(replay.action, "noop");
-  assert.equal(evaluated.evaluation.scoreBreakdown.total, evaluated.evaluation.netValueScore);
+  assert.equal(
+    evaluated.evaluation.scoreBreakdown.total,
+    evaluated.evaluation.netValueScore
+  );
   assert.equal(evaluated.gate.replayRegressionCount, 0);
   assert.equal(evaluated.gate.canaryRegressionCount, 2);
   assert.equal(evaluated.gate.safetyRegressionCount, 2);
@@ -314,7 +357,7 @@ test("ums-memory-hpl.2 replay_eval thresholds produce critical safety severity a
         profile,
         candidateId,
       }),
-    /promote requires latest replay_eval status pass and no safety regressions/,
+    /promote requires latest replay_eval status pass and no safety regressions/
   );
 });
 
@@ -386,7 +429,7 @@ test("ums-memory-hpl.3 promote rejects candidates with expired evidence even aft
         promotedAt: "2026-03-02T13:00:00.000Z",
         freshEvidenceThresholdDays: 14,
       }),
-    /promote requires fresh non-expired evidence links/,
+    /promote requires fresh non-expired evidence links/
   );
 });
 
@@ -396,7 +439,8 @@ test("ums-memory-hpl.11 lifecycle operations emit throughput/pass-rate/demotion/
   const shadow = executeOperation("shadow_write", {
     storeId,
     profile,
-    statement: "Lifecycle observability should emit deterministic metrics and traces.",
+    statement:
+      "Lifecycle observability should emit deterministic metrics and traces.",
     sourceEventIds: ["evt-hpl11-shadow-1"],
     evidenceEventIds: ["evt-hpl11-shadow-1"],
     createdAt: "2026-03-02T14:00:00.000Z",
@@ -404,17 +448,32 @@ test("ums-memory-hpl.11 lifecycle operations emit throughput/pass-rate/demotion/
   });
   const candidateId = shadow.applied[0].candidateId;
 
-  assert.equal(shadow.observability.lifecycleMetrics.candidateThroughput.processedCount, 1);
-  assert.equal(shadow.observability.lifecycleMetrics.candidateThroughput.mutatedCount, 1);
-  assert.equal(shadow.observability.lifecycleMetrics.gatePassRate.totalCount, 0);
-  assert.equal(shadow.observability.lifecycleMetrics.demotionReasons.reasonCount, 0);
+  assert.equal(
+    shadow.observability.lifecycleMetrics.candidateThroughput.processedCount,
+    1
+  );
+  assert.equal(
+    shadow.observability.lifecycleMetrics.candidateThroughput.mutatedCount,
+    1
+  );
+  assert.equal(
+    shadow.observability.lifecycleMetrics.gatePassRate.totalCount,
+    0
+  );
+  assert.equal(
+    shadow.observability.lifecycleMetrics.demotionReasons.reasonCount,
+    0
+  );
   assert.equal(
     shadow.observability.lifecycleMetrics.latency.observedLatencyMs,
-    shadow.observability.slo.observedLatencyMs,
+    shadow.observability.slo.observedLatencyMs
   );
   assert.equal(shadow.trace.payload.operation, "shadow_write");
   assert.deepEqual(shadow.trace.payload.candidateIds, [candidateId]);
-  assert.deepEqual(shadow.trace.payload.metrics, shadow.observability.lifecycleMetrics);
+  assert.deepEqual(
+    shadow.trace.payload.metrics,
+    shadow.observability.lifecycleMetrics
+  );
   assert.deepEqual(shadow.trace.payload, shadow.observability.tracePayload);
 
   const replay = executeOperation("replay_eval", {
@@ -426,15 +485,24 @@ test("ums-memory-hpl.11 lifecycle operations emit throughput/pass-rate/demotion/
   });
   assert.equal(replay.gate.pass, true);
   assert.equal(replay.observability.lifecycleMetrics.gatePassRate.passCount, 1);
-  assert.equal(replay.observability.lifecycleMetrics.gatePassRate.totalCount, 1);
+  assert.equal(
+    replay.observability.lifecycleMetrics.gatePassRate.totalCount,
+    1
+  );
   assert.equal(replay.observability.lifecycleMetrics.gatePassRate.rate, 1);
-  assert.equal(replay.observability.lifecycleMetrics.candidateThroughput.processedCount, 1);
+  assert.equal(
+    replay.observability.lifecycleMetrics.candidateThroughput.processedCount,
+    1
+  );
   assert.equal(
     replay.observability.lifecycleMetrics.latency.observedLatencyMs,
-    replay.observability.slo.observedLatencyMs,
+    replay.observability.slo.observedLatencyMs
   );
   assert.equal(replay.trace.payload.details.gate.pass, true);
-  assert.deepEqual(replay.trace.payload.metrics, replay.observability.lifecycleMetrics);
+  assert.deepEqual(
+    replay.trace.payload.metrics,
+    replay.observability.lifecycleMetrics
+  );
   assert.deepEqual(replay.trace.payload, replay.observability.tracePayload);
 
   const promoted = executeOperation("promote", {
@@ -445,9 +513,15 @@ test("ums-memory-hpl.11 lifecycle operations emit throughput/pass-rate/demotion/
   });
   assert.equal(promoted.action, "promoted");
   assert.equal(promoted.observability.lifecycleMetrics.gatePassRate.rate, 1);
-  assert.equal(promoted.observability.lifecycleMetrics.candidateThroughput.mutatedCount, 1);
+  assert.equal(
+    promoted.observability.lifecycleMetrics.candidateThroughput.mutatedCount,
+    1
+  );
   assert.equal(promoted.trace.payload.details.ruleAction, promoted.ruleAction);
-  assert.deepEqual(promoted.trace.payload.metrics, promoted.observability.lifecycleMetrics);
+  assert.deepEqual(
+    promoted.trace.payload.metrics,
+    promoted.observability.lifecycleMetrics
+  );
   assert.deepEqual(promoted.trace.payload, promoted.observability.tracePayload);
 
   const demoted = executeOperation("demote", {
@@ -459,24 +533,51 @@ test("ums-memory-hpl.11 lifecycle operations emit throughput/pass-rate/demotion/
     demotedAt: "2026-03-02T14:30:00.000Z",
   });
   assert.equal(demoted.action, "demoted");
-  assert.deepEqual(demoted.reasonCodes, ["manual_override", "policy_regression"]);
-  assert.deepEqual(demoted.observability.lifecycleMetrics.demotionReasons.reasonCodes, [
+  assert.deepEqual(demoted.reasonCodes, [
     "manual_override",
     "policy_regression",
   ]);
-  assert.deepEqual(demoted.observability.lifecycleMetrics.demotionReasons.operationEventCounts, {
-    manual_override: 1,
-    policy_regression: 1,
-  });
-  assert.deepEqual(demoted.observability.lifecycleMetrics.demotionReasons.operationReasonHistoryCounts, {
-    manual_override: 1,
-    policy_regression: 1,
-  });
-  assert.equal(demoted.observability.lifecycleMetrics.demotionReasons.profileCounts.manual_override, 1);
-  assert.equal(demoted.observability.lifecycleMetrics.demotionReasons.profileCounts.policy_regression, 1);
-  assert.equal(demoted.observability.lifecycleMetrics.candidateThroughput.mutatedCount, 1);
-  assert.equal(demoted.trace.payload.details.removedRuleId, demoted.removedRuleId);
-  assert.deepEqual(demoted.trace.payload.metrics, demoted.observability.lifecycleMetrics);
+  assert.deepEqual(
+    demoted.observability.lifecycleMetrics.demotionReasons.reasonCodes,
+    ["manual_override", "policy_regression"]
+  );
+  assert.deepEqual(
+    demoted.observability.lifecycleMetrics.demotionReasons.operationEventCounts,
+    {
+      manual_override: 1,
+      policy_regression: 1,
+    }
+  );
+  assert.deepEqual(
+    demoted.observability.lifecycleMetrics.demotionReasons
+      .operationReasonHistoryCounts,
+    {
+      manual_override: 1,
+      policy_regression: 1,
+    }
+  );
+  assert.equal(
+    demoted.observability.lifecycleMetrics.demotionReasons.profileCounts
+      .manual_override,
+    1
+  );
+  assert.equal(
+    demoted.observability.lifecycleMetrics.demotionReasons.profileCounts
+      .policy_regression,
+    1
+  );
+  assert.equal(
+    demoted.observability.lifecycleMetrics.candidateThroughput.mutatedCount,
+    1
+  );
+  assert.equal(
+    demoted.trace.payload.details.removedRuleId,
+    demoted.removedRuleId
+  );
+  assert.deepEqual(
+    demoted.trace.payload.metrics,
+    demoted.observability.lifecycleMetrics
+  );
   assert.deepEqual(demoted.trace.payload, demoted.observability.tracePayload);
 });
 
@@ -486,7 +587,8 @@ test("ums-memory-hpl.11 lifecycle observability remains deterministic across rep
   const shadowRequest = {
     storeId,
     profile,
-    statement: "Noop replay should preserve lifecycle trace and metrics deterministically.",
+    statement:
+      "Noop replay should preserve lifecycle trace and metrics deterministically.",
     sourceEventIds: ["evt-hpl11-noop-1"],
     evidenceEventIds: ["evt-hpl11-noop-1"],
     createdAt: "2026-03-02T15:00:00.000Z",
@@ -499,7 +601,10 @@ test("ums-memory-hpl.11 lifecycle observability remains deterministic across rep
   assert.equal(shadowNoopA.applied[0].action, "noop");
   assert.equal(shadowNoopB.applied[0].action, "noop");
   assert.equal(shadowNoopA.trace.traceId, shadowNoopB.trace.traceId);
-  assert.deepEqual(shadowNoopA.observability.lifecycleMetrics, shadowNoopB.observability.lifecycleMetrics);
+  assert.deepEqual(
+    shadowNoopA.observability.lifecycleMetrics,
+    shadowNoopB.observability.lifecycleMetrics
+  );
   assert.deepEqual(shadowNoopA.trace.payload, shadowNoopB.trace.payload);
 
   const replayCreated = executeOperation("replay_eval", {
@@ -522,7 +627,10 @@ test("ums-memory-hpl.11 lifecycle observability remains deterministic across rep
   assert.equal(replayNoopA.action, "noop");
   assert.equal(replayNoopB.action, "noop");
   assert.equal(replayNoopA.trace.traceId, replayNoopB.trace.traceId);
-  assert.deepEqual(replayNoopA.observability.lifecycleMetrics, replayNoopB.observability.lifecycleMetrics);
+  assert.deepEqual(
+    replayNoopA.observability.lifecycleMetrics,
+    replayNoopB.observability.lifecycleMetrics
+  );
   assert.deepEqual(replayNoopA.trace.payload, replayNoopB.trace.payload);
 
   executeOperation("promote", {
@@ -542,7 +650,10 @@ test("ums-memory-hpl.11 lifecycle observability remains deterministic across rep
   assert.equal(promoteNoopA.action, "noop");
   assert.equal(promoteNoopB.action, "noop");
   assert.equal(promoteNoopA.trace.traceId, promoteNoopB.trace.traceId);
-  assert.deepEqual(promoteNoopA.observability.lifecycleMetrics, promoteNoopB.observability.lifecycleMetrics);
+  assert.deepEqual(
+    promoteNoopA.observability.lifecycleMetrics,
+    promoteNoopB.observability.lifecycleMetrics
+  );
   assert.deepEqual(promoteNoopA.trace.payload, promoteNoopB.trace.payload);
 
   const demoteNoopRequest = {
@@ -557,7 +668,10 @@ test("ums-memory-hpl.11 lifecycle observability remains deterministic across rep
   assert.equal(demoteNoopA.action, "noop");
   assert.equal(demoteNoopB.action, "noop");
   assert.equal(demoteNoopA.trace.traceId, demoteNoopB.trace.traceId);
-  assert.deepEqual(demoteNoopA.observability.lifecycleMetrics, demoteNoopB.observability.lifecycleMetrics);
+  assert.deepEqual(
+    demoteNoopA.observability.lifecycleMetrics,
+    demoteNoopB.observability.lifecycleMetrics
+  );
   assert.deepEqual(demoteNoopA.trace.payload, demoteNoopB.trace.payload);
 });
 
@@ -567,7 +681,8 @@ test("ums-memory-hpl.11 replay auto-demotion emits demotion trace details and re
   const shadow = executeOperation("shadow_write", {
     storeId,
     profile,
-    statement: "Auto-demotion traces should include deterministic reason metrics.",
+    statement:
+      "Auto-demotion traces should include deterministic reason metrics.",
     sourceEventIds: ["evt-hpl11-auto-demotion-1"],
     evidenceEventIds: ["evt-hpl11-auto-demotion-1"],
   });
@@ -589,22 +704,37 @@ test("ums-memory-hpl.11 replay auto-demotion emits demotion trace details and re
   });
 
   assert.equal(autoDemoted.autoDemotion.action, "demoted");
-  assert.equal(autoDemoted.trace.payload.details.autoDemotion.action, "demoted");
+  assert.equal(
+    autoDemoted.trace.payload.details.autoDemotion.action,
+    "demoted"
+  );
   assert.deepEqual(autoDemoted.trace.payload.details.autoDemotion.reasonCodes, [
     "sustained_negative_net_value",
   ]);
-  assert.deepEqual(autoDemoted.observability.lifecycleMetrics.demotionReasons.reasonCodes, [
-    "sustained_negative_net_value",
-  ]);
-  assert.deepEqual(autoDemoted.observability.lifecycleMetrics.demotionReasons.operationEventCounts, {
-    sustained_negative_net_value: 1,
-  });
-  assert.equal(
-    autoDemoted.observability.lifecycleMetrics.demotionReasons.profileCounts.sustained_negative_net_value,
-    1,
+  assert.deepEqual(
+    autoDemoted.observability.lifecycleMetrics.demotionReasons.reasonCodes,
+    ["sustained_negative_net_value"]
   );
-  assert.deepEqual(autoDemoted.trace.payload.metrics, autoDemoted.observability.lifecycleMetrics);
-  assert.deepEqual(autoDemoted.trace.payload, autoDemoted.observability.tracePayload);
+  assert.deepEqual(
+    autoDemoted.observability.lifecycleMetrics.demotionReasons
+      .operationEventCounts,
+    {
+      sustained_negative_net_value: 1,
+    }
+  );
+  assert.equal(
+    autoDemoted.observability.lifecycleMetrics.demotionReasons.profileCounts
+      .sustained_negative_net_value,
+    1
+  );
+  assert.deepEqual(
+    autoDemoted.trace.payload.metrics,
+    autoDemoted.observability.lifecycleMetrics
+  );
+  assert.deepEqual(
+    autoDemoted.trace.payload,
+    autoDemoted.observability.tracePayload
+  );
 });
 
 test("ums-memory-hpl.4 replay_eval auto-demotes on sustained negative net value and remains replay-safe", () => {
@@ -613,7 +743,8 @@ test("ums-memory-hpl.4 replay_eval auto-demotes on sustained negative net value 
   const shadow = executeOperation("shadow_write", {
     storeId,
     profile,
-    statement: "Sustained negative replay value should demote deterministically.",
+    statement:
+      "Sustained negative replay value should demote deterministically.",
     sourceEventIds: ["evt-hpl4-replay-1"],
     evidenceEventIds: ["evt-hpl4-replay-1"],
     createdAt: "2026-03-02T10:00:00.000Z",
@@ -674,23 +805,37 @@ test("ums-memory-hpl.4 replay_eval auto-demotes on sustained negative net value 
   assert.equal(secondNegativeReplay.autoDemotion, null);
 
   const beforeRoundTrip = snapshotProfile(profile, storeId);
-  const storedBeforeRoundTrip = beforeRoundTrip.shadowCandidates.find((entry) => entry.candidateId === candidateId);
+  const storedBeforeRoundTrip = beforeRoundTrip.shadowCandidates.find(
+    (entry) => entry.candidateId === candidateId
+  );
   assert.ok(storedBeforeRoundTrip);
   assert.equal(storedBeforeRoundTrip.status, "demoted");
   assert.equal(storedBeforeRoundTrip.negativeNetValueStreak, 2);
-  assert.deepEqual(storedBeforeRoundTrip.latestDemotionReasonCodes, ["sustained_negative_net_value"]);
-  assert.equal(beforeRoundTrip.rules.some((entry) => entry.ruleId === promotedRuleId), false);
+  assert.deepEqual(storedBeforeRoundTrip.latestDemotionReasonCodes, [
+    "sustained_negative_net_value",
+  ]);
+  assert.equal(
+    beforeRoundTrip.rules.some((entry) => entry.ruleId === promotedRuleId),
+    false
+  );
 
   const snapshot = exportStoreSnapshot();
   resetStore();
   importStoreSnapshot(snapshot);
   const restored = snapshotProfile(profile, storeId);
-  const restoredCandidate = restored.shadowCandidates.find((entry) => entry.candidateId === candidateId);
+  const restoredCandidate = restored.shadowCandidates.find(
+    (entry) => entry.candidateId === candidateId
+  );
   assert.ok(restoredCandidate);
   assert.equal(restoredCandidate.status, "demoted");
   assert.equal(restoredCandidate.negativeNetValueStreak, 2);
-  assert.deepEqual(restoredCandidate.latestDemotionReasonCodes, ["sustained_negative_net_value"]);
-  assert.equal(restored.rules.some((entry) => entry.ruleId === promotedRuleId), false);
+  assert.deepEqual(restoredCandidate.latestDemotionReasonCodes, [
+    "sustained_negative_net_value",
+  ]);
+  assert.equal(
+    restored.rules.some((entry) => entry.ruleId === promotedRuleId),
+    false
+  );
 });
 
 test("ums-memory-hpl.4 harmful feedback auto-demotes deterministically and noop replay does not duplicate side effects", () => {
@@ -699,7 +844,8 @@ test("ums-memory-hpl.4 harmful feedback auto-demotes deterministically and noop 
   const shadow = executeOperation("shadow_write", {
     storeId,
     profile,
-    statement: "Explicit harmful feedback should demote candidate and promoted rule.",
+    statement:
+      "Explicit harmful feedback should demote candidate and promoted rule.",
     sourceEventIds: ["evt-hpl4-feedback-1"],
     evidenceEventIds: ["evt-hpl4-feedback-1"],
     createdAt: "2026-03-02T12:00:00.000Z",
@@ -741,11 +887,18 @@ test("ums-memory-hpl.4 harmful feedback auto-demotes deterministically and noop 
   assert.equal(harmfulReplay.autoDemotion, null);
 
   const snapshot = snapshotProfile(profile, storeId);
-  const storedCandidate = snapshot.shadowCandidates.find((entry) => entry.candidateId === candidateId);
+  const storedCandidate = snapshot.shadowCandidates.find(
+    (entry) => entry.candidateId === candidateId
+  );
   assert.ok(storedCandidate);
   assert.equal(storedCandidate.status, "demoted");
-  assert.deepEqual(storedCandidate.latestDemotionReasonCodes, ["explicit_harmful_feedback"]);
-  assert.equal(snapshot.rules.some((entry) => entry.ruleId === targetRuleId), false);
+  assert.deepEqual(storedCandidate.latestDemotionReasonCodes, [
+    "explicit_harmful_feedback",
+  ]);
+  assert.equal(
+    snapshot.rules.some((entry) => entry.ruleId === targetRuleId),
+    false
+  );
 });
 
 test("ums-memory-hpl.4 replay_eval trailing negative streak resets after a positive evaluation", () => {
@@ -754,7 +907,8 @@ test("ums-memory-hpl.4 replay_eval trailing negative streak resets after a posit
   const shadow = executeOperation("shadow_write", {
     storeId,
     profile,
-    statement: "Positive replay evaluations should reset trailing negative streak.",
+    statement:
+      "Positive replay evaluations should reset trailing negative streak.",
     sourceEventIds: ["evt-hpl4-streak-reset-1"],
     evidenceEventIds: ["evt-hpl4-streak-reset-1"],
   });
@@ -790,7 +944,9 @@ test("ums-memory-hpl.4 replay_eval trailing negative streak resets after a posit
   assert.equal(secondNegative.autoDemotion, null);
 
   const snapshot = snapshotProfile(profile, storeId);
-  const storedCandidate = snapshot.shadowCandidates.find((entry) => entry.candidateId === candidateId);
+  const storedCandidate = snapshot.shadowCandidates.find(
+    (entry) => entry.candidateId === candidateId
+  );
   assert.ok(storedCandidate);
   assert.equal(storedCandidate.status, "shadow");
   assert.equal(storedCandidate.negativeNetValueStreak, 1);
@@ -832,8 +988,14 @@ test("shadow_write returns canonical candidate metadata and preserves it on dete
   assert.equal(replay.applied[0].action, "noop");
 
   for (const field of requiredFields) {
-    assert.equal(Object.prototype.hasOwnProperty.call(created.applied[0], field), true);
-    assert.equal(Object.prototype.hasOwnProperty.call(replay.applied[0], field), true);
+    assert.equal(
+      Object.hasOwn(created.applied[0], field),
+      true
+    );
+    assert.equal(
+      Object.hasOwn(replay.applied[0], field),
+      true
+    );
     assert.deepEqual(replay.applied[0][field], created.applied[0][field]);
   }
 });
@@ -846,7 +1008,7 @@ test("shadow_write rejects requests without source/evidence pointers", () => {
         profile: "shadow-evidence",
         statement: "Missing pointers should fail contract validation.",
       }),
-    /EVIDENCE_POINTER_CONTRACT_VIOLATION: shadow_write requires at least one sourceEventId or evidenceEventId\./,
+    /EVIDENCE_POINTER_CONTRACT_VIOLATION: shadow_write requires at least one sourceEventId or evidenceEventId\./
   );
 });
 
@@ -876,8 +1038,15 @@ test("shadow_write updated action emits canonical merged candidate metadata", ()
   assert.equal(updated.applied.length, 1);
   assert.equal(updated.applied[0].action, "updated");
   assert.equal(updated.applied[0].candidateId, candidateId);
-  assert.deepEqual(updated.applied[0].sourceEventIds, ["evt-upd-1", "evt-upd-2", "evt-upd-3"]);
-  assert.deepEqual(updated.applied[0].evidenceEventIds, ["evt-upd-1", "evt-upd-4"]);
+  assert.deepEqual(updated.applied[0].sourceEventIds, [
+    "evt-upd-1",
+    "evt-upd-2",
+    "evt-upd-3",
+  ]);
+  assert.deepEqual(updated.applied[0].evidenceEventIds, [
+    "evt-upd-1",
+    "evt-upd-4",
+  ]);
   assert.equal(updated.applied[0].confidence, 0.9);
   assert.equal(updated.applied[0].createdAt, "2026-03-01T09:00:00.000Z");
   assert.equal(updated.applied[0].updatedAt, "2026-03-02T09:30:00.000Z");
@@ -891,11 +1060,16 @@ test("shadow_write updated action emits canonical merged candidate metadata", ()
   });
 
   const snapshot = snapshotProfile("shadow-update", "tenant-shadow-update");
-  const stored = snapshot.shadowCandidates.find((candidate) => candidate.candidateId === candidateId);
+  const stored = snapshot.shadowCandidates.find(
+    (candidate) => candidate.candidateId === candidateId
+  );
   assert.ok(stored);
   assert.equal(stored.updatedAt, updated.applied[0].updatedAt);
   assert.deepEqual(stored.sourceEventIds, updated.applied[0].sourceEventIds);
-  assert.deepEqual(stored.evidenceEventIds, updated.applied[0].evidenceEventIds);
+  assert.deepEqual(
+    stored.evidenceEventIds,
+    updated.applied[0].evidenceEventIds
+  );
   assert.equal(stored.confidence, updated.applied[0].confidence);
   assert.deepEqual(stored.policyException, updated.applied[0].policyException);
 });
@@ -910,8 +1084,14 @@ test("shadow_write accepts evidence-only pointers and normalizes source pointers
 
   assert.equal(result.applied.length, 1);
   assert.equal(result.applied[0].action, "created");
-  assert.deepEqual(result.applied[0].evidenceEventIds, ["evt-evidence-1", "evt-evidence-2"]);
-  assert.deepEqual(result.applied[0].sourceEventIds, ["evt-evidence-1", "evt-evidence-2"]);
+  assert.deepEqual(result.applied[0].evidenceEventIds, [
+    "evt-evidence-1",
+    "evt-evidence-2",
+  ]);
+  assert.deepEqual(result.applied[0].sourceEventIds, [
+    "evt-evidence-1",
+    "evt-evidence-2",
+  ]);
 });
 
 test("ums-memory-hpl.5 addweight adjusts candidate influence with audit trace and deterministic replay", () => {
@@ -920,7 +1100,8 @@ test("ums-memory-hpl.5 addweight adjusts candidate influence with audit trace an
   const shadow = executeOperation("shadow_write", {
     storeId,
     profile,
-    statement: "Keep release workflows deterministic with evidence-backed commands.",
+    statement:
+      "Keep release workflows deterministic with evidence-backed commands.",
     confidence: 0.6,
     sourceEventIds: ["evt-addweight-shadow-1"],
     evidenceEventIds: ["evt-addweight-shadow-1"],
@@ -967,38 +1148,67 @@ test("ums-memory-hpl.5 addweight adjusts candidate influence with audit trace an
   assert.equal(adjusted.adjustment.appliedDelta, 0.2);
   assert.equal(adjusted.ruleAction, "updated");
   assert.equal(replay.policyAuditEventId, adjusted.policyAuditEventId);
-  assert.equal(replay.adjustment.adjustmentId, adjusted.adjustment.adjustmentId);
+  assert.equal(
+    replay.adjustment.adjustmentId,
+    adjusted.adjustment.adjustmentId
+  );
   assert.equal(replay.candidate.confidence, adjusted.candidate.confidence);
 
   const snapshot = snapshotProfile(profile, storeId);
-  const storedCandidate = snapshot.shadowCandidates.find((entry) => entry.candidateId === candidateId);
+  const storedCandidate = snapshot.shadowCandidates.find(
+    (entry) => entry.candidateId === candidateId
+  );
   assert.ok(storedCandidate);
   assert.equal(storedCandidate.confidence, 0.8);
   assert.equal(storedCandidate.updatedAt, "2026-03-02T09:00:00.000Z");
-  assert.equal(storedCandidate.metadata.latestWeightAdjustment.adjustmentId, adjusted.adjustment.adjustmentId);
+  assert.equal(
+    storedCandidate.metadata.latestWeightAdjustment.adjustmentId,
+    adjusted.adjustment.adjustmentId
+  );
   assert.equal(
     storedCandidate.metadata.latestWeightAdjustment.reason,
-    "Human reviewer validated this guidance in production incidents.",
+    "Human reviewer validated this guidance in production incidents."
   );
-  assert.equal(storedCandidate.metadata.latestWeightAdjustment.actor, "reviewer-1");
-  assert.deepEqual(storedCandidate.metadata.latestWeightAdjustment.sourceEventIds, [
-    "evt-addweight-shadow-1",
-    "evt-addweight-shadow-2",
-  ]);
-  assert.deepEqual(storedCandidate.metadata.latestWeightAdjustment.evidenceEventIds, ["evt-addweight-shadow-2"]);
-  assert.deepEqual(storedCandidate.metadata.latestWeightAdjustment.metadata, { ticketId: "OPS-42" });
-  const storedRule = snapshot.rules.find((entry) => entry.ruleId === storedCandidate.ruleId);
+  assert.equal(
+    storedCandidate.metadata.latestWeightAdjustment.actor,
+    "reviewer-1"
+  );
+  assert.deepEqual(
+    storedCandidate.metadata.latestWeightAdjustment.sourceEventIds,
+    ["evt-addweight-shadow-1", "evt-addweight-shadow-2"]
+  );
+  assert.deepEqual(
+    storedCandidate.metadata.latestWeightAdjustment.evidenceEventIds,
+    ["evt-addweight-shadow-2"]
+  );
+  assert.deepEqual(storedCandidate.metadata.latestWeightAdjustment.metadata, {
+    ticketId: "OPS-42",
+  });
+  const storedRule = snapshot.rules.find(
+    (entry) => entry.ruleId === storedCandidate.ruleId
+  );
   assert.ok(storedRule);
   assert.equal(storedRule.confidence, 0.8);
 
-  const auditEntry = snapshot.policyAuditTrail.find((entry) => entry.auditEventId === adjusted.policyAuditEventId);
+  const auditEntry = snapshot.policyAuditTrail.find(
+    (entry) => entry.auditEventId === adjusted.policyAuditEventId
+  );
   assert.ok(auditEntry);
   assert.equal(auditEntry.operation, "addweight");
-  assert.equal(auditEntry.details.adjustmentId, adjusted.adjustment.adjustmentId);
+  assert.equal(
+    auditEntry.details.adjustmentId,
+    adjusted.adjustment.adjustmentId
+  );
   assert.equal(auditEntry.details.candidateId, candidateId);
-  assert.equal(auditEntry.details.reason, "Human reviewer validated this guidance in production incidents.");
+  assert.equal(
+    auditEntry.details.reason,
+    "Human reviewer validated this guidance in production incidents."
+  );
   assert.equal(auditEntry.details.actor, "reviewer-1");
-  assert.deepEqual(auditEntry.reasonCodes, ["addweight_manual", "human_weight_increase"]);
+  assert.deepEqual(auditEntry.reasonCodes, [
+    "addweight_manual",
+    "human_weight_increase",
+  ]);
 });
 
 test("ums-memory-hpl.5 addweight rejects adjustmentId collisions with mismatched payload", () => {
@@ -1030,7 +1240,7 @@ test("ums-memory-hpl.5 addweight rejects adjustmentId collisions with mismatched
         ...request,
         delta: -0.25,
       }),
-    /addweight adjustmentId already exists with a different payload/,
+    /addweight adjustmentId already exists with a different payload/
   );
 });
 
@@ -1040,7 +1250,8 @@ test("ums-memory-hpl.5 addweight replay stays idempotent after policy audit expo
   const created = executeOperation("shadow_write", {
     storeId,
     profile,
-    statement: "Replay-safe human weighting should survive audit trail truncation.",
+    statement:
+      "Replay-safe human weighting should survive audit trail truncation.",
     confidence: 0.5,
     sourceEventIds: ["evt-addweight-replay-1"],
     evidenceEventIds: ["evt-addweight-replay-1"],
@@ -1070,7 +1281,9 @@ test("ums-memory-hpl.5 addweight replay stays idempotent after policy audit expo
   assert.equal(replay.policyAuditEventId, first.policyAuditEventId);
 
   const restored = snapshotProfile(profile, storeId);
-  const storedCandidate = restored.shadowCandidates.find((entry) => entry.candidateId === candidateId);
+  const storedCandidate = restored.shadowCandidates.find(
+    (entry) => entry.candidateId === candidateId
+  );
   assert.ok(storedCandidate);
   assert.equal(storedCandidate.confidence, 0.68);
 });
@@ -1081,7 +1294,8 @@ test("ums-memory-hpl.5 addweight enforces bounded delta and non-empty reason con
   const created = executeOperation("shadow_write", {
     storeId,
     profile,
-    statement: "Contract checks should reject invalid manual weighting requests.",
+    statement:
+      "Contract checks should reject invalid manual weighting requests.",
     sourceEventIds: ["evt-addweight-contract-1"],
     evidenceEventIds: ["evt-addweight-contract-1"],
   });
@@ -1096,7 +1310,7 @@ test("ums-memory-hpl.5 addweight enforces bounded delta and non-empty reason con
         delta: 1.5,
         reason: "Too large delta should fail.",
       }),
-    /addweight requires numeric delta in \[-1, 1\]/,
+    /addweight requires numeric delta in \[-1, 1\]/
   );
   assert.throws(
     () =>
@@ -1107,7 +1321,7 @@ test("ums-memory-hpl.5 addweight enforces bounded delta and non-empty reason con
         delta: 0.1,
         reason: "   ",
       }),
-    /addweight requires a non-empty reason/,
+    /addweight requires a non-empty reason/
   );
 });
 
@@ -1198,10 +1412,14 @@ test("ums-memory-hpl.6 feedback ingestion maps helpful and harmful signals into 
   assert.deepEqual(harmful.autoDemotion.removedRuleIds, [targetRuleId]);
 
   const snapshot = snapshotProfile(profile, storeId);
-  const storedRule = snapshot.rules.find((entry) => entry.ruleId === targetRuleId);
+  const storedRule = snapshot.rules.find(
+    (entry) => entry.ruleId === targetRuleId
+  );
   assert.equal(storedRule, undefined);
 
-  const storedCandidate = snapshot.shadowCandidates.find((entry) => entry.candidateId === candidateId);
+  const storedCandidate = snapshot.shadowCandidates.find(
+    (entry) => entry.candidateId === candidateId
+  );
   assert.ok(storedCandidate);
   assert.equal(storedCandidate.status, "demoted");
   assert.equal(storedCandidate.metadata.utilitySignal.source, "feedback");
@@ -1254,13 +1472,20 @@ test("ums-memory-hpl.6 outcome ingestion maps success/failure to utility signals
   assert.deepEqual(created.usedRuleIds, [targetRuleId]);
 
   const snapshot = snapshotProfile(profile, storeId);
-  const storedRule = snapshot.rules.find((entry) => entry.ruleId === targetRuleId);
+  const storedRule = snapshot.rules.find(
+    (entry) => entry.ruleId === targetRuleId
+  );
   assert.ok(storedRule);
   assert.equal(storedRule.utilitySignalSource, "outcome_failure");
   assert.equal(storedRule.utilityScore, 0.3);
-  const storedCandidate = snapshot.shadowCandidates.find((entry) => entry.candidateId === candidateId);
+  const storedCandidate = snapshot.shadowCandidates.find(
+    (entry) => entry.candidateId === candidateId
+  );
   assert.ok(storedCandidate);
-  assert.equal(storedCandidate.metadata.utilitySignal.source, "outcome_failure");
+  assert.equal(
+    storedCandidate.metadata.utilitySignal.source,
+    "outcome_failure"
+  );
   assert.equal(storedCandidate.metadata.utilitySignal.score, 0.3);
 });
 
@@ -1290,7 +1515,9 @@ test("ums-memory-hpl.6 feedback supports candidate-only utility mapping without 
   assert.deepEqual(mapped.mapping.updatedRuleIds, []);
   assert.deepEqual(mapped.mapping.updatedCandidateIds, [candidateId]);
   const snapshot = snapshotProfile(profile, storeId);
-  const storedCandidate = snapshot.shadowCandidates.find((entry) => entry.candidateId === candidateId);
+  const storedCandidate = snapshot.shadowCandidates.find(
+    (entry) => entry.candidateId === candidateId
+  );
   assert.ok(storedCandidate);
   assert.equal(storedCandidate.metadata.utilitySignal.score, 0.62);
 });
@@ -1385,7 +1612,9 @@ test("ums-memory-hpl.7 incident escalation signals quarantine critical failures 
 
   const first = executeOperation("incident_escalation_signal", request);
   const firstSnapshot = snapshotProfile(profile, storeId);
-  const firstCandidate = firstSnapshot.shadowCandidates.find((entry) => entry.candidateId === candidateId);
+  const firstCandidate = firstSnapshot.shadowCandidates.find(
+    (entry) => entry.candidateId === candidateId
+  );
 
   assert.equal(first.action, "created");
   assert.equal(first.quarantine.required, true);
@@ -1395,7 +1624,10 @@ test("ums-memory-hpl.7 incident escalation signals quarantine critical failures 
   assert.deepEqual(first.quarantine.quarantinedRuleIds, [ruleId]);
   assert.ok(firstCandidate);
   assert.equal(firstCandidate.status, "demoted");
-  assert.equal(firstSnapshot.rules.some((entry) => entry.ruleId === ruleId), false);
+  assert.equal(
+    firstSnapshot.rules.some((entry) => entry.ruleId === ruleId),
+    false
+  );
 
   const auditCountAfterFirst = firstSnapshot.policyAuditTrail.length;
   const second = executeOperation("incident_escalation_signal", request);
@@ -1407,7 +1639,9 @@ test("ums-memory-hpl.7 incident escalation signals quarantine critical failures 
   assert.equal(second.quarantine.triggered, true);
   assert.equal(second.quarantine.changed, false);
   assert.deepEqual(second.quarantine.demotedCandidateIds, []);
-  assert.deepEqual(second.quarantine.alreadyQuarantinedCandidateIds, [candidateId]);
+  assert.deepEqual(second.quarantine.alreadyQuarantinedCandidateIds, [
+    candidateId,
+  ]);
   assert.deepEqual(second.quarantine.quarantinedRuleIds, []);
   assert.equal(second.observability.replaySafe, true);
   assert.equal(secondSnapshot.policyAuditTrail.length, auditCountAfterFirst);
@@ -1419,7 +1653,8 @@ test("ums-memory-hpl.7 non-severe escalation records signal without immediate qu
   const shadow = executeOperation("shadow_write", {
     storeId,
     profile,
-    statement: "High severity signals should be review-only unless marked severe/critical.",
+    statement:
+      "High severity signals should be review-only unless marked severe/critical.",
     sourceEventIds: ["evt-hpl7-high-shadow-1"],
     evidenceEventIds: ["evt-hpl7-high-shadow-1"],
     createdAt: "2026-03-02T19:00:00.000Z",
@@ -1455,7 +1690,9 @@ test("ums-memory-hpl.7 non-severe escalation records signal without immediate qu
     timestamp: "2026-03-02T19:30:00.000Z",
   });
   const snapshot = snapshotProfile(profile, storeId);
-  const candidate = snapshot.shadowCandidates.find((entry) => entry.candidateId === candidateId);
+  const candidate = snapshot.shadowCandidates.find(
+    (entry) => entry.candidateId === candidateId
+  );
 
   assert.equal(escalation.operation, "incident_escalation_signal");
   assert.equal(escalation.action, "created");
@@ -1467,7 +1704,10 @@ test("ums-memory-hpl.7 non-severe escalation records signal without immediate qu
   assert.equal(escalation.observability.immediateQuarantineTriggered, false);
   assert.ok(candidate);
   assert.equal(candidate.status, "promoted");
-  assert.equal(snapshot.rules.some((entry) => entry.ruleId === ruleId), true);
+  assert.equal(
+    snapshot.rules.some((entry) => entry.ruleId === ruleId),
+    true
+  );
 });
 
 test("ums-memory-hpl.7 incident escalation enforces evidence pointer contract", () => {
@@ -1480,7 +1720,7 @@ test("ums-memory-hpl.7 incident escalation enforces evidence pointer contract", 
         severity: "critical",
         targetCandidateIds: ["cand-hpl7-contract-1"],
       }),
-    /incident_escalation_signal requires at least one evidenceEventId/,
+    /incident_escalation_signal requires at least one evidenceEventId/
   );
 });
 
@@ -1496,7 +1736,8 @@ test("ums-memory-hpl.7 incident escalation quarantines orphaned promoted rules d
             rules: [
               {
                 ruleId,
-                statement: "Orphan promoted rules should still be directly quarantinable.",
+                statement:
+                  "Orphan promoted rules should still be directly quarantinable.",
                 confidence: 0.78,
                 scope: "global",
                 sourceEventIds: ["evt-hpl7-orphan-shadow-1"],
@@ -1533,8 +1774,15 @@ test("ums-memory-hpl.7 incident escalation quarantines orphaned promoted rules d
   assert.equal(first.quarantine.changed, true);
   assert.deepEqual(first.quarantine.demotedCandidateIds, []);
   assert.deepEqual(first.quarantine.quarantinedRuleIds, [ruleId]);
-  assert.equal(first.quarantine.ruleActions.find((entry) => entry.ruleId === ruleId)?.action, "quarantined");
-  assert.equal(firstSnapshot.rules.some((entry) => entry.ruleId === ruleId), false);
+  assert.equal(
+    first.quarantine.ruleActions.find((entry) => entry.ruleId === ruleId)
+      ?.action,
+    "quarantined"
+  );
+  assert.equal(
+    firstSnapshot.rules.some((entry) => entry.ruleId === ruleId),
+    false
+  );
 
   const auditCountAfterFirst = firstSnapshot.policyAuditTrail.length;
   const second = executeOperation("incident_escalation_signal", request);
@@ -1556,7 +1804,7 @@ test("ums-memory-hpl.9 manual override controls enforce contracts for targets, a
         actor: "oncall-operator",
         reasonCodes: ["manual_safety_intervention"],
       }),
-    /manual_quarantine_override requires at least one targetCandidateId or targetRuleId/,
+    /manual_quarantine_override requires at least one targetCandidateId or targetRuleId/
   );
   assert.throws(
     () =>
@@ -1567,7 +1815,7 @@ test("ums-memory-hpl.9 manual override controls enforce contracts for targets, a
         targetCandidateIds: ["cand-hpl9-contracts-1"],
         reasonCodes: ["manual_safety_intervention"],
       }),
-    /manual_quarantine_override requires actor/,
+    /manual_quarantine_override requires actor/
   );
   assert.throws(
     () =>
@@ -1578,7 +1826,7 @@ test("ums-memory-hpl.9 manual override controls enforce contracts for targets, a
         actor: "oncall-operator",
         targetCandidateIds: ["cand-hpl9-contracts-1"],
       }),
-    /manual_quarantine_override requires reasonCodes or a reason/,
+    /manual_quarantine_override requires reasonCodes or a reason/
   );
 });
 
@@ -1588,7 +1836,8 @@ test("ums-memory-hpl.9 manual override controls support emergency promote and su
   const shadow = executeOperation("shadow_write", {
     storeId,
     profile,
-    statement: "Manual override should recover this candidate even without replay gate pass.",
+    statement:
+      "Manual override should recover this candidate even without replay gate pass.",
     sourceEventIds: ["evt-hpl9-shadow-1"],
     evidenceEventIds: ["evt-hpl9-shadow-1"],
     createdAt: "2026-03-02T21:00:00.000Z",
@@ -1610,9 +1859,14 @@ test("ums-memory-hpl.9 manual override controls support emergency promote and su
     timestamp: "2026-03-02T21:10:00.000Z",
   };
 
-  const promoteFirst = executeOperation("manual_override_control", promoteRequest);
+  const promoteFirst = executeOperation(
+    "manual_override_control",
+    promoteRequest
+  );
   const afterPromote = snapshotProfile(profile, storeId);
-  const promotedCandidate = afterPromote.shadowCandidates.find((entry) => entry.candidateId === candidateId);
+  const promotedCandidate = afterPromote.shadowCandidates.find(
+    (entry) => entry.candidateId === candidateId
+  );
   assert.equal(promoteFirst.operation, "manual_quarantine_override");
   assert.equal(promoteFirst.action, "created");
   assert.equal(promoteFirst.override.action, "promote");
@@ -1622,10 +1876,16 @@ test("ums-memory-hpl.9 manual override controls support emergency promote and su
   assert.ok(promotedCandidate);
   assert.equal(promotedCandidate.status, "promoted");
   const promotedRuleId = promoteFirst.override.promotedRuleIds[0];
-  assert.equal(afterPromote.rules.some((entry) => entry.ruleId === promotedRuleId), true);
+  assert.equal(
+    afterPromote.rules.some((entry) => entry.ruleId === promotedRuleId),
+    true
+  );
 
   const promoteAuditCount = afterPromote.policyAuditTrail.length;
-  const promoteReplay = executeOperation("manual_quarantine_override", promoteRequest);
+  const promoteReplay = executeOperation(
+    "manual_quarantine_override",
+    promoteRequest
+  );
   const afterPromoteReplay = snapshotProfile(profile, storeId);
   assert.equal(promoteReplay.action, "noop");
   assert.equal(promoteReplay.override.changed, false);
@@ -1646,9 +1906,14 @@ test("ums-memory-hpl.9 manual override controls support emergency promote and su
     timestamp: "2026-03-02T21:20:00.000Z",
   };
 
-  const suppressFirst = executeOperation("quarantine_override_control", suppressRequest);
+  const suppressFirst = executeOperation(
+    "quarantine_override_control",
+    suppressRequest
+  );
   const afterSuppress = snapshotProfile(profile, storeId);
-  const suppressedCandidate = afterSuppress.shadowCandidates.find((entry) => entry.candidateId === candidateId);
+  const suppressedCandidate = afterSuppress.shadowCandidates.find(
+    (entry) => entry.candidateId === candidateId
+  );
   assert.equal(suppressFirst.operation, "manual_quarantine_override");
   assert.equal(suppressFirst.action, "created");
   assert.equal(suppressFirst.override.action, "suppress");
@@ -1657,14 +1922,22 @@ test("ums-memory-hpl.9 manual override controls support emergency promote and su
   assert.deepEqual(suppressFirst.override.quarantinedRuleIds, [promotedRuleId]);
   assert.ok(suppressedCandidate);
   assert.equal(suppressedCandidate.status, "demoted");
-  assert.equal(afterSuppress.rules.some((entry) => entry.ruleId === promotedRuleId), false);
+  assert.equal(
+    afterSuppress.rules.some((entry) => entry.ruleId === promotedRuleId),
+    false
+  );
 
   const suppressAuditCount = afterSuppress.policyAuditTrail.length;
-  const suppressReplay = executeOperation("manual_quarantine_override", suppressRequest);
+  const suppressReplay = executeOperation(
+    "manual_quarantine_override",
+    suppressRequest
+  );
   const afterSuppressReplay = snapshotProfile(profile, storeId);
   assert.equal(suppressReplay.action, "noop");
   assert.equal(suppressReplay.override.changed, false);
-  assert.deepEqual(suppressReplay.override.alreadyQuarantinedCandidateIds, [candidateId]);
+  assert.deepEqual(suppressReplay.override.alreadyQuarantinedCandidateIds, [
+    candidateId,
+  ]);
   assert.deepEqual(suppressReplay.override.missingRuleIds, [promotedRuleId]);
   assert.equal(afterSuppressReplay.policyAuditTrail.length, suppressAuditCount);
 });
@@ -1672,16 +1945,25 @@ test("ums-memory-hpl.9 manual override controls support emergency promote and su
 test("context and curate operate on shared profile state", () => {
   executeOperation("ingest", {
     profile: "demo",
-    events: [{ type: "ticket", source: "jira", content: "Always include acceptance criteria." }]
+    events: [
+      {
+        type: "ticket",
+        source: "jira",
+        content: "Always include acceptance criteria.",
+      },
+    ],
   });
-  const reflected = executeOperation("reflect", { profile: "demo", maxCandidates: 1 });
+  const reflected = executeOperation("reflect", {
+    profile: "demo",
+    maxCandidates: 1,
+  });
   const curated = executeOperation("curate", {
     profile: "demo",
-    candidates: reflected.candidates
+    candidates: reflected.candidates,
   });
   const context = executeOperation("context", {
     profile: "demo",
-    query: "acceptance"
+    query: "acceptance",
   });
 
   assert.equal(curated.applied.length, 1);
@@ -1698,7 +1980,9 @@ test("store isolation prevents cross-store state bleed", () => {
   executeOperation("ingest", {
     storeId: "coding-agent",
     profile: "ops",
-    events: [{ type: "note", source: "codex", content: "coding-only evidence" }],
+    events: [
+      { type: "note", source: "codex", content: "coding-only evidence" },
+    ],
   });
 
   const jiraContext = executeOperation("context", {
@@ -1725,13 +2009,13 @@ test("ums-memory-d6q.1.4 learner_profile_update deterministic IDs and replay-saf
     learnerId: "learner-42",
     identityRefs: [
       { namespace: "email", value: "learner@example.com" },
-      { namespace: "agent", value: "codex", isPrimary: true }
+      { namespace: "agent", value: "codex", isPrimary: true },
     ],
     goals: ["graph", "dp", "graph"],
     interestTags: ["algorithms"],
     misconceptionIds: ["off-by-one"],
     evidenceEventIds: ["ep-profile-1"],
-    metadata: { source: "unit-test" }
+    metadata: { source: "unit-test" },
   };
 
   const first = executeOperation("learner_profile_update", request);
@@ -1740,8 +2024,8 @@ test("ums-memory-d6q.1.4 learner_profile_update deterministic IDs and replay-saf
     goals: ["dp", "graph"],
     identityRefs: [
       { namespace: "agent", value: "codex", isPrimary: true },
-      { namespace: "email", value: "learner@example.com" }
-    ]
+      { namespace: "email", value: "learner@example.com" },
+    ],
   });
 
   assert.equal(first.action, "created");
@@ -1755,7 +2039,10 @@ test("ums-memory-d6q.1.4 learner_profile_update deterministic IDs and replay-saf
   assert.equal(snapshot.learnerProfiles[0].profileId, first.profileId);
 
   resetStore();
-  const replayFromCleanStore = executeOperation("learner_profile_update", request);
+  const replayFromCleanStore = executeOperation(
+    "learner_profile_update",
+    request
+  );
   assert.equal(replayFromCleanStore.profileId, first.profileId);
   assert.equal(replayFromCleanStore.profileDigest, first.profileDigest);
 });
@@ -1765,7 +2052,9 @@ test("ums-memory-d6q.1.4 identity_graph_update deterministic IDs and replay-safe
     storeId: "tenant-a",
     profile: "learner-alpha",
     learnerId: "learner-42",
-    identityRefs: [{ namespace: "email", value: "learner@example.com", isPrimary: true }],
+    identityRefs: [
+      { namespace: "email", value: "learner@example.com", isPrimary: true },
+    ],
     evidenceEventIds: ["ep-profile-seed"],
   });
 
@@ -1777,13 +2066,13 @@ test("ums-memory-d6q.1.4 identity_graph_update deterministic IDs and replay-safe
     fromRef: { namespace: "misconception", value: "off-by-one" },
     toRef: { namespace: "learner", value: "learner-42" },
     evidenceEventIds: ["ep-2", "ep-1", "ep-1"],
-    metadata: { source: "unit-test" }
+    metadata: { source: "unit-test" },
   };
 
   const first = executeOperation("identity_graph_update", edgeRequest);
   const replay = executeOperation("identity_graph_update", {
     ...edgeRequest,
-    evidenceEventIds: ["ep-1", "ep-2"]
+    evidenceEventIds: ["ep-1", "ep-2"],
   });
 
   assert.equal(first.action, "created");
@@ -1791,11 +2080,14 @@ test("ums-memory-d6q.1.4 identity_graph_update deterministic IDs and replay-safe
   assert.equal(first.edgeId, replay.edgeId);
   assert.equal(first.edgeDigest, replay.edgeDigest);
   assert.equal(replay.totalEdges, 1);
-  assert.deepEqual(replay.identityGraphDelta.evidenceEventIds, ["ep-1", "ep-2"]);
+  assert.deepEqual(replay.identityGraphDelta.evidenceEventIds, [
+    "ep-1",
+    "ep-2",
+  ]);
 
   executeOperation("identity_graph_update", {
     ...edgeRequest,
-    storeId: "tenant-b"
+    storeId: "tenant-b",
   });
 
   const tenantA = snapshotProfile("learner-alpha", "tenant-a");
@@ -1809,7 +2101,9 @@ test("ums-memory-d6q.1.5 core service increments profile version and preserves i
     storeId: "tenant-svc",
     profile: "learner-svc",
     learnerId: "learner-500",
-    identityRefs: [{ namespace: "email", value: "svc@example.com", isPrimary: true }],
+    identityRefs: [
+      { namespace: "email", value: "svc@example.com", isPrimary: true },
+    ],
     goals: ["graphs"],
     evidenceEventIds: ["ep-svc-profile-1"],
     metadata: { origin: "initial" },
@@ -1819,7 +2113,9 @@ test("ums-memory-d6q.1.5 core service increments profile version and preserves i
     profile: "learner-svc",
     learnerId: "learner-500",
     profileId: created.profileId,
-    identityRefs: [{ namespace: "email", value: "svc@example.com", isPrimary: true }],
+    identityRefs: [
+      { namespace: "email", value: "svc@example.com", isPrimary: true },
+    ],
     goals: ["graphs", "dp"],
     evidenceEventIds: ["ep-svc-profile-2"],
     metadata: { origin: "update" },
@@ -1944,7 +2240,7 @@ test("ums-memory-d6q.5.4 policy_decision_update enforces policy checks and deter
         outcome: "deny",
         provenanceEventIds: ["evt-pol-1"],
       }),
-    /reasonCodes/i,
+    /reasonCodes/i
   );
 
   const created = executeOperation("policy_decision_update", {
@@ -1979,7 +2275,10 @@ test("ums-memory-d6q.5.4 policy_decision_update enforces policy checks and deter
   assert.equal(denied.decision.outcome, "deny");
   assert.equal(replay.action, "noop");
   assert.equal(replay.observability.denied, true);
-  assert.deepEqual(replay.decision.provenanceEventIds, ["evt-pol-1", "evt-pol-2"]);
+  assert.deepEqual(replay.decision.provenanceEventIds, [
+    "evt-pol-1",
+    "evt-pol-2",
+  ]);
 });
 
 test("ums-memory-a9v.5 default policy pack plugin is noop and records audit metadata", () => {
@@ -1995,14 +2294,22 @@ test("ums-memory-a9v.5 default policy pack plugin is noop and records audit meta
 
   assert.equal(result.action, "created");
   assert.equal(result.decision.outcome, "review");
-  assert.equal(result.decision.metadata.policyPackPlugin.pluginName, "noop-policy-pack-plugin");
+  assert.equal(
+    result.decision.metadata.policyPackPlugin.pluginName,
+    "noop-policy-pack-plugin"
+  );
   assert.equal(result.decision.metadata.policyPackPlugin.status, "executed");
   assert.equal(result.decision.metadata.policyPackPlugin.outcome, "pass");
   assert.deepEqual(result.decision.metadata.policyPackPlugin.reasonCodes, []);
   assert.equal(result.observability.pluginFailClosed, false);
 
-  const snapshot = snapshotProfile("learner-policy-plugin-noop", "tenant-policy-plugin-noop");
-  const auditEntry = snapshot.policyAuditTrail.find((entry) => entry.auditEventId === result.policyAuditEventId);
+  const snapshot = snapshotProfile(
+    "learner-policy-plugin-noop",
+    "tenant-policy-plugin-noop"
+  );
+  const auditEntry = snapshot.policyAuditTrail.find(
+    (entry) => entry.auditEventId === result.policyAuditEventId
+  );
   assert.ok(auditEntry);
   assert.equal(auditEntry.details.pluginInvocation.status, "executed");
   assert.equal(auditEntry.details.pluginInvocation.outcome, "pass");
@@ -2038,10 +2345,19 @@ test("ums-memory-a9v.5 custom policy pack plugin hook can enforce deny outcomes"
   assert.ok(seenRequest);
   assert.equal(seenRequest.operation, "policy_decision_update");
   assert.equal(result.decision.outcome, "deny");
-  assert.deepEqual(result.decision.reasonCodes, ["insufficient-evidence", "plugin-risk"]);
-  assert.equal(result.decision.metadata.policyPackPlugin.pluginName, "deny-on-plugin-review");
+  assert.deepEqual(result.decision.reasonCodes, [
+    "insufficient-evidence",
+    "plugin-risk",
+  ]);
+  assert.equal(
+    result.decision.metadata.policyPackPlugin.pluginName,
+    "deny-on-plugin-review"
+  );
   assert.equal(result.decision.metadata.policyPackPlugin.outcome, "deny");
-  assert.equal(result.decision.metadata.policyPackPlugin.metadata.pluginRule, "deny-on-plugin-review");
+  assert.equal(
+    result.decision.metadata.policyPackPlugin.metadata.pluginRule,
+    "deny-on-plugin-review"
+  );
 });
 
 test("ums-memory-a9v.5 policy pack plugin accepts evaluateDecisionUpdate Effect hooks", () => {
@@ -2071,10 +2387,19 @@ test("ums-memory-a9v.5 policy pack plugin accepts evaluateDecisionUpdate Effect 
   });
 
   assert.equal(result.decision.outcome, "deny");
-  assert.equal(result.decision.reasonCodes.includes("plugin-effect-deny"), true);
-  assert.equal(result.decision.metadata.policyPackPlugin.pluginName, "effect-hook-plugin");
+  assert.equal(
+    result.decision.reasonCodes.includes("plugin-effect-deny"),
+    true
+  );
+  assert.equal(
+    result.decision.metadata.policyPackPlugin.pluginName,
+    "effect-hook-plugin"
+  );
   assert.equal(result.decision.metadata.policyPackPlugin.status, "executed");
-  assert.equal(result.decision.metadata.policyPackPlugin.metadata.decisionSeed, "pol-plugin-effect-hook-1");
+  assert.equal(
+    result.decision.metadata.policyPackPlugin.metadata.decisionSeed,
+    "pol-plugin-effect-hook-1"
+  );
 });
 
 test("ums-memory-a9v.5 policy_decision_update fails closed when policy pack plugin throws", () => {
@@ -2096,26 +2421,29 @@ test("ums-memory-a9v.5 policy_decision_update fails closed when policy pack plug
   });
 
   assert.equal(result.decision.outcome, "deny");
-  assert.equal(result.decision.reasonCodes.includes("policy_pack_plugin_failure"), true);
+  assert.equal(
+    result.decision.reasonCodes.includes("policy_pack_plugin_failure"),
+    true
+  );
   assert.equal(result.decision.metadata.policyPackPlugin.status, "fail_closed");
   assert.equal(
     result.decision.metadata.policyPackPlugin.failureCode,
-    "policy_pack_plugin_failure",
+    "policy_pack_plugin_failure"
   );
   assert.equal(result.observability.pluginFailClosed, true);
 
   const snapshot = snapshotProfile(
     "learner-policy-plugin-failclosed",
-    "tenant-policy-plugin-failclosed",
+    "tenant-policy-plugin-failclosed"
   );
   const auditEntry = snapshot.policyAuditTrail.find(
-    (entry) => entry.auditEventId === result.policyAuditEventId,
+    (entry) => entry.auditEventId === result.policyAuditEventId
   );
   assert.ok(auditEntry);
   assert.equal(auditEntry.details.pluginInvocation.status, "fail_closed");
   assert.equal(
     auditEntry.details.pluginInvocation.failureCode,
-    "policy_pack_plugin_failure",
+    "policy_pack_plugin_failure"
   );
 });
 
@@ -2146,11 +2474,11 @@ test("ums-memory-a9v.5 policy_decision_update fails closed when plugin returns P
   assert.equal(result.decision.outcome, "deny");
   assert.equal(
     result.decision.metadata.policyPackPlugin.failureCode,
-    "policy_pack_plugin_failure",
+    "policy_pack_plugin_failure"
   );
   assert.match(
     String(result.decision.metadata.policyPackPlugin.failureMessage),
-    /promises are not supported/i,
+    /promises are not supported/i
   );
 });
 
@@ -2187,19 +2515,24 @@ test("ums-memory-a9v.5 policy_decision_update remains replay-deterministic with 
   assert.equal(created.decisionDigest, replay.decisionDigest);
   assert.equal(
     replay.decision.metadata.policyPackPlugin.metadata.decisionSeed,
-    "pol-plugin-replay-1",
+    "pol-plugin-replay-1"
   );
   assert.equal(
-    snapshotProfile("learner-policy-plugin-replay", "tenant-policy-plugin-replay").policyDecisions.length,
-    1,
+    snapshotProfile(
+      "learner-policy-plugin-replay",
+      "tenant-policy-plugin-replay"
+    ).policyDecisions.length,
+    1
   );
 });
 
 function withPolicyAuditSigningEnv(run) {
   const previousSecret = process.env.UMS_POLICY_AUDIT_EXPORT_SIGNING_SECRET;
   const previousKeyId = process.env.UMS_POLICY_AUDIT_EXPORT_SIGNING_KEY_ID;
-  process.env.UMS_POLICY_AUDIT_EXPORT_SIGNING_SECRET = "test-policy-audit-signing-secret-v1";
-  process.env.UMS_POLICY_AUDIT_EXPORT_SIGNING_KEY_ID = "test-policy-audit-signing-key-id-v1";
+  process.env.UMS_POLICY_AUDIT_EXPORT_SIGNING_SECRET =
+    "test-policy-audit-signing-secret-v1";
+  process.env.UMS_POLICY_AUDIT_EXPORT_SIGNING_KEY_ID =
+    "test-policy-audit-signing-key-id-v1";
   try {
     return run();
   } finally {
@@ -2257,16 +2590,30 @@ test("ums-memory-a9v.6 policy_audit_export replay-safe json exports include inte
     assert.equal(first.exportContent, replay.exportContent);
     assert.equal(first.integrity.algorithm, "sha256");
     assert.equal(first.integrity.payload.checksum, first.payloadDigest);
-    assert.equal(first.integrity.content.checksum, replay.integrity.content.checksum);
-    assert.equal(first.integrity.records.checksum, replay.integrity.records.checksum);
+    assert.equal(
+      first.integrity.content.checksum,
+      replay.integrity.content.checksum
+    );
+    assert.equal(
+      first.integrity.records.checksum,
+      replay.integrity.records.checksum
+    );
     assert.equal(first.integrity.records.count > 0, true);
     assert.equal(first.signature.algorithm, "hmac-sha256");
     assert.equal(first.signature.keyId, "test-policy-audit-signing-key-id-v1");
     assert.equal(first.signature.deterministic, true);
-    assert.equal(first.signature.metadataDigest, replay.signature.metadataDigest);
+    assert.equal(
+      first.signature.metadataDigest,
+      replay.signature.metadataDigest
+    );
     assert.equal(first.signature.value, replay.signature.value);
     assert.equal(first.signature.signedAt, "2026-03-02T18:15:00.000Z");
-    assert.equal(first.payload.auditTrail.some((entry) => entry.operation === "policy_audit_export"), false);
+    assert.equal(
+      first.payload.auditTrail.some(
+        (entry) => entry.operation === "policy_audit_export"
+      ),
+      false
+    );
     assert.equal(first.observability.replaySafe, true);
     assert.equal(first.observability.integrityChecksums, true);
     assert.equal(first.observability.deterministicSignature, true);
@@ -2305,21 +2652,35 @@ test("ums-memory-a9v.6 policy_audit_export emits deterministic ndjson and csv va
     assert.equal(ndjsonFirst.exportFormat, "ndjson");
     assert.equal(ndjsonFirst.exportContentType, "application/x-ndjson");
     assert.equal(ndjsonFirst.exportContent, ndjsonReplay.exportContent);
-    assert.equal(ndjsonFirst.integrity.content.checksum, ndjsonReplay.integrity.content.checksum);
+    assert.equal(
+      ndjsonFirst.integrity.content.checksum,
+      ndjsonReplay.integrity.content.checksum
+    );
     assert.equal(ndjsonFirst.signature.value, ndjsonReplay.signature.value);
     const ndjsonLines = ndjsonFirst.exportContent.split("\n");
     assert.equal(ndjsonLines.length, ndjsonFirst.integrity.content.lineCount);
     const ndjsonRecords = ndjsonLines.map((line) => JSON.parse(line));
     assert.equal(ndjsonRecords[0].recordType, "manifest");
-    assert.equal(ndjsonRecords.some((record) => record.recordType === "policy_decision"), true);
-    assert.equal(ndjsonRecords.some((record) => record.recordType === "policy_audit_event"), true);
-    assert.equal(ndjsonRecords.some((record) => record.recordType === "incident_check"), true);
+    assert.equal(
+      ndjsonRecords.some((record) => record.recordType === "policy_decision"),
+      true
+    );
+    assert.equal(
+      ndjsonRecords.some(
+        (record) => record.recordType === "policy_audit_event"
+      ),
+      true
+    );
+    assert.equal(
+      ndjsonRecords.some((record) => record.recordType === "incident_check"),
+      true
+    );
     assert.equal(
       ndjsonRecords.length,
       1 +
         ndjsonFirst.payload.policyDecisions.length +
         ndjsonFirst.payload.auditTrail.length +
-        ndjsonFirst.payload.incidentChecklist.length,
+        ndjsonFirst.payload.incidentChecklist.length
     );
 
     const csvFirst = executeOperation("policy_audit_export", {
@@ -2334,20 +2695,38 @@ test("ums-memory-a9v.6 policy_audit_export emits deterministic ndjson and csv va
     assert.equal(csvFirst.exportFormat, "csv");
     assert.equal(csvFirst.exportContentType, "text/csv");
     assert.equal(csvFirst.exportContent, csvReplay.exportContent);
-    assert.equal(csvFirst.integrity.content.checksum, csvReplay.integrity.content.checksum);
+    assert.equal(
+      csvFirst.integrity.content.checksum,
+      csvReplay.integrity.content.checksum
+    );
     assert.equal(csvFirst.signature.value, csvReplay.signature.value);
     const csvLines = csvFirst.exportContent.split("\n");
     assert.equal(csvLines.length, csvFirst.integrity.content.lineCount);
     assert.equal(
       csvLines[0],
-      "recordType,recordId,storeId,profile,timestamp,outcome,policyKey,checkId,status,reasonCodes,provenanceEventIds,details,recordDigest",
+      "recordType,recordId,storeId,profile,timestamp,outcome,policyKey,checkId,status,reasonCodes,provenanceEventIds,details,recordDigest"
     );
-    assert.equal(csvLines.some((line) => line.includes("policy_decision")), true);
-    assert.equal(csvLines.some((line) => line.includes("policy_audit_event")), true);
-    assert.equal(csvLines.some((line) => line.includes("incident_check")), true);
-    assert.notEqual(ndjsonFirst.integrity.content.checksum, csvFirst.integrity.content.checksum);
+    assert.equal(
+      csvLines.some((line) => line.includes("policy_decision")),
+      true
+    );
+    assert.equal(
+      csvLines.some((line) => line.includes("policy_audit_event")),
+      true
+    );
+    assert.equal(
+      csvLines.some((line) => line.includes("incident_check")),
+      true
+    );
+    assert.notEqual(
+      ndjsonFirst.integrity.content.checksum,
+      csvFirst.integrity.content.checksum
+    );
     assert.notEqual(ndjsonFirst.signature.value, csvFirst.signature.value);
-    assert.notEqual(ndjsonFirst.policyAuditEventId, csvFirst.policyAuditEventId);
+    assert.notEqual(
+      ndjsonFirst.policyAuditEventId,
+      csvFirst.policyAuditEventId
+    );
     assert.notEqual(ndjsonFirst.exportId, csvFirst.exportId);
   });
 });
@@ -2383,8 +2762,14 @@ test("ums-memory-a9v.6 policy_audit_export signature remains stable for normaliz
     });
 
     assert.equal(canonical.exportContent, alias.exportContent);
-    assert.equal(canonical.integrity.content.checksum, alias.integrity.content.checksum);
-    assert.equal(canonical.signature.metadataDigest, alias.signature.metadataDigest);
+    assert.equal(
+      canonical.integrity.content.checksum,
+      alias.integrity.content.checksum
+    );
+    assert.equal(
+      canonical.signature.metadataDigest,
+      alias.signature.metadataDigest
+    );
     assert.equal(canonical.signature.value, alias.signature.value);
   });
 });
@@ -2444,7 +2829,7 @@ test("ums-memory-a9v.6 policy_audit_export fails fast when signing secret is mis
     }
     assert.equal(
       message,
-      "SERVICE_MISCONFIGURATION: policy_audit_export signing secret is not configured.",
+      "SERVICE_MISCONFIGURATION: policy_audit_export signing secret is not configured."
     );
   } finally {
     if (previousSecret === undefined) {
@@ -2463,7 +2848,8 @@ test("ums-memory-a9v.6 policy_audit_export fails fast when signing secret is mis
 test("ums-memory-a9v.6 policy_audit_export fails fast when signing key id is missing", () => {
   const previousSecret = process.env.UMS_POLICY_AUDIT_EXPORT_SIGNING_SECRET;
   const previousKeyId = process.env.UMS_POLICY_AUDIT_EXPORT_SIGNING_KEY_ID;
-  process.env.UMS_POLICY_AUDIT_EXPORT_SIGNING_SECRET = "test-policy-audit-signing-secret-v1";
+  process.env.UMS_POLICY_AUDIT_EXPORT_SIGNING_SECRET =
+    "test-policy-audit-signing-secret-v1";
   delete process.env.UMS_POLICY_AUDIT_EXPORT_SIGNING_KEY_ID;
   try {
     let message = "";
@@ -2478,7 +2864,7 @@ test("ums-memory-a9v.6 policy_audit_export fails fast when signing key id is mis
     }
     assert.equal(
       message,
-      "SERVICE_MISCONFIGURATION: policy_audit_export signing key id is not configured.",
+      "SERVICE_MISCONFIGURATION: policy_audit_export signing key id is not configured."
     );
   } finally {
     if (previousSecret === undefined) {
@@ -2510,8 +2896,10 @@ test("ums-memory-a9v.6 policy_audit_export keeps audit event replay-safe across 
       timestamp: "2026-03-02T20:22:00.000Z",
     });
 
-    process.env.UMS_POLICY_AUDIT_EXPORT_SIGNING_SECRET = "test-policy-audit-signing-secret-v1";
-    process.env.UMS_POLICY_AUDIT_EXPORT_SIGNING_KEY_ID = "test-policy-audit-signing-key-id-v1";
+    process.env.UMS_POLICY_AUDIT_EXPORT_SIGNING_SECRET =
+      "test-policy-audit-signing-secret-v1";
+    process.env.UMS_POLICY_AUDIT_EXPORT_SIGNING_KEY_ID =
+      "test-policy-audit-signing-key-id-v1";
     const first = executeOperation("policy_audit_export", {
       storeId,
       profile,
@@ -2519,8 +2907,10 @@ test("ums-memory-a9v.6 policy_audit_export keeps audit event replay-safe across 
       format: "json",
     });
 
-    process.env.UMS_POLICY_AUDIT_EXPORT_SIGNING_SECRET = "test-policy-audit-signing-secret-v2";
-    process.env.UMS_POLICY_AUDIT_EXPORT_SIGNING_KEY_ID = "test-policy-audit-signing-key-id-v2";
+    process.env.UMS_POLICY_AUDIT_EXPORT_SIGNING_SECRET =
+      "test-policy-audit-signing-secret-v2";
+    process.env.UMS_POLICY_AUDIT_EXPORT_SIGNING_KEY_ID =
+      "test-policy-audit-signing-key-id-v2";
     const rotated = executeOperation("policy_audit_export", {
       storeId,
       profile,
@@ -2528,8 +2918,10 @@ test("ums-memory-a9v.6 policy_audit_export keeps audit event replay-safe across 
       format: "json",
     });
 
-    process.env.UMS_POLICY_AUDIT_EXPORT_SIGNING_SECRET = "test-policy-audit-signing-secret-v3";
-    process.env.UMS_POLICY_AUDIT_EXPORT_SIGNING_KEY_ID = "test-policy-audit-signing-key-id-v2";
+    process.env.UMS_POLICY_AUDIT_EXPORT_SIGNING_SECRET =
+      "test-policy-audit-signing-secret-v3";
+    process.env.UMS_POLICY_AUDIT_EXPORT_SIGNING_KEY_ID =
+      "test-policy-audit-signing-key-id-v2";
     const rotatedSecretOnly = executeOperation("policy_audit_export", {
       storeId,
       profile,
@@ -2539,10 +2931,16 @@ test("ums-memory-a9v.6 policy_audit_export keeps audit event replay-safe across 
 
     assert.equal(first.exportId, rotated.exportId);
     assert.equal(first.policyAuditEventId, rotated.policyAuditEventId);
-    assert.equal(first.integrity.content.checksum, rotated.integrity.content.checksum);
+    assert.equal(
+      first.integrity.content.checksum,
+      rotated.integrity.content.checksum
+    );
     assert.notEqual(first.signature.value, rotated.signature.value);
     assert.notEqual(first.signature.keyId, rotated.signature.keyId);
-    assert.equal(rotated.policyAuditEventId, rotatedSecretOnly.policyAuditEventId);
+    assert.equal(
+      rotated.policyAuditEventId,
+      rotatedSecretOnly.policyAuditEventId
+    );
     assert.equal(rotated.signature.keyId, rotatedSecretOnly.signature.keyId);
     assert.notEqual(rotated.signature.value, rotatedSecretOnly.signature.value);
   } finally {
@@ -2654,7 +3052,11 @@ test("ums-memory-d6q.4.5 core service tracks review schedule state progression d
   assert.equal(completed.action, "updated");
   assert.equal(completed.scheduleEntry.status, "completed");
   assert.equal(completed.scheduleEntry.repetition, 2);
-  assert.deepEqual(completed.scheduleEntry.sourceEventIds, ["evt-1", "evt-2", "evt-3"]);
+  assert.deepEqual(completed.scheduleEntry.sourceEventIds, [
+    "evt-1",
+    "evt-2",
+    "evt-3",
+  ]);
 });
 
 test("ums-memory-d6q.5.5 core service applies deterministic policy severity precedence and replay safety", () => {
@@ -2689,7 +3091,10 @@ test("ums-memory-d6q.5.5 core service applies deterministic policy severity prec
   assert.equal(deny.action, "updated");
   assert.equal(deny.decision.outcome, "deny");
   assert.equal(replay.action, "noop");
-  assert.deepEqual(replay.decision.reasonCodes, ["insufficient-evidence", "policy-blocked"]);
+  assert.deepEqual(replay.decision.reasonCodes, [
+    "insufficient-evidence",
+    "policy-blocked",
+  ]);
 });
 
 test("ums-memory-d6q.1.11 core enforces evidence-pointer rejection and supports policy exception path", () => {
@@ -2701,7 +3106,7 @@ test("ums-memory-d6q.1.11 core enforces evidence-pointer rejection and supports 
         misconceptionKey: "pointer-required",
         signal: "harmful",
       }),
-    /requires at least one evidenceEventId/i,
+    /requires at least one evidenceEventId/i
   );
 
   const policyException = executeOperation("policy_decision_update", {
@@ -2719,8 +3124,12 @@ test("ums-memory-d6q.1.11 core enforces evidence-pointer rejection and supports 
 
   assert.equal(policyException.action, "created");
   assert.equal(policyException.decision.outcome, "review");
-  assert.deepEqual(policyException.decision.reasonCodes, ["policy-exception-evidence-pointer-waiver"]);
-  assert.deepEqual(policyException.decision.provenanceEventIds, ["evt-policy-waiver-1"]);
+  assert.deepEqual(policyException.decision.reasonCodes, [
+    "policy-exception-evidence-pointer-waiver",
+  ]);
+  assert.deepEqual(policyException.decision.provenanceEventIds, [
+    "evt-policy-waiver-1",
+  ]);
   assert.equal(policyException.observability.denied, false);
   assert.equal(policyException.observability.reasonCodeCount, 1);
   assert.equal(policyException.observability.provenanceCount, 1);
@@ -2776,8 +3185,16 @@ test("ums-memory-d6q.1.12 timeline lineage stays intact while current view resol
   assert.equal(conflicting.action, "updated");
   assert.equal(conflicting.planItem.status, "blocked");
   assert.equal(conflicting.planItem.recommendationRank, 1);
-  assert.deepEqual(conflicting.planItem.evidenceEventIds, ["ep-1", "ep-2", "ep-3"]);
-  assert.deepEqual(conflicting.planItem.provenanceSignalIds, ["sig-1", "sig-2", "sig-3"]);
+  assert.deepEqual(conflicting.planItem.evidenceEventIds, [
+    "ep-1",
+    "ep-2",
+    "ep-3",
+  ]);
+  assert.deepEqual(conflicting.planItem.provenanceSignalIds, [
+    "sig-1",
+    "sig-2",
+    "sig-3",
+  ]);
   assert.equal(replay.action, "noop");
   assert.equal(replay.planDigest, conflicting.planDigest);
 });
@@ -2793,7 +3210,7 @@ test("ums-memory-d6q.1.6/ums-memory-d6q.1.7 guardrails fail invalid identity rel
         toRef: { namespace: "learner", value: "learner-guardrails" },
         createdAt: "2026-03-01T00:00:00.000Z",
       }),
-    (error) => error?.code === ErrorCode.VALIDATION_FAILED,
+    (error) => error?.code === ErrorCode.VALIDATION_FAILED
   );
 
   assert.throws(
@@ -2806,7 +3223,7 @@ test("ums-memory-d6q.1.6/ums-memory-d6q.1.7 guardrails fail invalid identity rel
         toRef: { namespace: "learner", value: "learner-guardrails" },
         createdAt: "2026-03-01T00:00:00.000Z",
       }),
-    (error) => error?.code === ErrorCode.EVIDENCE_REQUIRED,
+    (error) => error?.code === ErrorCode.EVIDENCE_REQUIRED
   );
 
   assert.throws(
@@ -2819,7 +3236,7 @@ test("ums-memory-d6q.1.6/ums-memory-d6q.1.7 guardrails fail invalid identity rel
         toRef: { namespace: "learner", value: "learner-guardrails" },
         createdAt: "2026-03-01T00:00:00.000Z",
       }),
-    (error) => error?.code === ErrorCode.EVIDENCE_REQUIRED,
+    (error) => error?.code === ErrorCode.EVIDENCE_REQUIRED
   );
 });
 
@@ -2886,7 +3303,7 @@ test("ums-memory-d6q.2.6/ums-memory-d6q.2.7/ums-memory-d6q.2.9 misconception_upd
         misconceptionKey: "evidence-required",
         signal: "harmful",
       }),
-    /requires at least one evidenceeventid/i,
+    /requires at least one evidenceeventid/i
   );
 
   const created = executeOperation("misconception_update", {
@@ -2934,7 +3351,7 @@ test("ums-memory-d6q.3.6/ums-memory-d6q.3.7/ums-memory-d6q.3.9 curriculum_plan_u
         objectiveId: "objective-evidence-required",
         recommendationRank: 2,
       }),
-    /requires at least one evidenceeventid/i,
+    /requires at least one evidenceeventid/i
   );
 
   const created = executeOperation("curriculum_plan_update", {
@@ -2986,7 +3403,7 @@ test("ums-memory-d6q.4.6/ums-memory-d6q.4.7/ums-memory-d6q.4.9 review_schedule_u
         targetId: "rule-guardrail",
         dueAt: "2026-03-08T00:00:00.000Z",
       }),
-    /requires at least one sourceeventid/i,
+    /requires at least one sourceeventid/i
   );
 
   const created = executeOperation("review_schedule_update", {
@@ -3040,7 +3457,7 @@ test("ums-memory-d6q.5.6/ums-memory-d6q.5.7/ums-memory-d6q.5.9 policy_decision_u
         outcome: "deny",
         provenanceEventIds: ["evt-p-1"],
       }),
-    /reasoncodes/i,
+    /reasoncodes/i
   );
   assert.throws(
     () =>
@@ -3051,7 +3468,7 @@ test("ums-memory-d6q.5.6/ums-memory-d6q.5.7/ums-memory-d6q.5.9 policy_decision_u
         outcome: "review",
         reasonCodes: ["needs-review"],
       }),
-    /provenanceeventids/i,
+    /provenanceeventids/i
   );
 
   const reviewed = executeOperation("policy_decision_update", {
@@ -3123,7 +3540,9 @@ test("ums-memory-d6q.2.11 explicit feedback pain-signal ingestion stays first-cl
   assert.equal(created.action, "created");
   assert.equal(replay.action, "noop");
   assert.equal(replay.record.harmfulSignalCount, 1);
-  assert.deepEqual(replay.record.sourceSignalIds, ["sig-explicit-thumbs-down-1"]);
+  assert.deepEqual(replay.record.sourceSignalIds, [
+    "sig-explicit-thumbs-down-1",
+  ]);
   assert.equal(replay.record.metadata.feedbackType, "thumbs-down");
   assert.equal(replay.observability.evidenceCount, 2);
   assert.equal(replay.observability.signalCount, 1);
@@ -3189,7 +3608,10 @@ test("ums-memory-d6q.3.11 curriculum recommendations preserve deterministic rank
     metadata: {
       explanation: {
         summary: "Start with graph fundamentals before optimization.",
-        rationaleSteps: ["use misconception evidence", "prioritize highest-gap objective"],
+        rationaleSteps: [
+          "use misconception evidence",
+          "prioritize highest-gap objective",
+        ],
       },
     },
   };
@@ -3203,8 +3625,12 @@ test("ums-memory-d6q.3.11 curriculum recommendations preserve deterministic rank
     provenanceSignalIds: ["sig-cur-exp-1", "sig-cur-exp-2"],
     metadata: {
       explanation: {
-        summary: "Graph fundamentals are now top priority from evidence-backed ranking.",
-        rationaleSteps: ["collect evidence pointers", "rank by urgency and confidence"],
+        summary:
+          "Graph fundamentals are now top priority from evidence-backed ranking.",
+        rationaleSteps: [
+          "collect evidence pointers",
+          "rank by urgency and confidence",
+        ],
       },
     },
   };
@@ -3222,7 +3648,10 @@ test("ums-memory-d6q.3.11 curriculum recommendations preserve deterministic rank
   assert.equal(promoted.observability.boundedRecommendationRank, 1);
   assert.equal(promoted.observability.evidenceCount, 2);
   assert.equal(promoted.observability.provenanceCount, 2);
-  assert.equal(promoted.planItem.metadata.explanation.summary, "Graph fundamentals are now top priority from evidence-backed ranking.");
+  assert.equal(
+    promoted.planItem.metadata.explanation.summary,
+    "Graph fundamentals are now top priority from evidence-backed ranking."
+  );
   assert.equal(promoted.observability.slo.replaySafe, true);
 
   const deterministicDigest = promoted.planDigest;
@@ -3243,8 +3672,14 @@ test("ums-memory-d6q.4.11 review scheduler keeps interaction-clock and sleep-clo
     dueAt: "2026-03-21T00:00:00.000Z",
     sourceEventIds: ["evt-clock-2", "evt-clock-1"],
     metadata: {
-      interactionClock: { tick: 1, lastInteractionAt: "2026-03-20T23:00:00.000Z" },
-      sleepClock: { window: "nightly", nextConsolidationAt: "2026-03-21T03:00:00.000Z" },
+      interactionClock: {
+        tick: 1,
+        lastInteractionAt: "2026-03-20T23:00:00.000Z",
+      },
+      sleepClock: {
+        window: "nightly",
+        nextConsolidationAt: "2026-03-21T03:00:00.000Z",
+      },
     },
   });
   const replay = executeOperation("review_schedule_update", {
@@ -3254,8 +3689,14 @@ test("ums-memory-d6q.4.11 review scheduler keeps interaction-clock and sleep-clo
     sourceEventIds: ["evt-clock-1", "evt-clock-2"],
     dueAt: "2026-03-21T00:00:00.000Z",
     metadata: {
-      interactionClock: { tick: 1, lastInteractionAt: "2026-03-20T23:00:00.000Z" },
-      sleepClock: { window: "nightly", nextConsolidationAt: "2026-03-21T03:00:00.000Z" },
+      interactionClock: {
+        tick: 1,
+        lastInteractionAt: "2026-03-20T23:00:00.000Z",
+      },
+      sleepClock: {
+        window: "nightly",
+        nextConsolidationAt: "2026-03-21T03:00:00.000Z",
+      },
     },
   });
 
@@ -3321,7 +3762,11 @@ test("ums-memory-d6q.4.12 scheduler preserves bounded active-set and archival-ti
   assert.equal(replay.action, "noop");
   assert.equal(replay.scheduleEntry.metadata.activeSet.limit, 2);
   assert.equal(replay.scheduleEntry.metadata.archive.tier, "warm");
-  assert.deepEqual(replay.scheduleEntry.metadata.archive.tiers, ["hot", "warm", "cold"]);
+  assert.deepEqual(replay.scheduleEntry.metadata.archive.tiers, [
+    "hot",
+    "warm",
+    "cold",
+  ]);
   assert.equal(replay.observability.sourceEventCount, 2);
   assert.equal(replay.observability.slo.replaySafe, true);
 });
@@ -3416,8 +3861,16 @@ test("ums-memory-d6q.5.12 cross-space allowlist payload remains deterministic an
   assert.equal(replay.action, "noop");
   assert.equal(replay.decision.metadata.allowlist.authorized, false);
   assert.equal(replay.observability.denied, true);
-  assert.equal(snapshotProfile("learner-d6q5-12", "tenant-d6q5-12-a").policyDecisions.length, 1);
-  assert.equal(snapshotProfile("learner-d6q5-12", "tenant-d6q5-12-b").policyDecisions.length, 1);
+  assert.equal(
+    snapshotProfile("learner-d6q5-12", "tenant-d6q5-12-a").policyDecisions
+      .length,
+    1
+  );
+  assert.equal(
+    snapshotProfile("learner-d6q5-12", "tenant-d6q5-12-b").policyDecisions
+      .length,
+    1
+  );
 });
 
 test("ums-memory-d6q.5.13 degraded-mode tutoring payload exposes capability flags and replay-safe semantics", () => {
@@ -3479,7 +3932,11 @@ test("ums-memory-d6q.5.14 policy audit/export path preserves traceability checkl
     metadata: {
       audit: {
         decisionTraceId: "trace-audit-001",
-        checklist: ["capture-snapshot", "notify-incident-commander", "prepare-rollback"],
+        checklist: [
+          "capture-snapshot",
+          "notify-incident-commander",
+          "prepare-rollback",
+        ],
       },
     },
   });
@@ -3499,7 +3956,11 @@ test("ums-memory-d6q.5.14 policy audit/export path preserves traceability checkl
   assert.ok(audit.checks.some((check) => check.name === "duplicate_rules"));
   assert.equal(exported.format, "playbook");
   assert.equal(exported.playbook.storeId, "tenant-d6q5-14");
-  assert.equal(snapshotProfile("learner-d6q5-14", "tenant-d6q5-14").policyDecisions[0].metadata.audit.decisionTraceId, "trace-audit-001");
+  assert.equal(
+    snapshotProfile("learner-d6q5-14", "tenant-d6q5-14").policyDecisions[0]
+      .metadata.audit.decisionTraceId,
+    "trace-audit-001"
+  );
 });
 
 test("ums-memory-d6q.2.13 harmful accumulation inverts unstable guidance with accelerated deterministic decay", () => {
@@ -3530,7 +3991,9 @@ test("ums-memory-d6q.2.13 harmful accumulation inverts unstable guidance with ac
     evidenceEventIds: ["evt-h3"],
   });
 
-  const stageThreeAntiPattern = third.record.antiPatterns.find((entry) => entry.threshold === 3);
+  const stageThreeAntiPattern = third.record.antiPatterns.find(
+    (entry) => entry.threshold === 3
+  );
   assert.equal(first.action, "created");
   assert.equal(second.action, "updated");
   assert.equal(third.action, "updated");
@@ -3540,7 +4003,11 @@ test("ums-memory-d6q.2.13 harmful accumulation inverts unstable guidance with ac
   assert.equal(third.record.confidenceDecay.appliedDelta, -0.32);
   assert.equal(third.record.confidence, 0.05);
   assert.ok(stageThreeAntiPattern);
-  assert.deepEqual(stageThreeAntiPattern.evidenceEventIds, ["evt-h1", "evt-h2", "evt-h3"]);
+  assert.deepEqual(stageThreeAntiPattern.evidenceEventIds, [
+    "evt-h1",
+    "evt-h2",
+    "evt-h3",
+  ]);
   assert.equal(third.observability.antiPatternCount >= 2, true);
   assert.equal(third.observability.antiPatternEvidenceCount, 3);
   assert.equal(replay.action, "noop");
@@ -3598,14 +4065,27 @@ test("ums-memory-d6q.2.14 context recall exposes bounded deterministic misconcep
   assert.equal(bounded.misconceptionChronology.bounded, true);
   assert.equal(Array.isArray(bounded.misconceptionChronology.formatting), true);
   assert.equal(full.misconceptionChronology.notes.length >= 2, true);
-  assert.equal(full.misconceptionChronology.notes.every((note) => note.misconceptionKey === "unsafe-pointer-cast"), true);
-  for (let index = 1; index < full.misconceptionChronology.notes.length; index += 1) {
+  assert.equal(
+    full.misconceptionChronology.notes.every(
+      (note) => note.misconceptionKey === "unsafe-pointer-cast"
+    ),
+    true
+  );
+  for (
+    let index = 1;
+    index < full.misconceptionChronology.notes.length;
+    index += 1
+  ) {
     assert.equal(
-      full.misconceptionChronology.notes[index - 1].timestamp <= full.misconceptionChronology.notes[index].timestamp,
-      true,
+      full.misconceptionChronology.notes[index - 1].timestamp <=
+        full.misconceptionChronology.notes[index].timestamp,
+      true
     );
   }
-  assert.deepEqual(replay.misconceptionChronology, full.misconceptionChronology);
+  assert.deepEqual(
+    replay.misconceptionChronology,
+    full.misconceptionChronology
+  );
 });
 
 test("ums-memory-d6q.3.12 curriculum recommendations include deterministic freshness and decay warnings with configurable thresholds", () => {
@@ -3641,10 +4121,16 @@ test("ums-memory-d6q.3.12 curriculum recommendations include deterministic fresh
   assert.equal(result.recommendationCount, 1);
   assert.equal(result.recommendations[0].freshness.stale, true);
   assert.equal(result.recommendations[0].freshness.decayed, true);
-  assert.deepEqual(result.recommendations[0].freshness.warningCodes, ["decay_warning", "freshness_warning"]);
+  assert.deepEqual(result.recommendations[0].freshness.warningCodes, [
+    "decay_warning",
+    "freshness_warning",
+  ]);
   assert.equal(result.recommendations[0].freshness.freshnessWarningDays, 14);
   assert.equal(result.recommendations[0].freshness.decayWarningDays, 30);
-  assert.deepEqual(replay.recommendations[0].freshness, result.recommendations[0].freshness);
+  assert.deepEqual(
+    replay.recommendations[0].freshness,
+    result.recommendations[0].freshness
+  );
 });
 
 test("ums-memory-d6q.3.13 curriculum recommendations expose conflict chronology notes in deterministic order and profile scope", () => {
@@ -3699,8 +4185,14 @@ test("ums-memory-d6q.3.13 curriculum recommendations expose conflict chronology 
   const notes = recommendation.conflictChronology.notes;
 
   assert.equal(notes.length >= 2, true);
-  assert.equal(notes.every((note) => note.profileId === created.planItem.profileId), true);
-  assert.equal(notes.some((note) => note.objectiveId === "objective-foreign-scope"), false);
+  assert.equal(
+    notes.every((note) => note.profileId === created.planItem.profileId),
+    true
+  );
+  assert.equal(
+    notes.some((note) => note.objectiveId === "objective-foreign-scope"),
+    false
+  );
   for (let index = 1; index < notes.length; index += 1) {
     assert.equal(notes[index - 1].timestamp <= notes[index].timestamp, true);
   }
@@ -3778,8 +4270,14 @@ test("ums-memory-d6q.3.14 curriculum ranking blends interest and mastery weights
     },
   });
 
-  assert.equal(interestHeavy.recommendations[0].objectiveId, "objective-interest-graphs");
-  assert.equal(masteryHeavy.recommendations[0].objectiveId, "objective-mastery-gap");
+  assert.equal(
+    interestHeavy.recommendations[0].objectiveId,
+    "objective-interest-graphs"
+  );
+  assert.equal(
+    masteryHeavy.recommendations[0].objectiveId,
+    "objective-mastery-gap"
+  );
   assert.equal(budgetBounded.recommendationCount <= 2, true);
   assert.equal(budgetBounded.observability.tokensConsumed <= 30, true);
   assert.equal(budgetBounded.observability.boundedByTokenBudget, true);
@@ -3800,7 +4298,10 @@ test("ums-memory-d6q.4.13 scheduler consolidates deterministically when novelty-
   assert.equal(tick.consolidationCause, "novelty_write_threshold");
   assert.equal(tick.clocks.noveltyWriteLoad, 0);
   assert.equal(tick.clocks.lastConsolidationCause, "novelty_write_threshold");
-  assert.equal(tick.observability.consolidationCause, "novelty_write_threshold");
+  assert.equal(
+    tick.observability.consolidationCause,
+    "novelty_write_threshold"
+  );
   assert.equal(tick.observability.fatigueThreshold, 100);
   assert.equal(tick.observability.noveltyWriteThreshold, 3);
 });
@@ -3831,16 +4332,23 @@ test("ums-memory-hpl.8 review_schedule_clock applies deterministic candidate con
 
   const first = executeOperation("review_schedule_clock", request);
   const firstSnapshot = snapshotProfile(profile, storeId);
-  const firstCandidate = firstSnapshot.shadowCandidates.find((entry) => entry.candidateId === candidateId);
+  const firstCandidate = firstSnapshot.shadowCandidates.find(
+    (entry) => entry.candidateId === candidateId
+  );
   const second = executeOperation("review_schedule_clock", request);
   const secondSnapshot = snapshotProfile(profile, storeId);
-  const secondCandidate = secondSnapshot.shadowCandidates.find((entry) => entry.candidateId === candidateId);
-  const expectedConfidence = Math.round(Math.max(0.05, 0.8 * 0.99 ** 10) * 1_000_000) / 1_000_000;
+  const secondCandidate = secondSnapshot.shadowCandidates.find(
+    (entry) => entry.candidateId === candidateId
+  );
+  const expectedConfidence =
+    Math.round(Math.max(0.05, 0.8 * 0.99 ** 10) * 1_000_000) / 1_000_000;
 
   assert.ok(firstCandidate);
   assert.equal(first.candidateMaintenance.decayAppliedCount, 1);
   assert.equal(first.candidateMaintenance.decayCursorAdvancedCount, 1);
-  assert.deepEqual(first.candidateMaintenance.decayedCandidateIds, [candidateId]);
+  assert.deepEqual(first.candidateMaintenance.decayedCandidateIds, [
+    candidateId,
+  ]);
   assert.equal(first.candidateMaintenance.demotedCount, 0);
   assert.equal(first.observability.candidateMaintenance.decayAppliedCount, 1);
   assert.equal(firstCandidate.confidence, expectedConfidence);
@@ -3864,7 +4372,8 @@ test("ums-memory-hpl.8 review_schedule_clock demotes expired candidates with exp
   const shadow = executeOperation("shadow_write", {
     storeId,
     profile,
-    statement: "Expired candidates should be demoted and retained for auditability.",
+    statement:
+      "Expired candidates should be demoted and retained for auditability.",
     confidence: 0.7,
     sourceEventIds: ["evt-hpl8-expiry-1"],
     evidenceEventIds: ["evt-hpl8-expiry-1"],
@@ -3885,12 +4394,18 @@ test("ums-memory-hpl.8 review_schedule_clock demotes expired candidates with exp
   const first = executeOperation("review_schedule_clock", request);
   const second = executeOperation("review_schedule_clock", request);
   const snapshot = snapshotProfile(profile, storeId);
-  const candidate = snapshot.shadowCandidates.find((entry) => entry.candidateId === candidateId);
+  const candidate = snapshot.shadowCandidates.find(
+    (entry) => entry.candidateId === candidateId
+  );
 
   assert.equal(first.candidateMaintenance.expiredCount, 1);
   assert.equal(first.candidateMaintenance.demotedCount, 1);
-  assert.deepEqual(first.candidateMaintenance.reasonCodes, ["candidate_expired"]);
-  assert.deepEqual(first.candidateMaintenance.demotedCandidateIds, [candidateId]);
+  assert.deepEqual(first.candidateMaintenance.reasonCodes, [
+    "candidate_expired",
+  ]);
+  assert.deepEqual(first.candidateMaintenance.demotedCandidateIds, [
+    candidateId,
+  ]);
   assert.equal(first.observability.candidateMaintenance.demotedCount, 1);
 
   assert.ok(candidate);
@@ -3910,7 +4425,8 @@ test("ums-memory-hpl.8 review_schedule_clock does not expire promoted candidates
   const shadow = executeOperation("shadow_write", {
     storeId,
     profile,
-    statement: "Promoted rules should not be auto-demoted by shadow expiry maintenance.",
+    statement:
+      "Promoted rules should not be auto-demoted by shadow expiry maintenance.",
     confidence: 0.72,
     sourceEventIds: ["evt-hpl8-promoted-1"],
     evidenceEventIds: ["evt-hpl8-promoted-1"],
@@ -3943,7 +4459,9 @@ test("ums-memory-hpl.8 review_schedule_clock does not expire promoted candidates
     timestamp: "2026-02-01T00:00:00.000Z",
   });
   const snapshot = snapshotProfile(profile, storeId);
-  const candidate = snapshot.shadowCandidates.find((entry) => entry.candidateId === candidateId);
+  const candidate = snapshot.shadowCandidates.find(
+    (entry) => entry.candidateId === candidateId
+  );
   const rule = snapshot.rules.find((entry) => entry.ruleId === ruleId);
 
   assert.equal(tick.candidateMaintenance.demotedCount, 0);

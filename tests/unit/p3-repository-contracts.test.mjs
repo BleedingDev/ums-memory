@@ -8,8 +8,8 @@ import {
   IdentityGraphRelationKind,
   ProceduralEntryStatus,
   WorkingMemoryKind,
-} from "../../libs/shared/src/entities.js";
-import { ErrorCode } from "../../libs/shared/src/errors.js";
+} from "../../libs/shared/src/entities.ts";
+import { ErrorCode } from "../../libs/shared/src/errors.ts";
 import {
   InMemoryIdentityGraphRepository,
   InMemoryKeywordIndex,
@@ -19,7 +19,7 @@ import {
   assertMemoryIndexContract,
   assertProceduralRepositoryContract,
   assertWorkingMemoryRepositoryContract,
-} from "../../libs/shared/src/repositories.js";
+} from "../../libs/shared/src/repositories.ts";
 
 test("ums-memory-d6q.2.3: misconception identity-edge contracts and upserts are deterministic", () => {
   const repository = new InMemoryIdentityGraphRepository();
@@ -33,7 +33,8 @@ test("ums-memory-d6q.2.3: misconception identity-edge contracts and upserts are 
         listEdges() {},
       }),
     (error) =>
-      error?.code === ErrorCode.CONTRACT_VIOLATION && error?.details?.missingMethod === "countEdges",
+      error?.code === ErrorCode.CONTRACT_VIOLATION &&
+      error?.details?.missingMethod === "countEdges"
   );
 
   const base = {
@@ -97,11 +98,14 @@ test("ums-memory-d6q.3.3: curriculum repositories and index ranking remain idemp
       createdAt: "2026-03-01T01:00:00.000Z",
       updatedAt: "2026-03-01T01:00:00.000Z",
       lastValidatedAt: "2026-03-01T01:00:00.000Z",
-    }),
+    })
   );
 
   const orderedRules = procedural.listRules("tenant-curriculum");
-  assert.deepEqual(orderedRules.map((rule) => rule.id), [secondRule.id, firstRule.id]);
+  assert.deepEqual(
+    orderedRules.map((rule) => rule.id),
+    [secondRule.id, firstRule.id]
+  );
 
   index.upsert({
     id: firstRule.id,
@@ -160,13 +164,13 @@ test("ums-memory-d6q.4.3: spaced-repetition working-memory repository behavior i
   assert.equal(working.countEntries("tenant-review"), 2);
   assert.deepEqual(
     working.listEntries("tenant-review").map((entry) => entry.id),
-    [diaryEntry.id, digestEntry.id],
+    [diaryEntry.id, digestEntry.id]
   );
   assert.deepEqual(
     working
       .listEntries("tenant-review", { kind: WorkingMemoryKind.DIGEST })
       .map((entry) => entry.id),
-    [digestEntry.id],
+    [digestEntry.id]
   );
 
   index.upsert({
@@ -177,7 +181,10 @@ test("ums-memory-d6q.4.3: spaced-repetition working-memory repository behavior i
     tags: ["review", "diary"],
     createdAt: diaryEntry.createdAt,
   });
-  const recall = index.search({ spaceId: "tenant-review", query: "spaced drills" });
+  const recall = index.search({
+    spaceId: "tenant-review",
+    query: "spaced drills",
+  });
   assert.equal(recall[0]?.id, diaryEntry.id);
 });
 
@@ -210,11 +217,11 @@ test("ums-memory-d6q.5.3: policy repository rules keep tombstone visibility dete
 
   assert.deepEqual(
     procedural.listRules("tenant-policy").map((rule) => rule.id),
-    [activeRule.id],
+    [activeRule.id]
   );
   assert.equal(
     procedural.listRules("tenant-policy", { includeTombstoned: true }).length,
-    2,
+    2
   );
 
   const antiPattern = createAntiPattern({

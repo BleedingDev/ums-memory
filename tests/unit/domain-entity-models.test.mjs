@@ -6,8 +6,11 @@ import {
   ProceduralEntryStatus,
   WorkingMemoryKind,
   createProceduralRule,
-} from "../../libs/shared/src/entities.js";
-import { ProceduralMemoryModel, WorkingMemoryModel } from "../../libs/shared/src/memory-models.js";
+} from "../../libs/shared/src/entities.ts";
+import {
+  ProceduralMemoryModel,
+  WorkingMemoryModel,
+} from "../../libs/shared/src/memory-models.ts";
 
 const workingModel = new WorkingMemoryModel();
 const proceduralModel = new ProceduralMemoryModel();
@@ -19,15 +22,27 @@ test("ums-memory-d6q.4.2: diary creation is deterministic for spaced-repetition 
     { id: "ep-a", type: "note", content: "First observation" },
   ];
 
-  const diaryA = workingModel.buildDiary({ spaceId: "tenant-a", episodes, now });
-  const diaryB = workingModel.buildDiary({ spaceId: "tenant-a", episodes: [...episodes].reverse(), now });
+  const diaryA = workingModel.buildDiary({
+    spaceId: "tenant-a",
+    episodes,
+    now,
+  });
+  const diaryB = workingModel.buildDiary({
+    spaceId: "tenant-a",
+    episodes: [...episodes].reverse(),
+    now,
+  });
 
   assert.equal(diaryA.kind, WorkingMemoryKind.DIARY);
   assert.deepEqual(diaryA.evidenceEpisodeIds, ["ep-a", "ep-b"]);
   assert.equal(diaryA.metadata.episodeCount, episodes.length);
   assert.match(diaryA.content, /\[error\]/i);
   assert.match(diaryA.content, /\[note\]/i);
-  assert.equal(diaryA.id, diaryB.id, "IDs remain stable even when episode order changes");
+  assert.equal(
+    diaryA.id,
+    diaryB.id,
+    "IDs remain stable even when episode order changes"
+  );
 });
 
 test("ums-memory-d6q.4.2: digest creation captures sorted type metadata for review planners", () => {
@@ -38,7 +53,11 @@ test("ums-memory-d6q.4.2: digest creation captures sorted type metadata for revi
     { id: "ep-note-2", type: "note", content: "Follow up" },
   ];
 
-  const digest = workingModel.buildDigest({ spaceId: "tenant-a", episodes, now });
+  const digest = workingModel.buildDigest({
+    spaceId: "tenant-a",
+    episodes,
+    now,
+  });
 
   assert.equal(digest.kind, WorkingMemoryKind.DIGEST);
   assert.equal(digest.metadata.episodeCount, episodes.length);

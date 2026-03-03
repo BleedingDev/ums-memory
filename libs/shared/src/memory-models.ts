@@ -4,10 +4,35 @@ import {
   createWorkingMemoryEntry,
   ProceduralEntryStatus,
   WorkingMemoryKind,
-} from "./entities.js";
-import { clamp, deterministicId, toIsoTimestamp } from "./utils.js";
+} from "./entities.ts";
+import { clamp, deterministicId, toIsoTimestamp } from "./utils.ts";
 
-function summarizeEpisodes(episodes) {
+interface EpisodeLike {
+  id: string;
+  type: string;
+  content: string;
+}
+
+interface BuildWorkingMemoryInput {
+  spaceId: string;
+  episodes: EpisodeLike[];
+  now: unknown;
+}
+
+type ProceduralRuleType = ReturnType<typeof createProceduralRule>;
+type ProceduralCandidate = Partial<ProceduralRuleType> &
+  Record<string, unknown>;
+interface ReinforcementInput {
+  helpful?: number;
+  harmful?: number;
+  now: unknown;
+}
+interface RuleUpdateInput {
+  now: unknown;
+  reason?: unknown;
+}
+
+function summarizeEpisodes(episodes: EpisodeLike[]): string {
   return episodes
     .map((episode) => `[${episode.type}] ${episode.content}`.trim())
     .filter(Boolean)
@@ -16,10 +41,15 @@ function summarizeEpisodes(episodes) {
 }
 
 export class WorkingMemoryModel {
-  buildDiary({ spaceId, episodes, now }) {
+  buildDiary({
+    spaceId,
+    episodes,
+    now,
+  }: BuildWorkingMemoryInput): ReturnType<typeof createWorkingMemoryEntry> {
     const createdAt = toIsoTimestamp(now);
     const evidenceEpisodeIds = episodes.map((episode) => episode.id).sort();
-    const content = summarizeEpisodes(episodes) || "No episodic data available.";
+    const content =
+      summarizeEpisodes(episodes) || "No episodic data available.";
 
     return createWorkingMemoryEntry({
       id: deterministicId("wm_diary", {
@@ -38,10 +68,16 @@ export class WorkingMemoryModel {
     });
   }
 
-  buildDigest({ spaceId, episodes, now }) {
+  buildDigest({
+    spaceId,
+    episodes,
+    now,
+  }: BuildWorkingMemoryInput): ReturnType<typeof createWorkingMemoryEntry> {
     const createdAt = toIsoTimestamp(now);
     const evidenceEpisodeIds = episodes.map((episode) => episode.id).sort();
-    const uniqueTypes = Array.from(new Set(episodes.map((episode) => episode.type))).sort();
+    const uniqueTypes = [
+      ...new Set(episodes.map((episode) => episode.type)),
+    ].sort();
     const content = `Digest: ${episodes.length} episodes, types=${uniqueTypes.join(", ") || "none"}`;
 
     return createWorkingMemoryEntry({
@@ -64,7 +100,10 @@ export class WorkingMemoryModel {
 }
 
 export class ProceduralMemoryModel {
-  promoteCandidate(candidate, now) {
+  promoteCandidate(
+    candidate: ProceduralCandidate,
+    now: unknown
+  ): ReturnType<typeof createProceduralRule> {
     return createProceduralRule({
       ...candidate,
       createdAt: candidate.createdAt ?? now,
@@ -74,11 +113,16 @@ export class ProceduralMemoryModel {
     });
   }
 
-  reinforceRule(rule, { helpful = 0, harmful = 0, now }) {
+  reinforceRule(
+    rule: ProceduralRuleType,
+    { helpful = 0, harmful = 0, now }: ReinforcementInput
+  ): ReturnType<typeof createProceduralRule> {
     const delta = helpful * 0.08 - harmful * 0.18;
     const confidence = clamp(rule.confidence + delta, 0, 1);
     const nextStatus =
-      confidence <= 0.05 ? ProceduralEntryStatus.TOMBSTONED : ProceduralEntryStatus.ACTIVE;
+      confidence <= 0.05
+        ? ProceduralEntryStatus.TOMBSTONED
+        : ProceduralEntryStatus.ACTIVE;
 
     return createProceduralRule({
       ...rule,
@@ -89,20 +133,26 @@ export class ProceduralMemoryModel {
     });
   }
 
-  tombstoneRule(rule, { now, reason }) {
+  tombstoneRule(
+    rule: ProceduralRuleType,
+    { now, reason }: RuleUpdateInput
+  ): ReturnType<typeof createProceduralRule> {
     return createProceduralRule({
       ...rule,
       status: ProceduralEntryStatus.TOMBSTONED,
       updatedAt: now,
       metadata: {
-        ...(rule.metadata ?? {}),
+        ...rule.metadata,
         tombstoneReason: reason ?? "manual",
         tombstonedAt: toIsoTimestamp(now),
       },
     });
   }
 
-  invertRuleToAntiPattern(rule, { now, reason }) {
+  invertRuleToAntiPattern(
+    rule: ProceduralRuleType,
+    { now, reason }: RuleUpdateInput
+  ): ReturnType<typeof createAntiPattern> {
     return createAntiPattern({
       id: deterministicId("anti", {
         sourceRuleId: rule.id,

@@ -3,8 +3,58 @@ import {
   IsolationViolationError,
   PayloadLimitError,
   ValidationError,
-} from "./errors.js";
-import { asSortedUniqueStrings, deepFreeze, stableStringify } from "./utils.js";
+} from "./errors.ts";
+import { asSortedUniqueStrings, deepFreeze, stableStringify } from "./utils.ts";
+
+export interface GuardrailConfig {
+  maxPayloadBytes: number;
+  maxRecallBytes: number;
+  maxRecallItems: number;
+  maxWorkingEpisodeWindow: number;
+  allowCrossSpaceRead: boolean;
+}
+
+type GuardrailOverrides = Partial<Record<keyof GuardrailConfig, unknown>>;
+
+interface SpaceIsolationInput {
+  requestedSpaceId: string;
+  resourceSpaceId: string;
+  allowSpaceIds?: unknown;
+}
+
+interface AllowedSpacesInput {
+  requestedSpaceId: string;
+  targetSpaceIds: unknown;
+  allowSpaceIds?: unknown;
+  allowCrossSpaceRead?: boolean;
+}
+
+interface RecallPackLike {
+  [key: string]: unknown;
+  topRules?: unknown[];
+  antiPatterns?: unknown[];
+  evidencePointers?: unknown[];
+  freshnessWarnings?: unknown[];
+  conflictNotes?: unknown[];
+  truncated?: unknown;
+}
+
+type MutableRecallPack = Omit<
+  RecallPackLike,
+  | "topRules"
+  | "antiPatterns"
+  | "evidencePointers"
+  | "freshnessWarnings"
+  | "conflictNotes"
+  | "truncated"
+> & {
+  topRules: unknown[];
+  antiPatterns: unknown[];
+  evidencePointers: unknown[];
+  freshnessWarnings: unknown[];
+  conflictNotes: unknown[];
+  truncated: boolean;
+};
 
 export const DEFAULT_GUARDRAILS = Object.freeze({
   maxPayloadBytes: 16 * 1024,
@@ -12,9 +62,9 @@ export const DEFAULT_GUARDRAILS = Object.freeze({
   maxRecallItems: 16,
   maxWorkingEpisodeWindow: 8,
   allowCrossSpaceRead: false,
-});
+} as const);
 
-function toPositiveInteger(value, fallback) {
+function toPositiveInteger(value: unknown, fallback: number): number {
   const parsed = Number(value);
   if (!Number.isFinite(parsed) || parsed <= 0) {
     return fallback;
@@ -22,14 +72,25 @@ function toPositiveInteger(value, fallback) {
   return Math.floor(parsed);
 }
 
-export function createGuardrailConfig(overrides = {}) {
+export function createGuardrailConfig(
+  overrides: GuardrailOverrides = {}
+): Readonly<GuardrailConfig> {
   return Object.freeze({
-    maxPayloadBytes: toPositiveInteger(overrides.maxPayloadBytes, DEFAULT_GUARDRAILS.maxPayloadBytes),
-    maxRecallBytes: toPositiveInteger(overrides.maxRecallBytes, DEFAULT_GUARDRAILS.maxRecallBytes),
-    maxRecallItems: toPositiveInteger(overrides.maxRecallItems, DEFAULT_GUARDRAILS.maxRecallItems),
+    maxPayloadBytes: toPositiveInteger(
+      overrides.maxPayloadBytes,
+      DEFAULT_GUARDRAILS.maxPayloadBytes
+    ),
+    maxRecallBytes: toPositiveInteger(
+      overrides.maxRecallBytes,
+      DEFAULT_GUARDRAILS.maxRecallBytes
+    ),
+    maxRecallItems: toPositiveInteger(
+      overrides.maxRecallItems,
+      DEFAULT_GUARDRAILS.maxRecallItems
+    ),
     maxWorkingEpisodeWindow: toPositiveInteger(
       overrides.maxWorkingEpisodeWindow,
-      DEFAULT_GUARDRAILS.maxWorkingEpisodeWindow,
+      DEFAULT_GUARDRAILS.maxWorkingEpisodeWindow
     ),
     allowCrossSpaceRead:
       typeof overrides.allowCrossSpaceRead === "boolean"
@@ -38,11 +99,15 @@ export function createGuardrailConfig(overrides = {}) {
   });
 }
 
-export function estimatePayloadBytes(value) {
+export function estimatePayloadBytes(value: unknown): number {
   return Buffer.byteLength(stableStringify(value), "utf8");
 }
 
-export function enforceBoundedPayload(payload, limitBytes, context = "payload") {
+export function enforceBoundedPayload(
+  payload: unknown,
+  limitBytes: number,
+  context = "payload"
+): number {
   const bytes = estimatePayloadBytes(payload);
   if (bytes > limitBytes) {
     throw new PayloadLimitError(`${context} exceeds byte budget`, {
@@ -54,7 +119,10 @@ export function enforceBoundedPayload(payload, limitBytes, context = "payload") 
   return bytes;
 }
 
-export function enforceEvidenceRequirement(candidate, fieldName = "evidenceEpisodeIds") {
+export function enforceEvidenceRequirement(
+  candidate: Record<string, unknown> | null | undefined,
+  fieldName = "evidenceEpisodeIds"
+): string[] {
   const evidenceIds = asSortedUniqueStrings(candidate?.[fieldName]);
   if (evidenceIds.length === 0) {
     throw new EvidenceRequiredError("evidence requirement violated", {
@@ -65,7 +133,11 @@ export function enforceEvidenceRequirement(candidate, fieldName = "evidenceEpiso
   return evidenceIds;
 }
 
-export function enforceIsolation({ requestedSpaceId, resourceSpaceId, allowSpaceIds = [] }) {
+export function enforceIsolation({
+  requestedSpaceId,
+  resourceSpaceId,
+  allowSpaceIds = [],
+}: SpaceIsolationInput): true {
   if (requestedSpaceId === resourceSpaceId) {
     return true;
   }
@@ -85,7 +157,7 @@ export function enforceAllowedSpaces({
   targetSpaceIds,
   allowSpaceIds = [],
   allowCrossSpaceRead = false,
-}) {
+}: AllowedSpacesInput): string[] {
   const normalizedTargets = asSortedUniqueStrings(targetSpaceIds);
   if (normalizedTargets.length === 0) {
     throw new ValidationError("targetSpaceIds must contain at least one space");
@@ -93,14 +165,18 @@ export function enforceAllowedSpaces({
 
   for (const targetSpaceId of normalizedTargets) {
     if (!allowCrossSpaceRead) {
-      enforceIsolation({ requestedSpaceId, resourceSpaceId: targetSpaceId, allowSpaceIds });
+      enforceIsolation({
+        requestedSpaceId,
+        resourceSpaceId: targetSpaceId,
+        allowSpaceIds,
+      });
     }
   }
 
   return normalizedTargets;
 }
 
-export function countRecallPackItems(pack) {
+export function countRecallPackItems(pack: RecallPackLike): number {
   return (
     (pack.topRules?.length ?? 0) +
     (pack.antiPatterns?.length ?? 0) +
@@ -108,7 +184,7 @@ export function countRecallPackItems(pack) {
   );
 }
 
-function removeOnePackItem(pack) {
+function removeOnePackItem(pack: MutableRecallPack): boolean {
   if (pack.evidencePointers.length > 0) {
     pack.evidencePointers.pop();
     return true;
@@ -124,8 +200,11 @@ function removeOnePackItem(pack) {
   return false;
 }
 
-export function truncateRecallPack(pack, { maxItems, maxBytes }) {
-  const boundedPack = {
+export function truncateRecallPack(
+  pack: RecallPackLike,
+  { maxItems, maxBytes }: { maxItems: number; maxBytes: number }
+): Readonly<MutableRecallPack> {
+  const boundedPack: MutableRecallPack = {
     ...pack,
     topRules: [...(pack.topRules ?? [])],
     antiPatterns: [...(pack.antiPatterns ?? [])],

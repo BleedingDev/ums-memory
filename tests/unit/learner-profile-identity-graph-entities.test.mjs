@@ -9,8 +9,8 @@ import {
   IdentityGraphRelationKind,
   isLearnerProfileActive,
   LearnerProfileStatus,
-} from "../../libs/shared/src/entities.js";
-import { ErrorCode } from "../../libs/shared/src/errors.js";
+} from "../../libs/shared/src/entities.ts";
+import { ErrorCode } from "../../libs/shared/src/errors.ts";
 
 test("createLearnerProfile enforces canonical identity normalization and deterministic IDs", () => {
   const createdAt = "2026-02-28T00:00:00.000Z";
@@ -43,7 +43,10 @@ test("createLearnerProfile enforces canonical identity normalization and determi
   assert.equal(left.displayName, "Learner");
   assert.equal(left.identityRefs.length, 2);
   assert.deepEqual(left.goals, ["dynamic programming", "graph traversal"]);
-  assert.equal(left.identityRefs.filter((identityRef) => identityRef.isPrimary).length, 1);
+  assert.equal(
+    left.identityRefs.filter((identityRef) => identityRef.isPrimary).length,
+    1
+  );
 });
 
 test("createLearnerProfile rejects missing identity references", () => {
@@ -54,7 +57,7 @@ test("createLearnerProfile rejects missing identity references", () => {
         learnerId: "learner-42",
         identityRefs: [],
       }),
-    (error) => error?.code === ErrorCode.IDENTITY_INVARIANT,
+    (error) => error?.code === ErrorCode.IDENTITY_INVARIANT
   );
 });
 
@@ -68,7 +71,7 @@ test("createLearnerProfile rejects impossible timestamp ordering", () => {
         createdAt: "2026-02-28T00:00:00.000Z",
         updatedAt: "2026-02-27T23:59:59.000Z",
       }),
-    (error) => error?.code === ErrorCode.IDENTITY_INVARIANT,
+    (error) => error?.code === ErrorCode.IDENTITY_INVARIANT
   );
 });
 
@@ -82,7 +85,7 @@ test("createIdentityGraphEdge requires evidence for misconception relations", ()
         fromRef: { namespace: "misconception", value: "loop-off-by-one" },
         toRef: { namespace: "learner", value: "learner-42" },
       }),
-    (error) => error?.code === ErrorCode.EVIDENCE_REQUIRED,
+    (error) => error?.code === ErrorCode.EVIDENCE_REQUIRED
   );
 });
 
@@ -101,7 +104,7 @@ test("identity graph edge helpers enforce space boundaries", () => {
   assert.doesNotThrow(() => assertIdentityEdgeInSpace(edge, "tenant-a"));
   assert.throws(
     () => assertIdentityEdgeInSpace(edge, "tenant-b"),
-    (error) => error?.code === ErrorCode.ISOLATION_VIOLATION,
+    (error) => error?.code === ErrorCode.ISOLATION_VIOLATION
   );
 });
 
@@ -119,6 +122,6 @@ test("learner profile helpers capture link and lifecycle invariants", () => {
       ...profile,
       status: LearnerProfileStatus.ARCHIVED,
     }),
-    false,
+    false
   );
 });

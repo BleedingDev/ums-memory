@@ -2,17 +2,17 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  IdentityGraphRelationKind,
+  LearnerProfileStatus,
+} from "../../libs/shared/src/entities.ts";
+import {
   InMemoryIdentityGraphRepository,
   InMemoryKeywordIndex,
   InMemoryLearnerProfileRepository,
   assertIdentityGraphRepositoryContract,
   assertLearnerProfileRepositoryContract,
   assertMemoryIndexContract,
-} from "../../libs/shared/src/repositories.js";
-import {
-  IdentityGraphRelationKind,
-  LearnerProfileStatus,
-} from "../../libs/shared/src/entities.js";
+} from "../../libs/shared/src/repositories.ts";
 
 test("memory index contract enforces upsert and search methods", () => {
   const fixture = new InMemoryKeywordIndex();
@@ -22,7 +22,8 @@ test("memory index contract enforces upsert and search methods", () => {
   assert.throws(
     () => assertMemoryIndexContract({ upsert() {} }),
     (error) =>
-      /contract violation/i.test(error?.message ?? "") && error?.details?.missingMethod === "search",
+      /contract violation/i.test(error?.message ?? "") &&
+      error?.details?.missingMethod === "search"
   );
 });
 
@@ -30,9 +31,14 @@ test("learner profile repository contract enforces required methods", () => {
   const fixture = new InMemoryLearnerProfileRepository();
   assert.doesNotThrow(() => assertLearnerProfileRepositoryContract(fixture));
   assert.throws(
-    () => assertLearnerProfileRepositoryContract({ upsertProfile() {}, getProfileById() {} }),
+    () =>
+      assertLearnerProfileRepositoryContract({
+        upsertProfile() {},
+        getProfileById() {},
+      }),
     (error) =>
-      error?.details?.missingMethod === "listProfiles" && /contract violation/i.test(error.message),
+      error?.details?.missingMethod === "listProfiles" &&
+      /contract violation/i.test(error.message)
   );
 });
 
@@ -84,8 +90,10 @@ test("identity graph repository contract and deterministic edge indexing", () =>
   assert.deepEqual(second.evidenceEpisodeIds, ["ep-1", "ep-2"]);
   assert.equal(repository.countEdges("tenant-a"), 1);
   assert.equal(
-    repository.listEdges("tenant-a", { relation: IdentityGraphRelationKind.MISCONCEPTION_OF }).length,
-    1,
+    repository.listEdges("tenant-a", {
+      relation: IdentityGraphRelationKind.MISCONCEPTION_OF,
+    }).length,
+    1
   );
   assert.equal(repository.listEdges("tenant-b").length, 0);
 });

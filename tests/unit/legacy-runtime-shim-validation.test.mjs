@@ -4,21 +4,24 @@ import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import test from "node:test";
 
-import { main, validateLegacyRuntimeShims } from "../../scripts/validate-legacy-runtime-shims.mjs";
+import {
+  main,
+  validateLegacyRuntimeShims,
+} from "../../scripts/validate-legacy-runtime-shims.mjs";
 
 const INVENTORY_SCHEMA_VERSION = "legacy_runtime_shim_inventory.v1";
 const FOLLOW_UP = "ums-memory-n4m.6";
 
 const BASE_ENTRIES = Object.freeze([
   Object.freeze({
-    path: "apps/api/src/server.mjs",
+    path: "apps/api/src/core.mjs",
     kind: "runtime_entrypoint",
     followUpBeadId: FOLLOW_UP,
     notes: "shim",
   }),
   Object.freeze({
-    path: "libs/shared/src/errors.js",
-    kind: "legacy_shared_contract",
+    path: "apps/api/src/server.mjs",
+    kind: "runtime_entrypoint",
     followUpBeadId: FOLLOW_UP,
     notes: "shim",
   }),
@@ -31,25 +34,33 @@ async function writeShimFile(projectRoot, relativePath) {
 }
 
 async function writeInventory(projectRoot, entries) {
-  const inventoryPath = resolve(projectRoot, "docs/migration/legacy-runtime-shim-inventory.v1.json");
+  const inventoryPath = resolve(
+    projectRoot,
+    "docs/migration/legacy-runtime-shim-inventory.v1.json"
+  );
   await mkdir(resolve(inventoryPath, ".."), { recursive: true });
   await writeFile(
     inventoryPath,
     `${JSON.stringify({ schemaVersion: INVENTORY_SCHEMA_VERSION, entries }, null, 2)}\n`,
-    "utf8",
+    "utf8"
   );
   return inventoryPath;
 }
 
 test("legacy runtime shim validation passes when inventory and filesystem match", async () => {
-  const projectRoot = await mkdtemp(resolve(tmpdir(), "legacy-shim-validation-pass-"));
+  const projectRoot = await mkdtemp(
+    resolve(tmpdir(), "legacy-shim-validation-pass-")
+  );
 
   try {
     for (const entry of BASE_ENTRIES) {
       await writeShimFile(projectRoot, entry.path);
     }
     const inventoryPath = await writeInventory(projectRoot, BASE_ENTRIES);
-    const result = await validateLegacyRuntimeShims({ projectRoot, inventoryPath });
+    const result = await validateLegacyRuntimeShims({
+      projectRoot,
+      inventoryPath,
+    });
 
     assert.equal(result.ok, true);
     assert.equal(result.expectedCount, 2);
@@ -63,7 +74,9 @@ test("legacy runtime shim validation passes when inventory and filesystem match"
 });
 
 test("legacy runtime shim validation detects runtime shims missing from inventory", async () => {
-  const projectRoot = await mkdtemp(resolve(tmpdir(), "legacy-shim-validation-missing-inventory-"));
+  const projectRoot = await mkdtemp(
+    resolve(tmpdir(), "legacy-shim-validation-missing-inventory-")
+  );
 
   try {
     for (const entry of BASE_ENTRIES) {
@@ -71,7 +84,10 @@ test("legacy runtime shim validation detects runtime shims missing from inventor
     }
     await writeShimFile(projectRoot, "apps/cli/src/index.mjs");
     const inventoryPath = await writeInventory(projectRoot, BASE_ENTRIES);
-    const result = await validateLegacyRuntimeShims({ projectRoot, inventoryPath });
+    const result = await validateLegacyRuntimeShims({
+      projectRoot,
+      inventoryPath,
+    });
 
     assert.equal(result.ok, false);
     assert.deepEqual(result.missingFromInventory, ["apps/cli/src/index.mjs"]);
@@ -82,23 +98,30 @@ test("legacy runtime shim validation detects runtime shims missing from inventor
 });
 
 test("legacy runtime shim validation detects inventory entries missing on disk", async () => {
-  const projectRoot = await mkdtemp(resolve(tmpdir(), "legacy-shim-validation-missing-disk-"));
+  const projectRoot = await mkdtemp(
+    resolve(tmpdir(), "legacy-shim-validation-missing-disk-")
+  );
 
   try {
     await writeShimFile(projectRoot, BASE_ENTRIES[0].path);
     const inventoryPath = await writeInventory(projectRoot, BASE_ENTRIES);
-    const result = await validateLegacyRuntimeShims({ projectRoot, inventoryPath });
+    const result = await validateLegacyRuntimeShims({
+      projectRoot,
+      inventoryPath,
+    });
 
     assert.equal(result.ok, false);
     assert.deepEqual(result.missingFromInventory, []);
-    assert.deepEqual(result.missingOnDisk, ["libs/shared/src/errors.js"]);
+    assert.deepEqual(result.missingOnDisk, ["apps/api/src/server.mjs"]);
   } finally {
     await rm(projectRoot, { recursive: true, force: true });
   }
 });
 
 test("legacy runtime shim validation enforces follow-up bead IDs", async () => {
-  const projectRoot = await mkdtemp(resolve(tmpdir(), "legacy-shim-validation-follow-up-"));
+  const projectRoot = await mkdtemp(
+    resolve(tmpdir(), "legacy-shim-validation-follow-up-")
+  );
 
   try {
     for (const entry of BASE_ENTRIES) {
@@ -111,17 +134,22 @@ test("legacy runtime shim validation enforces follow-up bead IDs", async () => {
       },
       BASE_ENTRIES[1],
     ]);
-    const result = await validateLegacyRuntimeShims({ projectRoot, inventoryPath });
+    const result = await validateLegacyRuntimeShims({
+      projectRoot,
+      inventoryPath,
+    });
 
     assert.equal(result.ok, false);
-    assert.deepEqual(result.invalidFollowUpBeadIds, ["apps/api/src/server.mjs"]);
+    assert.deepEqual(result.invalidFollowUpBeadIds, ["apps/api/src/core.mjs"]);
   } finally {
     await rm(projectRoot, { recursive: true, force: true });
   }
 });
 
 test("legacy runtime shim validation requires non-empty inventory notes", async () => {
-  const projectRoot = await mkdtemp(resolve(tmpdir(), "legacy-shim-validation-notes-"));
+  const projectRoot = await mkdtemp(
+    resolve(tmpdir(), "legacy-shim-validation-notes-")
+  );
 
   try {
     for (const entry of BASE_ENTRIES) {
@@ -137,7 +165,7 @@ test("legacy runtime shim validation requires non-empty inventory notes", async 
 
     await assert.rejects(
       () => validateLegacyRuntimeShims({ projectRoot, inventoryPath }),
-      /entries\[0\]\.notes must be a non-empty string/i,
+      /entries\[0\]\.notes must be a non-empty string/i
     );
   } finally {
     await rm(projectRoot, { recursive: true, force: true });
@@ -145,7 +173,9 @@ test("legacy runtime shim validation requires non-empty inventory notes", async 
 });
 
 test("legacy runtime shim validation detects duplicate inventory paths", async () => {
-  const projectRoot = await mkdtemp(resolve(tmpdir(), "legacy-shim-validation-duplicates-"));
+  const projectRoot = await mkdtemp(
+    resolve(tmpdir(), "legacy-shim-validation-duplicates-")
+  );
 
   try {
     for (const entry of BASE_ENTRIES) {
@@ -156,24 +186,35 @@ test("legacy runtime shim validation detects duplicate inventory paths", async (
       BASE_ENTRIES[0],
       BASE_ENTRIES[1],
     ]);
-    const result = await validateLegacyRuntimeShims({ projectRoot, inventoryPath });
+    const result = await validateLegacyRuntimeShims({
+      projectRoot,
+      inventoryPath,
+    });
 
     assert.equal(result.ok, false);
-    assert.deepEqual(result.duplicateInventoryEntries, ["apps/api/src/server.mjs"]);
+    assert.deepEqual(result.duplicateInventoryEntries, ["apps/api/src/core.mjs"]);
   } finally {
     await rm(projectRoot, { recursive: true, force: true });
   }
 });
 
 test("legacy runtime shim validation requires sorted inventory order", async () => {
-  const projectRoot = await mkdtemp(resolve(tmpdir(), "legacy-shim-validation-order-"));
+  const projectRoot = await mkdtemp(
+    resolve(tmpdir(), "legacy-shim-validation-order-")
+  );
 
   try {
     for (const entry of BASE_ENTRIES) {
       await writeShimFile(projectRoot, entry.path);
     }
-    const inventoryPath = await writeInventory(projectRoot, [BASE_ENTRIES[1], BASE_ENTRIES[0]]);
-    const result = await validateLegacyRuntimeShims({ projectRoot, inventoryPath });
+    const inventoryPath = await writeInventory(projectRoot, [
+      BASE_ENTRIES[1],
+      BASE_ENTRIES[0],
+    ]);
+    const result = await validateLegacyRuntimeShims({
+      projectRoot,
+      inventoryPath,
+    });
 
     assert.equal(result.ok, false);
     assert.equal(result.inventoryOrderStable, false);
@@ -183,7 +224,9 @@ test("legacy runtime shim validation requires sorted inventory order", async () 
 });
 
 test("legacy runtime shim validation CLI main supports json output for explicit project and inventory paths", async () => {
-  const projectRoot = await mkdtemp(resolve(tmpdir(), "legacy-shim-validation-main-json-"));
+  const projectRoot = await mkdtemp(
+    resolve(tmpdir(), "legacy-shim-validation-main-json-")
+  );
 
   try {
     for (const entry of BASE_ENTRIES) {

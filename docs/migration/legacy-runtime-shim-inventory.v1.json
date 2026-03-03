@@ -66,60 +66,6 @@
       "kind": "runtime_entrypoint",
       "followUpBeadId": "ums-memory-n4m.6",
       "notes": "Temporary compatibility entrypoint while strict TypeScript + Effect cutover completes."
-    },
-    {
-      "path": "libs/shared/src/capability-catalog.js",
-      "kind": "legacy_shared_contract",
-      "followUpBeadId": "ums-memory-n4m.6",
-      "notes": "Legacy JS contract bridge retained until strict TS migration is complete."
-    },
-    {
-      "path": "libs/shared/src/entities.js",
-      "kind": "legacy_shared_contract",
-      "followUpBeadId": "ums-memory-n4m.6",
-      "notes": "Legacy JS contract bridge retained until strict TS migration is complete."
-    },
-    {
-      "path": "libs/shared/src/errors.js",
-      "kind": "legacy_shared_contract",
-      "followUpBeadId": "ums-memory-n4m.6",
-      "notes": "Legacy JS contract bridge retained until strict TS migration is complete."
-    },
-    {
-      "path": "libs/shared/src/memory-models.js",
-      "kind": "legacy_shared_contract",
-      "followUpBeadId": "ums-memory-n4m.6",
-      "notes": "Legacy JS contract bridge retained until strict TS migration is complete."
-    },
-    {
-      "path": "libs/shared/src/metrics.js",
-      "kind": "legacy_shared_contract",
-      "followUpBeadId": "ums-memory-n4m.6",
-      "notes": "Legacy JS contract bridge retained until strict TS migration is complete."
-    },
-    {
-      "path": "libs/shared/src/repositories.js",
-      "kind": "legacy_shared_contract",
-      "followUpBeadId": "ums-memory-n4m.6",
-      "notes": "Legacy JS contract bridge retained until strict TS migration is complete."
-    },
-    {
-      "path": "libs/shared/src/storage.js",
-      "kind": "legacy_shared_contract",
-      "followUpBeadId": "ums-memory-n4m.6",
-      "notes": "Legacy JS contract bridge retained until strict TS migration is complete."
-    },
-    {
-      "path": "libs/shared/src/utils.js",
-      "kind": "legacy_shared_contract",
-      "followUpBeadId": "ums-memory-n4m.6",
-      "notes": "Legacy JS contract bridge retained until strict TS migration is complete."
-    },
-    {
-      "path": "libs/shared/src/validation.js",
-      "kind": "legacy_shared_contract",
-      "followUpBeadId": "ums-memory-n4m.6",
-      "notes": "Legacy JS contract bridge retained until strict TS migration is complete."
     }
   ]
 }
