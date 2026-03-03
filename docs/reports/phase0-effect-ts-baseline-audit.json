@@ -1,0 +1,127 @@
+{
+  "schemaVersion": "phase0_effect_ts_baseline_audit.v1",
+  "capturedAt": "2026-03-03",
+  "effectNpmState": {
+    "command": "npm view effect version dist-tags --json",
+    "version": "3.19.19",
+    "distTags": {
+      "snapshot": "0.0.0-snapshot-6ebc752baf28354006ca2a0ae783a5bccf5de9ad",
+      "latest": "3.19.19",
+      "beta": "4.0.0-beta.25"
+    },
+    "targetTrack": "beta",
+    "targetVersion": "4.0.0-beta.25"
+  },
+  "appsLibsSourceInventory": {
+    "scope": "apps/**/src + libs/**/src",
+    "counts": {
+      "apps": {
+        "ts": 0,
+        "jsMjs": 11
+      },
+      "libs": {
+        "ts": 31,
+        "jsMjs": 9
+      },
+      "totals": {
+        "ts": 31,
+        "jsMjs": 20,
+        "sourceFiles": 51
+      }
+    },
+    "tsFiles": [
+      "libs/shared/src/effect/contracts/domains.ts",
+      "libs/shared/src/effect/contracts/ids.ts",
+      "libs/shared/src/effect/contracts/index.ts",
+      "libs/shared/src/effect/contracts/services.ts",
+      "libs/shared/src/effect/contracts/validators.ts",
+      "libs/shared/src/effect/errors.ts",
+      "libs/shared/src/effect/index.ts",
+      "libs/shared/src/effect/runtime-layer.ts",
+      "libs/shared/src/effect/sample-program.ts",
+      "libs/shared/src/effect/service-boundaries.ts",
+      "libs/shared/src/effect/services/authorization-service.ts",
+      "libs/shared/src/effect/services/clock-service.ts",
+      "libs/shared/src/effect/services/config-service.ts",
+      "libs/shared/src/effect/services/evaluation-service.ts",
+      "libs/shared/src/effect/services/ingestion-service.ts",
+      "libs/shared/src/effect/services/lifecycle-service.ts",
+      "libs/shared/src/effect/services/logger-service.ts",
+      "libs/shared/src/effect/services/policy-pack-plugin-service.ts",
+      "libs/shared/src/effect/services/policy-service.ts",
+      "libs/shared/src/effect/services/retrieval-service.ts",
+      "libs/shared/src/effect/services/storage-service.ts",
+      "libs/shared/src/effect/storage/adapter-registry.test.ts",
+      "libs/shared/src/effect/storage/adapter-registry.ts",
+      "libs/shared/src/effect/storage/index.ts",
+      "libs/shared/src/effect/storage/sqlite/backup-replication.ts",
+      "libs/shared/src/effect/storage/sqlite/enterprise-schema.ts",
+      "libs/shared/src/effect/storage/sqlite/index.ts",
+      "libs/shared/src/effect/storage/sqlite/migrations.ts",
+      "libs/shared/src/effect/storage/sqlite/schema-metadata.ts",
+      "libs/shared/src/effect/storage/sqlite/snapshot-codec.ts",
+      "libs/shared/src/effect/storage/sqlite/storage-repository.ts"
+    ],
+    "jsMjsFiles": [
+      "apps/api/src/console-ui.mjs",
+      "apps/api/src/core.mjs",
+      "apps/api/src/persistence.mjs",
+      "apps/api/src/runtime-adapter.mjs",
+      "apps/api/src/server.mjs",
+      "apps/api/src/service-runtime.mjs",
+      "apps/api/src/telemetry.mjs",
+      "apps/api/src/ums/engine.mjs",
+      "apps/api/src/worker-runtime.mjs",
+      "apps/cli/src/index.mjs",
+      "apps/ums/src/index.mjs",
+      "libs/shared/src/capability-catalog.js",
+      "libs/shared/src/entities.js",
+      "libs/shared/src/errors.js",
+      "libs/shared/src/memory-models.js",
+      "libs/shared/src/metrics.js",
+      "libs/shared/src/repositories.js",
+      "libs/shared/src/storage.js",
+      "libs/shared/src/utils.js",
+      "libs/shared/src/validation.js"
+    ]
+  },
+  "tsconfigGapAudit": {
+    "baseConfig": {
+      "path": "tsconfig.base.json",
+      "allowJs": true,
+      "checkJs": false
+    },
+    "appConfigsMjsOnlyIncludes": [
+      {
+        "path": "apps/api/tsconfig.json",
+        "include": [
+          "**/*.mjs"
+        ]
+      },
+      {
+        "path": "apps/cli/tsconfig.json",
+        "include": [
+          "**/*.mjs"
+        ]
+      },
+      {
+        "path": "apps/ums/tsconfig.json",
+        "include": [
+          "**/*.mjs"
+        ]
+      }
+    ],
+    "sharedConfigMixedIncludes": {
+      "path": "libs/shared/tsconfig.json",
+      "include": [
+        "src/**/*.js",
+        "src/**/*.ts"
+      ]
+    },
+    "blockingGaps": [
+      "allowJs=true permits runtime JavaScript modules in compile/typecheck scope.",
+      "apps tsconfig include patterns target only .mjs sources, not .ts runtime modules.",
+      "libs/shared tsconfig explicitly includes src/**/*.js in strict code scope."
+    ]
+  }
+}
