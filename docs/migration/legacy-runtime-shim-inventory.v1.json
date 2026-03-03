@@ -2,19 +2,7 @@
   "schemaVersion": "legacy_runtime_shim_inventory.v1",
   "entries": [
     {
-      "path": "apps/api/src/console-ui.mjs",
-      "kind": "runtime_entrypoint",
-      "followUpBeadId": "ums-memory-n4m.6",
-      "notes": "Temporary compatibility entrypoint while strict TypeScript + Effect cutover completes."
-    },
-    {
       "path": "apps/api/src/core.mjs",
-      "kind": "runtime_entrypoint",
-      "followUpBeadId": "ums-memory-n4m.6",
-      "notes": "Temporary compatibility entrypoint while strict TypeScript + Effect cutover completes."
-    },
-    {
-      "path": "apps/api/src/persistence.mjs",
       "kind": "runtime_entrypoint",
       "followUpBeadId": "ums-memory-n4m.6",
       "notes": "Temporary compatibility entrypoint while strict TypeScript + Effect cutover completes."
