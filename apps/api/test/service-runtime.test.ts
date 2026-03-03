@@ -1,10 +1,10 @@
-import test from "node:test";
 import assert from "node:assert/strict";
 import { createServer as createNetServer } from "node:net";
+import test from "node:test";
 import {
   createSupervisedApiService,
   startSupervisedApiService,
-} from "../src/service-runtime.mjs";
+} from "../src/service-runtime.ts";
 
 function waitForPhase(service, expectedPhase, timeoutMs = 5000) {
   return new Promise((resolvePromise, rejectPromise) => {
@@ -19,7 +19,9 @@ function waitForPhase(service, expectedPhase, timeoutMs = 5000) {
       if (Date.now() - start > timeoutMs) {
         clearInterval(interval);
         rejectPromise(
-          new Error(`Timed out waiting for phase ${expectedPhase}. Current phase: ${snapshot.phase}`),
+          new Error(
+            `Timed out waiting for phase ${expectedPhase}. Current phase: ${snapshot.phase}`
+          )
         );
       }
     }, 20);
@@ -69,7 +71,11 @@ function createMockServer({ failAfterMs } = {}) {
       }
     },
   };
-  if (typeof failAfterMs === "number" && Number.isFinite(failAfterMs) && failAfterMs >= 0) {
+  if (
+    typeof failAfterMs === "number" &&
+    Number.isFinite(failAfterMs) &&
+    failAfterMs >= 0
+  ) {
     const timer = setTimeout(() => {
       server.listening = false;
     }, failAfterMs);
@@ -191,7 +197,10 @@ test("supervised runtime reports monitor failure after readiness without deferre
     const failed = await waitForPhase(service, "failed");
     assert.equal(startCallCount, 1);
     assert.equal(failed.restartCount, 1);
-    assert.match(failed.lastError ?? "", /API server listener stopped unexpectedly/);
+    assert.match(
+      failed.lastError ?? "",
+      /API server listener stopped unexpectedly/
+    );
     assert.doesNotMatch(failed.lastError ?? "", /Deferred already completed/);
   } finally {
     await service.stop();

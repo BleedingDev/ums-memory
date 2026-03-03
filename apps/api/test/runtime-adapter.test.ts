@@ -2,24 +2,23 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { resolve } from "node:path";
 import test from "node:test";
-
-import { executeOperation, listOperations, resetStore } from "../src/core.mjs";
+import { executeOperation, listOperations, resetStore } from "../src/core.ts";
 import { executeOperationWithSharedState } from "../src/persistence.ts";
 import {
   clearRuntimeAdapterCache,
   executeRuntimeOperation,
   listRuntimeOperations,
-} from "../src/runtime-adapter.mjs";
+} from "../src/runtime-adapter.ts";
 import { startApiServer } from "../src/server.ts";
 
 const CLI_PATH = resolve(process.cwd(), "apps/cli/src/index.ts");
 const RUNTIME_ADAPTER_FIXTURE = resolve(
   process.cwd(),
-  "apps/api/test/fixtures/runtime-adapter-override.mjs"
+  "apps/api/test/fixtures/runtime-adapter-override.ts"
 );
 const POLICY_PACK_PLUGIN_FIXTURE = resolve(
   process.cwd(),
-  "apps/api/test/fixtures/policy-pack-plugin-override.mjs"
+  "apps/api/test/fixtures/policy-pack-plugin-override.ts"
 );
 const ORIGINAL_RUNTIME_ADAPTER_MODULE = process.env.UMS_RUNTIME_ADAPTER_MODULE;
 const ORIGINAL_RUNTIME_ADAPTER_EXPORT = process.env.UMS_RUNTIME_ADAPTER_EXPORT;
