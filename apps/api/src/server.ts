@@ -11,7 +11,7 @@ import {
   DEFAULT_RUNTIME_STATE_FILE,
   executeRuntimeOperation,
   listRuntimeOperations,
-} from "./runtime-adapter.mjs";
+} from "./runtime-adapter.ts";
 import {
   createInMemoryApiTelemetry,
   type BuildOperationTelemetryEventOptions,
@@ -550,7 +550,7 @@ const isMainModule =
 let activeServerHandle: SupervisedApiService | null = null;
 
 if (isMainModule) {
-  const serviceRuntimeModulePath = "./service-runtime.mjs";
+  const serviceRuntimeModulePath = "./service-runtime.ts";
   void import(serviceRuntimeModulePath)
     .then((module): Promise<StartSupervisedApiServiceResult> => {
       const startSupervisedApiService = (module as Record<string, unknown>)[

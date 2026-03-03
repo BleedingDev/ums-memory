@@ -4,7 +4,7 @@ import {
   DEFAULT_RUNTIME_STATE_FILE,
   executeRuntimeOperation,
   listRuntimeOperations,
-} from "../../api/src/runtime-adapter.mjs";
+} from "../../api/src/runtime-adapter.ts";
 
 interface ParsedArgs {
   operation: string | null | undefined;

@@ -24,7 +24,7 @@ docker build --target worker -t ums-memory-worker:local .
 API command in image:
 
 ```bash
-node apps/api/src/server.mjs
+node --import tsx apps/api/src/server.ts
 ```
 
 Worker command in image:

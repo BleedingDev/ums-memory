@@ -1,4 +1,4 @@
-declare module "*runtime-adapter.mjs" {
+declare module "*runtime-adapter.ts" {
   export const DEFAULT_RUNTIME_STATE_FILE: string;
   export function executeRuntimeOperation(request: {
     operation: string;

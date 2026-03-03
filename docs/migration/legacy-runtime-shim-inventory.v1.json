@@ -1,41 +1,4 @@
 {
   "schemaVersion": "legacy_runtime_shim_inventory.v1",
-  "entries": [
-    {
-      "path": "apps/api/src/core.mjs",
-      "kind": "runtime_entrypoint",
-      "followUpBeadId": "ums-memory-n4m.6",
-      "notes": "Temporary compatibility entrypoint while strict TypeScript + Effect cutover completes."
-    },
-    {
-      "path": "apps/api/src/runtime-adapter.mjs",
-      "kind": "runtime_entrypoint",
-      "followUpBeadId": "ums-memory-n4m.6",
-      "notes": "Temporary compatibility entrypoint while strict TypeScript + Effect cutover completes."
-    },
-    {
-      "path": "apps/api/src/service-runtime.mjs",
-      "kind": "runtime_entrypoint",
-      "followUpBeadId": "ums-memory-n4m.6",
-      "notes": "Temporary compatibility entrypoint while strict TypeScript + Effect cutover completes."
-    },
-    {
-      "path": "apps/api/src/telemetry.mjs",
-      "kind": "runtime_entrypoint",
-      "followUpBeadId": "ums-memory-n4m.6",
-      "notes": "Temporary compatibility entrypoint while strict TypeScript + Effect cutover completes."
-    },
-    {
-      "path": "apps/api/src/ums/engine.mjs",
-      "kind": "runtime_entrypoint",
-      "followUpBeadId": "ums-memory-n4m.6",
-      "notes": "Temporary compatibility entrypoint while strict TypeScript + Effect cutover completes."
-    },
-    {
-      "path": "apps/api/src/worker-runtime.mjs",
-      "kind": "runtime_entrypoint",
-      "followUpBeadId": "ums-memory-n4m.6",
-      "notes": "Temporary compatibility entrypoint while strict TypeScript + Effect cutover completes."
-    }
-  ]
+  "entries": []
 }

@@ -32,7 +32,7 @@ EXPOSE 8787
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
   CMD node -e "const http=require('node:http');const req=http.get('http://127.0.0.1:'+(process.env.UMS_API_PORT||8787)+'/',(res)=>process.exit(res.statusCode===200?0:1));req.on('error',()=>process.exit(1));"
 
-CMD ["node", "apps/api/src/server.mjs"]
+CMD ["node", "--import", "tsx", "apps/api/src/server.ts"]
 
 FROM runtime-base AS worker
 ENV UMS_STATE_FILE=/var/lib/ums/.ums-state.json
