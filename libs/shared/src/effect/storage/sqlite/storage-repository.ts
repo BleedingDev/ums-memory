@@ -272,6 +272,21 @@ interface EvidencePointerProjection {
   readonly relationKind: EnterpriseEvidenceRelationKind;
 }
 
+interface ProvenanceEnvelopeProjection {
+  readonly provenanceId: string;
+  readonly tenantId: string;
+  readonly projectId: string | null;
+  readonly roleId: string | null;
+  readonly userId: string | null;
+  readonly agentId: string | null;
+  readonly conversationId: string | null;
+  readonly messageId: string | null;
+  readonly sourceId: string | null;
+  readonly batchId: string | null;
+  readonly observedAtMillis: number;
+  readonly createdAtMillis: number;
+}
+
 type StorageIdempotencyOperation = "upsert" | "delete";
 
 interface StorageIdempotencyLedgerProjection {
@@ -620,6 +635,154 @@ const parseIncomingProvenanceJson = (payload: DomainRecord): string | null => {
   }
 
   return toCanonicalJsonString(provenanceValue, "payload.provenance");
+};
+
+const toDeterministicProvenanceId = (
+  tenantId: string,
+  provenanceIdentityMaterial: {
+    readonly projectId: string | null;
+    readonly roleId: string | null;
+    readonly userId: string | null;
+    readonly agentId: string | null;
+    readonly conversationId: string | null;
+    readonly messageId: string | null;
+    readonly sourceId: string | null;
+    readonly batchId: string | null;
+  }
+): string =>
+  `prov:${toSha256Hex(
+    JSON.stringify({
+      tenantId,
+      ...provenanceIdentityMaterial,
+    })
+  )}`;
+
+const parseOptionalProvenanceEnvelopeProjection = (
+  tenantId: string,
+  provenanceJson: string | null,
+  observedAtMillis: number
+): ProvenanceEnvelopeProjection | null => {
+  if (provenanceJson === null) {
+    return null;
+  }
+  let parsedProvenance: unknown;
+  try {
+    parsedProvenance = JSON.parse(provenanceJson);
+  } catch (cause) {
+    throw new StoragePayloadValidationFailure(
+      `payload.provenance must be valid canonical JSON: ${toErrorMessage(cause)}`
+    );
+  }
+  if (!isDomainRecord(parsedProvenance)) {
+    throw new StoragePayloadValidationFailure(
+      "payload.provenance must decode to a plain object record."
+    );
+  }
+
+  const envelopeTenantId =
+    parseOptionalTrimmedString(
+      parsedProvenance,
+      ["tenantId", "tenant_id"],
+      "payload.provenance.tenantId"
+    ) ?? null;
+  if (envelopeTenantId === null) {
+    return null;
+  }
+  if (envelopeTenantId !== tenantId) {
+    throw new StoragePayloadValidationFailure(
+      `payload.provenance.tenantId (${envelopeTenantId}) must match request.spaceId (${tenantId}).`
+    );
+  }
+
+  const projectId =
+    parseOptionalNullableTrimmedString(
+      parsedProvenance,
+      ["projectId", "project_id"],
+      "payload.provenance.projectId"
+    ) ?? null;
+  const roleId =
+    parseOptionalNullableTrimmedString(
+      parsedProvenance,
+      ["roleId", "role_id"],
+      "payload.provenance.roleId"
+    ) ?? null;
+  const userId =
+    parseOptionalNullableTrimmedString(
+      parsedProvenance,
+      ["userId", "user_id"],
+      "payload.provenance.userId"
+    ) ?? null;
+  const agentId =
+    parseOptionalNullableTrimmedString(
+      parsedProvenance,
+      ["agentId", "agent_id"],
+      "payload.provenance.agentId"
+    ) ?? null;
+  const conversationId =
+    parseOptionalNullableTrimmedString(
+      parsedProvenance,
+      ["conversationId", "conversation_id"],
+      "payload.provenance.conversationId"
+    ) ?? null;
+  const messageId =
+    parseOptionalNullableTrimmedString(
+      parsedProvenance,
+      ["messageId", "message_id"],
+      "payload.provenance.messageId"
+    ) ?? null;
+  const sourceId =
+    parseOptionalNullableTrimmedString(
+      parsedProvenance,
+      ["sourceId", "source_id"],
+      "payload.provenance.sourceId"
+    ) ?? null;
+  const batchId =
+    parseOptionalNullableTrimmedString(
+      parsedProvenance,
+      ["batchId", "batch_id"],
+      "payload.provenance.batchId"
+    ) ?? null;
+
+  if (
+    projectId === null &&
+    roleId === null &&
+    userId === null &&
+    agentId === null &&
+    conversationId === null &&
+    messageId === null &&
+    sourceId === null &&
+    batchId === null
+  ) {
+    throw new StoragePayloadValidationFailure(
+      "payload.provenance must include at least one lineage dimension when tenantId is provided."
+    );
+  }
+
+  const provenanceId = toDeterministicProvenanceId(tenantId, {
+    projectId,
+    roleId,
+    userId,
+    agentId,
+    conversationId,
+    messageId,
+    sourceId,
+    batchId,
+  });
+
+  return Object.freeze({
+    provenanceId,
+    tenantId,
+    projectId,
+    roleId,
+    userId,
+    agentId,
+    conversationId,
+    messageId,
+    sourceId,
+    batchId,
+    observedAtMillis,
+    createdAtMillis: observedAtMillis,
+  });
 };
 
 const readPayloadEvidencePointersValue = (
@@ -3076,6 +3239,49 @@ export const makeSqliteStorageRepository = (
   const selectEvidenceIdByNaturalKeyStatement = database.prepare(
     "SELECT evidence_id FROM evidence WHERE tenant_id = ? AND source_kind = ? AND source_ref = ? AND digest_sha256 = ? LIMIT 1;"
   );
+  const insertProvenanceEnvelopeStatement = database.prepare(
+    [
+      "INSERT OR IGNORE INTO provenance_envelopes (",
+      "  tenant_id,",
+      "  provenance_id,",
+      "  project_id,",
+      "  role_id,",
+      "  user_id,",
+      "  agent_id,",
+      "  conversation_id,",
+      "  message_id,",
+      "  source_id,",
+      "  batch_id,",
+      "  observed_at_ms,",
+      "  created_at_ms",
+      ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);",
+    ].join("\n")
+  );
+  const insertMemoryProvenanceLinkStatement = database.prepare(
+    "INSERT OR IGNORE INTO memory_provenance_links (tenant_id, memory_id, provenance_id, linked_at_ms) VALUES (?, ?, ?, ?);"
+  );
+  const deleteMemoryProvenanceLinksStatement = database.prepare(
+    "DELETE FROM memory_provenance_links WHERE tenant_id = ? AND memory_id = ?;"
+  );
+  const insertEvidenceProvenanceLinkStatement = database.prepare(
+    "INSERT OR IGNORE INTO evidence_provenance_links (tenant_id, evidence_id, provenance_id, linked_at_ms) VALUES (?, ?, ?, ?);"
+  );
+  const deleteEvidenceProvenanceLinksByMemoryStatement = database.prepare(
+    [
+      "DELETE FROM evidence_provenance_links",
+      "WHERE tenant_id = ?",
+      "  AND evidence_id IN (",
+      "    SELECT evidence_id",
+      "    FROM memory_evidence_links",
+      "    WHERE tenant_id = ? AND memory_id = ?",
+      "  )",
+      "  AND provenance_id IN (",
+      "    SELECT provenance_id",
+      "    FROM memory_provenance_links",
+      "    WHERE tenant_id = ? AND memory_id = ?",
+      "  );",
+    ].join("\n")
+  );
   const insertMemoryEvidenceLinkStatement = database.prepare(
     "INSERT OR IGNORE INTO memory_evidence_links (tenant_id, memory_id, evidence_id, relation_kind, created_at_ms) VALUES (?, ?, ?, ?, ?);"
   );
@@ -3661,6 +3867,12 @@ export const makeSqliteStorageRepository = (
           withImmediateTransaction(database, () => {
             assertExpectedForeignKeysMode();
             const payloadProjection = parsePayloadProjection(request);
+            const provenanceEnvelopeProjection =
+              parseOptionalProvenanceEnvelopeProjection(
+                request.spaceId,
+                payloadProjection.provenanceJson,
+                payloadProjection.updatedAtMillis
+              );
             const scopeAuthorization =
               resolveScopeAuthorizationContext(request);
             assertScopeAuthorizationTenantAccess(
@@ -3690,6 +3902,39 @@ export const makeSqliteStorageRepository = (
                 "upsert",
                 "user",
                 payloadProjection.scopeUserId
+              );
+            }
+            if (
+              provenanceEnvelopeProjection !== null &&
+              provenanceEnvelopeProjection.projectId !== null
+            ) {
+              assertScopeAuthorizationAnchorAccess(
+                scopeAuthorization,
+                "upsert",
+                "project",
+                provenanceEnvelopeProjection.projectId
+              );
+            }
+            if (
+              provenanceEnvelopeProjection !== null &&
+              provenanceEnvelopeProjection.roleId !== null
+            ) {
+              assertScopeAuthorizationAnchorAccess(
+                scopeAuthorization,
+                "upsert",
+                "role",
+                provenanceEnvelopeProjection.roleId
+              );
+            }
+            if (
+              provenanceEnvelopeProjection !== null &&
+              provenanceEnvelopeProjection.userId !== null
+            ) {
+              assertScopeAuthorizationAnchorAccess(
+                scopeAuthorization,
+                "upsert",
+                "user",
+                provenanceEnvelopeProjection.userId
               );
             }
             if (payloadProjection.scopeId !== null) {
@@ -3917,6 +4162,66 @@ export const makeSqliteStorageRepository = (
                 }
               }
             }
+            if (
+              provenanceEnvelopeProjection !== null &&
+              provenanceEnvelopeProjection.projectId !== null
+            ) {
+              assertScopeAnchorExists(
+                selectProjectAnchorStatement.get(
+                  request.spaceId,
+                  provenanceEnvelopeProjection.projectId
+                ),
+                selectForeignProjectAnchorOwnerStatement.get(
+                  provenanceEnvelopeProjection.projectId,
+                  request.spaceId
+                ),
+                request.spaceId,
+                request.memoryId,
+                "payload.provenance.projectId",
+                "project",
+                provenanceEnvelopeProjection.projectId
+              );
+            }
+            if (
+              provenanceEnvelopeProjection !== null &&
+              provenanceEnvelopeProjection.roleId !== null
+            ) {
+              assertScopeAnchorExists(
+                selectRoleAnchorStatement.get(
+                  request.spaceId,
+                  provenanceEnvelopeProjection.roleId
+                ),
+                selectForeignRoleAnchorOwnerStatement.get(
+                  provenanceEnvelopeProjection.roleId,
+                  request.spaceId
+                ),
+                request.spaceId,
+                request.memoryId,
+                "payload.provenance.roleId",
+                "role",
+                provenanceEnvelopeProjection.roleId
+              );
+            }
+            if (
+              provenanceEnvelopeProjection !== null &&
+              provenanceEnvelopeProjection.userId !== null
+            ) {
+              assertScopeAnchorExists(
+                selectUserAnchorStatement.get(
+                  request.spaceId,
+                  provenanceEnvelopeProjection.userId
+                ),
+                selectForeignUserAnchorOwnerStatement.get(
+                  provenanceEnvelopeProjection.userId,
+                  request.spaceId
+                ),
+                request.spaceId,
+                request.memoryId,
+                "payload.provenance.userId",
+                "user",
+                provenanceEnvelopeProjection.userId
+              );
+            }
 
             const persistedPayloadJson = toStoredMemoryPayloadJson(
               payloadProjection.payloadJson,
@@ -3953,10 +4258,43 @@ export const makeSqliteStorageRepository = (
                   request.memoryId
                 );
               }
+              deleteEvidenceProvenanceLinksByMemoryStatement.run(
+                request.spaceId,
+                request.spaceId,
+                request.memoryId,
+                request.spaceId,
+                request.memoryId
+              );
               deleteMemoryEvidenceLinksStatement.run(
                 request.spaceId,
                 request.memoryId
               );
+              deleteMemoryProvenanceLinksStatement.run(
+                request.spaceId,
+                request.memoryId
+              );
+              if (provenanceEnvelopeProjection !== null) {
+                insertProvenanceEnvelopeStatement.run(
+                  provenanceEnvelopeProjection.tenantId,
+                  provenanceEnvelopeProjection.provenanceId,
+                  provenanceEnvelopeProjection.projectId,
+                  provenanceEnvelopeProjection.roleId,
+                  provenanceEnvelopeProjection.userId,
+                  provenanceEnvelopeProjection.agentId,
+                  provenanceEnvelopeProjection.conversationId,
+                  provenanceEnvelopeProjection.messageId,
+                  provenanceEnvelopeProjection.sourceId,
+                  provenanceEnvelopeProjection.batchId,
+                  provenanceEnvelopeProjection.observedAtMillis,
+                  provenanceEnvelopeProjection.createdAtMillis
+                );
+                insertMemoryProvenanceLinkStatement.run(
+                  request.spaceId,
+                  request.memoryId,
+                  provenanceEnvelopeProjection.provenanceId,
+                  payloadProjection.updatedAtMillis
+                );
+              }
               if (request.layer === "procedural") {
                 for (const evidencePointer of payloadProjection.evidencePointers) {
                   insertEvidenceStatement.run(
@@ -3992,6 +4330,14 @@ export const makeSqliteStorageRepository = (
                     evidencePointer.relationKind,
                     payloadProjection.updatedAtMillis
                   );
+                  if (provenanceEnvelopeProjection !== null) {
+                    insertEvidenceProvenanceLinkStatement.run(
+                      request.spaceId,
+                      persistedEvidenceId,
+                      provenanceEnvelopeProjection.provenanceId,
+                      payloadProjection.updatedAtMillis
+                    );
+                  }
                 }
               }
             }

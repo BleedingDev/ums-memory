@@ -449,6 +449,173 @@ test("ums-memory-5cb.7: promoted procedural memory writes evidence and memory_ev
   }
 });
 
+test("ums-memory-i6m.3: storage upsert persists deterministic provenance envelope and linkage rows", async () => {
+  const storageServiceModule = await loadStorageServiceModule();
+  const db = new DatabaseSync(":memory:");
+  const tenantId = "tenant-i6m3-provenance-links";
+  const projectId = "project-i6m3";
+  const roleId = "role-i6m3";
+  const userId = "user-i6m3";
+
+  try {
+    const storageService = storageServiceModule.makeSqliteStorageService(db);
+    seedScopeLatticeAnchors(db, tenantId, {
+      projectIds: [projectId],
+      roleIds: [roleId],
+      userIds: [userId],
+    });
+    const provenanceEnvelope = {
+      tenantId,
+      projectId,
+      roleId,
+      userId,
+      agentId: "agent-i6m3",
+      conversationId: "conversation-i6m3",
+      messageId: "message-i6m3",
+      sourceId: "source-i6m3",
+      batchId: "batch-i6m3",
+    };
+
+    const firstUpsertRequest = {
+      spaceId: tenantId,
+      memoryId: "memory-i6m3-provenance",
+      layer: "procedural",
+      payload: {
+        title: "Procedural memory with canonical provenance lineage",
+        provenance: provenanceEnvelope,
+        evidencePointers: [
+          {
+            sourceKind: "event",
+            sourceRef: "event://evt-i6m3-a",
+            digestSha256: "a".repeat(64),
+            relationKind: "supports",
+          },
+          {
+            sourceKind: "event",
+            sourceRef: "event://evt-i6m3-b",
+            digestSha256: "b".repeat(64),
+            relationKind: "supports",
+          },
+        ],
+        updatedAtMillis: 1_700_000_021_100,
+      },
+    };
+
+    Effect.runSync(storageService.upsertMemory(firstUpsertRequest));
+    Effect.runSync(
+      storageService.upsertMemory({
+        ...firstUpsertRequest,
+        payload: {
+          ...firstUpsertRequest.payload,
+          title: "Procedural memory after deterministic provenance replay",
+          updatedAtMillis: 1_700_000_021_200,
+        },
+      })
+    );
+
+    const provenanceRows = db
+      .prepare(
+        [
+          "SELECT provenance_id, project_id, role_id, user_id, agent_id, conversation_id, message_id, source_id, batch_id",
+          "FROM provenance_envelopes",
+          "WHERE tenant_id = ?",
+          "ORDER BY provenance_id ASC;",
+        ].join("\n")
+      )
+      .all(tenantId);
+    assert.equal(provenanceRows.length, 1);
+    const provenanceId = String(provenanceRows[0].provenance_id);
+    assert.equal(provenanceRows[0].project_id, projectId);
+    assert.equal(provenanceRows[0].role_id, roleId);
+    assert.equal(provenanceRows[0].user_id, userId);
+    assert.equal(provenanceRows[0].agent_id, "agent-i6m3");
+    assert.equal(provenanceRows[0].conversation_id, "conversation-i6m3");
+    assert.equal(provenanceRows[0].message_id, "message-i6m3");
+    assert.equal(provenanceRows[0].source_id, "source-i6m3");
+    assert.equal(provenanceRows[0].batch_id, "batch-i6m3");
+
+    const memoryProvenanceLinks = db
+      .prepare(
+        [
+          "SELECT memory_id, provenance_id",
+          "FROM memory_provenance_links",
+          "WHERE tenant_id = ? AND memory_id = ?",
+          "ORDER BY provenance_id ASC;",
+        ].join("\n")
+      )
+      .all(tenantId, "memory-i6m3-provenance");
+    assert.deepEqual(
+      memoryProvenanceLinks.map((row) => ({
+        memory_id: String(row.memory_id),
+        provenance_id: String(row.provenance_id),
+      })),
+      [
+        {
+          memory_id: "memory-i6m3-provenance",
+          provenance_id: provenanceId,
+        },
+      ]
+    );
+
+    const evidenceProvenanceLinks = db
+      .prepare(
+        [
+          "SELECT e.source_ref, epl.provenance_id",
+          "FROM evidence_provenance_links epl",
+          "INNER JOIN evidence e ON e.tenant_id = epl.tenant_id AND e.evidence_id = epl.evidence_id",
+          "WHERE epl.tenant_id = ?",
+          "ORDER BY e.source_ref ASC;",
+        ].join("\n")
+      )
+      .all(tenantId);
+    assert.deepEqual(
+      evidenceProvenanceLinks.map((row) => row.source_ref),
+      ["event://evt-i6m3-a", "event://evt-i6m3-b"]
+    );
+    assert.ok(
+      evidenceProvenanceLinks.every((row) => row.provenance_id === provenanceId)
+    );
+  } finally {
+    db.close();
+  }
+});
+
+test("ums-memory-i6m.3: storage upsert rejects provenance envelopes with mismatched tenantId", async () => {
+  const storageServiceModule = await loadStorageServiceModule();
+  const db = new DatabaseSync(":memory:");
+
+  try {
+    const storageService = storageServiceModule.makeSqliteStorageService(db);
+    const upsertEither = Effect.runSync(
+      Effect.either(
+        storageService.upsertMemory({
+          spaceId: "tenant-i6m3-provenance-tenant-a",
+          memoryId: "memory-i6m3-provenance-tenant-mismatch",
+          layer: "episodic",
+          payload: {
+            title: "Provenance tenant mismatch",
+            provenance: {
+              tenantId: "tenant-i6m3-provenance-tenant-b",
+              sourceId: "source-i6m3-tenant-mismatch",
+            },
+            updatedAtMillis: 1_700_000_021_300,
+          },
+        })
+      )
+    );
+    const upsertFailure = unwrapFailure(upsertEither);
+
+    assert.equal(upsertFailure._tag, "ContractValidationError");
+    assert.equal(upsertFailure.contract, "StorageUpsertRequest.payload");
+    assert.match(
+      upsertFailure.details,
+      /tenantId .* must match request\.spaceId/i
+    );
+  } finally {
+    db.close();
+  }
+});
+
 test("ums-memory-5cb.7: promoted procedural memory merges explicit pointers with evidenceEventIds and evidenceEpisodeIds deterministically", async () => {
   const storageServiceModule = await loadStorageServiceModule();
   const db = new DatabaseSync(":memory:");
