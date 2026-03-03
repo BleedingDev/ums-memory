@@ -70,6 +70,9 @@ const dedupeTenantIds = (tenantIds: readonly TenantId[]): TenantId[] => {
   return deduped;
 };
 
+const canonicalizeTenantIds = (tenantIds: readonly TenantId[]): TenantId[] =>
+  dedupeTenantIds(tenantIds).sort((left, right) => left.localeCompare(right));
+
 const toDeniedResponse = (
   denyReasonCode: TenantRouteDenyReasonCode,
   evaluatedAtMillis: number,
@@ -90,6 +93,9 @@ const evaluateTenantRoutingDecision = (
   const tenantById = new Map<TenantId, TenantCatalogEntry>();
   const tenantIdBySlug = new Map<string, TenantId>();
   const tenantIdByIssuer = new Map<string, TenantId>();
+  const conflictingSlugTenantIds: TenantId[] = [];
+  const conflictingIssuerTenantIds: TenantId[] = [];
+  const invalidBindingIssuers = new Set<string>();
 
   for (const tenant of request.tenants) {
     if (tenantById.has(tenant.tenantId)) {
@@ -99,15 +105,41 @@ const evaluateTenantRoutingDecision = (
   }
   for (const tenant of request.tenants) {
     const slugKey = normalizeLookupValue(tenant.tenantSlug);
-    if (!tenantIdBySlug.has(slugKey)) {
+    const existingTenantId = tenantIdBySlug.get(slugKey);
+    if (existingTenantId === undefined) {
       tenantIdBySlug.set(slugKey, tenant.tenantId);
+      continue;
+    }
+    if (existingTenantId !== tenant.tenantId) {
+      conflictingSlugTenantIds.push(existingTenantId, tenant.tenantId);
     }
   }
   for (const binding of request.issuerBindings) {
     const issuerKey = normalizeLookupValue(binding.issuer);
-    if (!tenantIdByIssuer.has(issuerKey)) {
-      tenantIdByIssuer.set(issuerKey, binding.tenantId);
+    if (!tenantById.has(binding.tenantId)) {
+      invalidBindingIssuers.add(issuerKey);
+      continue;
     }
+    const existingTenantId = tenantIdByIssuer.get(issuerKey);
+    if (existingTenantId === undefined) {
+      tenantIdByIssuer.set(issuerKey, binding.tenantId);
+      continue;
+    }
+    if (existingTenantId !== binding.tenantId) {
+      conflictingIssuerTenantIds.push(existingTenantId, binding.tenantId);
+    }
+  }
+
+  const duplicateRouteTenantIds = canonicalizeTenantIds([
+    ...conflictingSlugTenantIds,
+    ...conflictingIssuerTenantIds,
+  ]);
+  if (duplicateRouteTenantIds.length > 0) {
+    return toDeniedResponse(
+      "TENANT_ROUTE_CONFLICT",
+      evaluatedAtMillis,
+      duplicateRouteTenantIds
+    );
   }
 
   const claimCandidates: TenantRoutingCandidate[] = [];
@@ -132,6 +164,9 @@ const evaluateTenantRoutingDecision = (
     request.issuer === undefined
       ? undefined
       : tenantIdByIssuer.get(normalizeLookupValue(request.issuer));
+  const hasInvalidIssuerBinding =
+    request.issuer !== undefined &&
+    invalidBindingIssuers.has(normalizeLookupValue(request.issuer));
 
   const claimTenantIds = dedupeTenantIds(
     claimCandidates.map((candidate) => candidate.tenantId)
@@ -141,6 +176,19 @@ const evaluateTenantRoutingDecision = (
       "TENANT_ROUTE_CONFLICT",
       evaluatedAtMillis,
       claimTenantIds
+    );
+  }
+
+  if (hasInvalidIssuerBinding) {
+    const invalidBindingCandidates = canonicalizeTenantIds([
+      ...claimCandidates.map((candidate) => candidate.tenantId),
+      ...(issuerBoundTenantId === undefined ? [] : [issuerBoundTenantId]),
+    ]);
+    return toDeniedResponse(
+      "TENANT_ISSUER_MISMATCH",
+      evaluatedAtMillis,
+      invalidBindingCandidates,
+      invalidBindingCandidates[0]
     );
   }
 
@@ -188,27 +236,18 @@ const evaluateTenantRoutingDecision = (
     };
   }
 
-  const candidateTenantIds = dedupeTenantIds(
+  const candidateTenantIds = canonicalizeTenantIds(
     claimCandidates.map((candidate) => candidate.tenantId)
   );
-  if (issuerBoundTenantId !== undefined) {
-    candidateTenantIds.push(issuerBoundTenantId);
-  }
-
-  const dedupedCandidateTenantIds = dedupeTenantIds(candidateTenantIds);
   const denyReasonCode: TenantRouteDenyReasonCode =
     request.issuer !== undefined &&
     issuerBoundTenantId === undefined &&
-    dedupedCandidateTenantIds.length > 0
+    candidateTenantIds.length > 0
       ? "TENANT_ISSUER_MISMATCH"
       : "TENANT_ROUTE_MISSING";
   return {
-    ...toDeniedResponse(
-      denyReasonCode,
-      evaluatedAtMillis,
-      dedupedCandidateTenantIds
-    ),
-    tenantId: dedupedCandidateTenantIds[0],
+    ...toDeniedResponse(denyReasonCode, evaluatedAtMillis, candidateTenantIds),
+    tenantId: candidateTenantIds[0],
   };
 };
 

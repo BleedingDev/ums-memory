@@ -202,6 +202,47 @@ test("ums-memory-wt0.2: denies with TENANT_ROUTE_CONFLICT when tenant_id and ten
   assert.deepEqual(decision.candidateTenantIds, ["tenant_a", "tenant_b"]);
 });
 
+test("ums-memory-wt0.2: denies with TENANT_ROUTE_CONFLICT on duplicate slug mappings to different tenants", async () => {
+  const { tenantRoutingServiceModule } = await loadTenantRoutingModules();
+  const service =
+    tenantRoutingServiceModule.makeDeterministicTenantRoutingService();
+
+  const decision = await Effect.runPromise(
+    service.resolve({
+      ...baseRequest,
+      tenants: [
+        ...baseRequest.tenants,
+        { tenantId: "tenant_c", tenantSlug: "tenant-a" },
+      ],
+    })
+  );
+
+  assert.equal(decision.resolved, false);
+  assert.equal(decision.denyReasonCode, "TENANT_ROUTE_CONFLICT");
+  assert.deepEqual(decision.candidateTenantIds, ["tenant_a", "tenant_c"]);
+});
+
+test("ums-memory-wt0.2: denies with TENANT_ROUTE_CONFLICT on duplicate issuer mappings to different tenants", async () => {
+  const { tenantRoutingServiceModule } = await loadTenantRoutingModules();
+  const service =
+    tenantRoutingServiceModule.makeDeterministicTenantRoutingService();
+
+  const decision = await Effect.runPromise(
+    service.resolve({
+      ...baseRequest,
+      issuer: "https://idp-a.example.com",
+      issuerBindings: [
+        ...baseRequest.issuerBindings,
+        { issuer: "https://idp-a.example.com", tenantId: "tenant_b" },
+      ],
+    })
+  );
+
+  assert.equal(decision.resolved, false);
+  assert.equal(decision.denyReasonCode, "TENANT_ROUTE_CONFLICT");
+  assert.deepEqual(decision.candidateTenantIds, ["tenant_a", "tenant_b"]);
+});
+
 test("ums-memory-wt0.2: denies with TENANT_ISSUER_MISMATCH when issuer binding disagrees with resolved tenant", async () => {
   const { tenantRoutingServiceModule } = await loadTenantRoutingModules();
   const service =
@@ -219,6 +260,56 @@ test("ums-memory-wt0.2: denies with TENANT_ISSUER_MISMATCH when issuer binding d
   assert.equal(decision.tenantId, "tenant_a");
   assert.equal(decision.denyReasonCode, "TENANT_ISSUER_MISMATCH");
   assert.deepEqual(decision.candidateTenantIds, ["tenant_a", "tenant_b"]);
+});
+
+test("ums-memory-wt0.2: denies with TENANT_ISSUER_MISMATCH on issuer bindings that reference unknown tenants", async () => {
+  const { tenantRoutingServiceModule } = await loadTenantRoutingModules();
+  const service =
+    tenantRoutingServiceModule.makeDeterministicTenantRoutingService();
+
+  const decision = await Effect.runPromise(
+    service.resolve({
+      ...baseRequest,
+      issuer: "https://idp-unknown.example.com",
+      issuerBindings: [
+        ...baseRequest.issuerBindings,
+        {
+          issuer: "https://idp-unknown.example.com",
+          tenantId: "tenant_missing",
+        },
+      ],
+    })
+  );
+
+  assert.equal(decision.resolved, false);
+  assert.equal(decision.tenantId, undefined);
+  assert.equal(decision.denyReasonCode, "TENANT_ISSUER_MISMATCH");
+  assert.deepEqual(decision.candidateTenantIds, []);
+});
+
+test("ums-memory-wt0.2: denies with TENANT_ISSUER_MISMATCH when issuer has both valid and invalid bindings", async () => {
+  const { tenantRoutingServiceModule } = await loadTenantRoutingModules();
+  const service =
+    tenantRoutingServiceModule.makeDeterministicTenantRoutingService();
+
+  const decision = await Effect.runPromise(
+    service.resolve({
+      ...baseRequest,
+      issuer: "https://idp-a.example.com",
+      issuerBindings: [
+        ...baseRequest.issuerBindings,
+        {
+          issuer: "https://idp-a.example.com",
+          tenantId: "tenant_missing",
+        },
+      ],
+    })
+  );
+
+  assert.equal(decision.resolved, false);
+  assert.equal(decision.tenantId, "tenant_a");
+  assert.equal(decision.denyReasonCode, "TENANT_ISSUER_MISMATCH");
+  assert.deepEqual(decision.candidateTenantIds, ["tenant_a"]);
 });
 
 test("ums-memory-wt0.2: denies with TENANT_ROUTE_MISSING when no path resolves", async () => {
