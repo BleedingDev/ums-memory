@@ -7,12 +7,18 @@ import {
   PolicyOutcomeSchema,
 } from "./domains.js";
 import {
+  AgentIdSchema,
+  BatchIdSchema,
+  ConversationIdSchema,
   EvidenceIdSchema,
+  MessageIdSchema,
   MemoryIdSchema,
   ProfileIdSchema,
   ProjectIdSchema,
   RoleIdSchema,
+  SourceIdSchema,
   SpaceIdSchema,
+  TenantIdSchema,
   UserIdSchema,
 } from "./ids.js";
 
@@ -45,6 +51,18 @@ export const ScopeAuthorizationInputSchema = Schema.Struct({
   job_role_ids: Schema.optional(Schema.Array(RoleIdSchema)),
   userIds: Schema.optional(Schema.Array(UserIdSchema)),
   user_ids: Schema.optional(Schema.Array(UserIdSchema)),
+});
+
+export const ProvenanceEnvelopeSchema = Schema.Struct({
+  tenantId: TenantIdSchema,
+  projectId: Schema.optional(ProjectIdSchema),
+  roleId: Schema.optional(RoleIdSchema),
+  userId: Schema.optional(UserIdSchema),
+  agentId: Schema.optional(AgentIdSchema),
+  conversationId: Schema.optional(ConversationIdSchema),
+  messageId: Schema.optional(MessageIdSchema),
+  sourceId: Schema.optional(SourceIdSchema),
+  batchId: Schema.optional(BatchIdSchema),
 });
 
 export const StorageUpsertRequestSchema = Schema.Struct({
@@ -373,12 +391,14 @@ export const IngestionRecordSchema = Schema.Struct({
   recordId: EvidenceIdSchema,
   content: Schema.String,
   metadata: IngestionMetadataSchema,
+  provenance: Schema.optional(ProvenanceEnvelopeSchema),
 });
 
 export const IngestionRequestSchema = Schema.Struct({
   source: Schema.String,
   idempotencyKey: Schema.String,
   occurredAtMillis: NonNegativeIntSchema,
+  provenance: Schema.optional(ProvenanceEnvelopeSchema),
   records: Schema.Array(IngestionRecordSchema),
 });
 
@@ -563,6 +583,9 @@ export type StorageSnapshotImportResponse = Schema.Schema.Type<
 >;
 export type ScopeAuthorizationInput = Schema.Schema.Type<
   typeof ScopeAuthorizationInputSchema
+>;
+export type ProvenanceEnvelope = Schema.Schema.Type<
+  typeof ProvenanceEnvelopeSchema
 >;
 export type RetrievalScopeSelectors = Schema.Schema.Type<
   typeof RetrievalScopeSelectorsSchema

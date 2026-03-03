@@ -839,7 +839,14 @@ function extractActionableAntiPatterns(
   values,
   maxNotes = MAX_ANTIPATTERN_NOTES
 ) {
-  const deduped = [...new Map((Array.isArray(values) ? values : []).map((raw) => sanitizeAntiPatternText(raw)).filter((note) => isActionableAntiPatternLine(note)).map((note) => [normalizeCandidateKey(note), note])).values()];
+  const deduped = [
+    ...new Map(
+      (Array.isArray(values) ? values : [])
+        .map((raw) => sanitizeAntiPatternText(raw))
+        .filter((note) => isActionableAntiPatternLine(note))
+        .map((note) => [normalizeCandidateKey(note), note])
+    ).values(),
+  ];
   return deduped.slice(0, maxNotes);
 }
 

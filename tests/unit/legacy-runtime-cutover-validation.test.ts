@@ -10,16 +10,29 @@ import {
 } from "../../scripts/validate-legacy-runtime-cutover.ts";
 
 const INVENTORY_SCHEMA_VERSION = "legacy_runtime_shim_inventory.v1";
-
 const SHIM_PATH = "apps/api/src/core.mjs";
 
-async function writeProjectFile(projectRoot, relativePath, content = "") {
+type InventoryEntry = {
+  path: string;
+  kind: "runtime_entrypoint" | "legacy_shared_contract";
+  followUpBeadId: string;
+  notes: string;
+};
+
+async function writeProjectFile(
+  projectRoot: string,
+  relativePath: string,
+  content = ""
+): Promise<void> {
   const targetPath = resolve(projectRoot, relativePath);
   await mkdir(resolve(targetPath, ".."), { recursive: true });
   await writeFile(targetPath, content, "utf8");
 }
 
-async function writeInventory(projectRoot, entries) {
+async function writeInventory(
+  projectRoot: string,
+  entries: readonly InventoryEntry[]
+): Promise<string> {
   const inventoryPath = resolve(
     projectRoot,
     "docs/migration/legacy-runtime-shim-inventory.v1.json"
@@ -27,34 +40,62 @@ async function writeInventory(projectRoot, entries) {
   await mkdir(resolve(inventoryPath, ".."), { recursive: true });
   await writeFile(
     inventoryPath,
-    `${JSON.stringify({ schemaVersion: INVENTORY_SCHEMA_VERSION, entries }, null, 2)}\n`,
+    `${JSON.stringify(
+      { schemaVersion: INVENTORY_SCHEMA_VERSION, entries },
+      null,
+      2
+    )}\n`,
     "utf8"
   );
   return inventoryPath;
 }
 
-function makeInventoryEntry(path) {
+function makeInventoryEntry(entryPath: string): InventoryEntry {
   return {
-    path,
+    path: entryPath,
     kind: "runtime_entrypoint",
     followUpBeadId: "ums-memory-n4m.6",
     notes: "legacy shim",
   };
 }
 
-test("legacy runtime cutover validation rejects legacy shim imports from script/mjs importers", async () => {
-  const projectRoot = await mkdtemp(resolve(tmpdir(), "legacy-cutover-pass-"));
+test("legacy runtime cutover validation passes with empty inventory and no import edges", async () => {
+  const projectRoot = await mkdtemp(
+    resolve(tmpdir(), "legacy-cutover-empty-inventory-pass-")
+  );
+
+  try {
+    await writeProjectFile(
+      projectRoot,
+      "apps/api/src/server.ts",
+      "export const server = true;\n"
+    );
+    const inventoryPath = await writeInventory(projectRoot, []);
+    const result = await validateLegacyRuntimeCutover({
+      projectRoot,
+      inventoryPath,
+    });
+
+    assert.equal(result.ok, true);
+    assert.equal(result.inventoryMustBeEmpty, true);
+    assert.equal(result.legacyImportEdgeCount, 0);
+    assert.deepEqual(result.strictTypeScriptViolations, []);
+    assert.deepEqual(result.unexpectedLegacyImporters, []);
+  } finally {
+    await rm(projectRoot, { recursive: true, force: true });
+  }
+});
+
+test("legacy runtime cutover validation fails when inventory is non-empty", async () => {
+  const projectRoot = await mkdtemp(
+    resolve(tmpdir(), "legacy-cutover-non-empty-inventory-")
+  );
 
   try {
     await writeProjectFile(
       projectRoot,
       SHIM_PATH,
       "export function run() { return true; }\n"
-    );
-    await writeProjectFile(
-      projectRoot,
-      "scripts/tool.mjs",
-      'import { run } from "../apps/api/src/core.mjs";\nvoid run;\n'
     );
     const inventoryPath = await writeInventory(projectRoot, [
       makeInventoryEntry(SHIM_PATH),
@@ -65,20 +106,13 @@ test("legacy runtime cutover validation rejects legacy shim imports from script/
     });
 
     assert.equal(result.ok, false);
-    assert.equal(result.strictTypeScriptViolations.length, 0);
-    assert.deepEqual(result.unexpectedLegacyImporters, [
-      {
-        importer: "scripts/tool.mjs",
-        target: SHIM_PATH,
-      },
-    ]);
-    assert.equal(result.legacyImportEdgeCount, 1);
+    assert.equal(result.inventoryMustBeEmpty, false);
   } finally {
     await rm(projectRoot, { recursive: true, force: true });
   }
 });
 
-test("legacy runtime cutover validation rejects strict TypeScript imports of legacy shims", async () => {
+test("legacy runtime cutover validation detects strict TypeScript imports of legacy shim paths", async () => {
   const projectRoot = await mkdtemp(
     resolve(tmpdir(), "legacy-cutover-ts-violation-")
   );
@@ -103,6 +137,7 @@ test("legacy runtime cutover validation rejects strict TypeScript imports of leg
     });
 
     assert.equal(result.ok, false);
+    assert.equal(result.inventoryMustBeEmpty, false);
     assert.deepEqual(result.strictTypeScriptViolations, [
       {
         importer: "libs/shared/src/effect/service.ts",
@@ -114,43 +149,7 @@ test("legacy runtime cutover validation rejects strict TypeScript imports of leg
   }
 });
 
-test("legacy runtime cutover validation rejects .tsx strict TypeScript imports of legacy shims", async () => {
-  const projectRoot = await mkdtemp(
-    resolve(tmpdir(), "legacy-cutover-tsx-violation-")
-  );
-
-  try {
-    await writeProjectFile(
-      projectRoot,
-      SHIM_PATH,
-      "export function run() { return true; }\n"
-    );
-    await writeProjectFile(
-      projectRoot,
-      "apps/web/src/widget.tsx",
-      'import { run } from "../../api/src/core.mjs";\nvoid run;\n'
-    );
-    const inventoryPath = await writeInventory(projectRoot, [
-      makeInventoryEntry(SHIM_PATH),
-    ]);
-    const result = await validateLegacyRuntimeCutover({
-      projectRoot,
-      inventoryPath,
-    });
-
-    assert.equal(result.ok, false);
-    assert.deepEqual(result.strictTypeScriptViolations, [
-      {
-        importer: "apps/web/src/widget.tsx",
-        target: SHIM_PATH,
-      },
-    ]);
-  } finally {
-    await rm(projectRoot, { recursive: true, force: true });
-  }
-});
-
-test("legacy runtime cutover validation rejects unexpected importer locations", async () => {
+test("legacy runtime cutover validation reports non-runtime TS importers as unexpected", async () => {
   const projectRoot = await mkdtemp(
     resolve(tmpdir(), "legacy-cutover-unexpected-importer-")
   );
@@ -163,8 +162,8 @@ test("legacy runtime cutover validation rejects unexpected importer locations", 
     );
     await writeProjectFile(
       projectRoot,
-      "libs/shared/src/consumer.mjs",
-      'import { run } from "../../../apps/api/src/core.mjs";\nvoid run;\n'
+      "scripts/tool.ts",
+      'import { run } from "../apps/api/src/core.mjs";\nvoid run;\n'
     );
     const inventoryPath = await writeInventory(projectRoot, [
       makeInventoryEntry(SHIM_PATH),
@@ -175,9 +174,10 @@ test("legacy runtime cutover validation rejects unexpected importer locations", 
     });
 
     assert.equal(result.ok, false);
+    assert.equal(result.inventoryMustBeEmpty, false);
     assert.deepEqual(result.unexpectedLegacyImporters, [
       {
-        importer: "libs/shared/src/consumer.mjs",
+        importer: "scripts/tool.ts",
         target: SHIM_PATH,
       },
     ]);
@@ -186,7 +186,7 @@ test("legacy runtime cutover validation rejects unexpected importer locations", 
   }
 });
 
-test("legacy runtime cutover validation ignores commented import references", async () => {
+test("legacy runtime cutover validation ignores commented import references when inventory is empty", async () => {
   const projectRoot = await mkdtemp(
     resolve(tmpdir(), "legacy-cutover-comments-")
   );
@@ -194,12 +194,7 @@ test("legacy runtime cutover validation ignores commented import references", as
   try {
     await writeProjectFile(
       projectRoot,
-      SHIM_PATH,
-      "export function run() { return true; }\n"
-    );
-    await writeProjectFile(
-      projectRoot,
-      "scripts/commented.mjs",
+      "scripts/commented.ts",
       [
         '// import { run } from "../apps/api/src/core.mjs";',
         "/*",
@@ -208,70 +203,15 @@ test("legacy runtime cutover validation ignores commented import references", as
         "export const value = 1;",
       ].join("\n")
     );
-    const inventoryPath = await writeInventory(projectRoot, [
-      makeInventoryEntry(SHIM_PATH),
-    ]);
+    const inventoryPath = await writeInventory(projectRoot, []);
     const result = await validateLegacyRuntimeCutover({
       projectRoot,
       inventoryPath,
     });
 
     assert.equal(result.ok, true);
+    assert.equal(result.inventoryMustBeEmpty, true);
     assert.equal(result.legacyImportEdgeCount, 0);
-  } finally {
-    await rm(projectRoot, { recursive: true, force: true });
-  }
-});
-
-test("legacy runtime cutover validation captures multiple real imports and flags non-TS importers", async () => {
-  const projectRoot = await mkdtemp(
-    resolve(tmpdir(), "legacy-cutover-multi-import-")
-  );
-
-  try {
-    const secondShimPath = "apps/cli/src/index.mjs";
-    await writeProjectFile(
-      projectRoot,
-      SHIM_PATH,
-      "export function run() { return true; }\n"
-    );
-    await writeProjectFile(
-      projectRoot,
-      secondShimPath,
-      "export function runCli() { return true; }\n"
-    );
-    await writeProjectFile(
-      projectRoot,
-      "scripts/multi.mjs",
-      [
-        'import { run } from "../apps/api/src/core.mjs";',
-        '// import { ignored } from "../apps/api/src/core.mjs";',
-        'import { runCli } from "../apps/cli/src/index.mjs";',
-        "void run;",
-        "void runCli;",
-      ].join("\n")
-    );
-    const inventoryPath = await writeInventory(projectRoot, [
-      makeInventoryEntry(SHIM_PATH),
-      makeInventoryEntry(secondShimPath),
-    ]);
-    const result = await validateLegacyRuntimeCutover({
-      projectRoot,
-      inventoryPath,
-    });
-
-    assert.equal(result.ok, false);
-    assert.equal(result.legacyImportEdgeCount, 2);
-    assert.deepEqual(result.unexpectedLegacyImporters, [
-      {
-        importer: "scripts/multi.mjs",
-        target: SHIM_PATH,
-      },
-      {
-        importer: "scripts/multi.mjs",
-        target: secondShimPath,
-      },
-    ]);
   } finally {
     await rm(projectRoot, { recursive: true, force: true });
   }

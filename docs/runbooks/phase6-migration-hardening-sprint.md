@@ -2,7 +2,7 @@
 
 ## Purpose
 
-`ums-memory-n4m.5` hardens the migration path before final cutover (`ums-memory-n4m.6`) by enforcing a strict inventory of legacy runtime compatibility shims.
+`ums-memory-n4m.5` originally hardened the migration path before final cutover (`ums-memory-n4m.6`) by enforcing a strict inventory of legacy runtime compatibility shims.
 
 This prevents hidden debt growth while strict TypeScript + Effect migration finishes.
 
@@ -19,9 +19,9 @@ Required fields per entry:
 - `followUpBeadId`: bead that removes/migrates the shim.
 - `notes`: short reason for temporary retention.
 
-Current follow-up bead for all listed runtime shims:
+Current post-cutover state:
 
-- `ums-memory-n4m.6`
+- inventory must be empty (`entries: []`).
 
 ## Validation Gate
 
@@ -33,6 +33,7 @@ npm run validate:legacy-shims
 
 The validator (`scripts/validate-legacy-runtime-shims.ts`) fails if any of the following occur:
 
+- inventory contains any shim entries (post-cutover invariant),
 - new legacy runtime shim file exists but is missing from inventory,
 - inventory references a shim that no longer exists on disk,
 - duplicate inventory paths exist,
@@ -43,9 +44,9 @@ The command is wired into `npm run quality:ts`, which means `npm run ci:verify` 
 
 ## Operator Workflow
 
-1. Add or change shim only when migration cannot be completed in the same bead.
-2. Update `docs/migration/legacy-runtime-shim-inventory.v1.json` in the same change.
-3. Set `followUpBeadId` to a concrete migration bead.
+1. Do not add runtime shim files in cutover-complete branches.
+2. Keep `docs/migration/legacy-runtime-shim-inventory.v1.json` empty.
+3. If an emergency shim appears, open a blocking bead immediately and remove it in the same migration window.
 4. Run:
 
 ```bash
@@ -57,6 +58,6 @@ npm run quality:ts
 
 ## Exit Criteria for `ums-memory-n4m.5`
 
-- Inventory exists and remains accurate as shim count converges to zero.
+- Inventory exists and remains empty after cutover.
 - Validation gate is automated and part of quality pipeline.
 - Unit tests cover pass and fail edge cases of validator behavior.

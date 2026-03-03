@@ -11,7 +11,7 @@
 - Command: `npm run validate:legacy-shims`
 - Source of truth: `docs/migration/legacy-runtime-shim-inventory.v1.json`
 
-This gate ensures shim count/path drift is explicit and tracked with follow-up beads.
+This gate now enforces post-cutover state: inventory must stay empty (`entries: []`).
 
 ### 2) Legacy Runtime Cutover Guard
 
@@ -20,9 +20,9 @@ This gate ensures shim count/path drift is explicit and tracked with follow-up b
 
 This gate enforces:
 
-- strict TypeScript files in `apps/**` and `libs/**` must not import legacy runtime shim paths,
-- non-TS importer surfaces (scripts/tests/benchmarks and legacy `.mjs` files) are also rejected when importing shim paths,
-- any detected shim import edge is treated as migration debt and fails the gate.
+- strict TypeScript importer surfaces (`apps`, `libs`, `scripts`, `tests`, `benchmarks`) must not import legacy runtime shim paths,
+- any detected shim import edge is treated as migration debt and fails the gate,
+- a non-empty legacy shim inventory fails immediately (post-cutover invariant).
 
 The gate fails on any violation and is wired into `npm run quality:ts`.
 
@@ -30,7 +30,7 @@ The gate fails on any violation and is wired into `npm run quality:ts`.
 
 1. Do not add new runtime shim imports in any source surface.
 2. Migrate production behavior to strict TS + Effect modules first.
-3. Keep shim usage traceable in `docs/migration/legacy-runtime-shim-inventory.v1.json` until inventory reaches zero.
+3. Keep `docs/migration/legacy-runtime-shim-inventory.v1.json` empty; adding shim entries is a cutover regression.
 4. Run:
 
 ```bash
@@ -46,4 +46,5 @@ npm run quality:ts
 - `validate:legacy-shims` passes.
 - `validate:cutover` passes.
 - `quality:ts`, `test`, `test:sfe`, and `ci:verify` pass.
-- No strict TS production file imports legacy runtime shim paths.
+- No strict TS source file imports legacy runtime shim paths.
+- Legacy runtime shim inventory remains empty.

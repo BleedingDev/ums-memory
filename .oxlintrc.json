@@ -55,11 +55,42 @@
     {
       "files": [
         "**/*.{test,spec}.{ts,tsx,js,jsx}",
-        "**/__tests__/**/*.{ts,tsx,js,jsx}"
+        "**/__tests__/**/*.{ts,tsx,js,jsx}",
+        "apps/**/test/**/*.ts",
+        "tests/**/*.ts",
+        "benchmarks/**/*.ts"
       ],
       "rules": {
+        "eslint-plugin-jest/no-conditional-in-test": "off",
+        "eslint-plugin-jest/require-hook": "off",
         "eslint-plugin-vitest/no-import-node-test": "off",
+        "jest/no-conditional-in-test": "off",
+        "jest/require-hook": "off",
+        "no-empty-function": "off",
+        "promise/avoid-new": "off",
+        "promise/param-names": "off",
+        "promise/prefer-await-to-then": "off",
+        "promise/prefer-catch": "off",
+        "require-await": "off",
         "vitest/no-import-node-test": "off"
+      }
+    },
+    {
+      "files": ["scripts/**/*.ts"],
+      "rules": {
+        "eqeqeq": "off",
+        "no-control-regex": "off",
+        "no-eq-null": "off",
+        "no-misleading-character-class": "off",
+        "no-useless-return": "off",
+        "prefer-template": "off",
+        "promise/avoid-new": "off",
+        "promise/param-names": "off",
+        "promise/prefer-await-to-then": "off",
+        "promise/prefer-catch": "off",
+        "require-await": "off",
+        "typescript-eslint/no-non-null-assertion": "off",
+        "typescript/no-non-null-assertion": "off"
       }
     }
   ]

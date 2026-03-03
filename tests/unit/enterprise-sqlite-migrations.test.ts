@@ -75,8 +75,8 @@ const readSchemaSignature = (database) =>
 test("ums-memory-5cb.2: enterprise sqlite migration definitions and planning are deterministic", async () => {
   const migrationsModule = await loadSqliteMigrationModule();
 
-  assert.equal(migrationsModule.enterpriseSqliteMigrations.length, 4);
-  assert.equal(migrationsModule.enterpriseSqliteLatestMigrationVersion, 4);
+  assert.equal(migrationsModule.enterpriseSqliteMigrations.length, 6);
+  assert.equal(migrationsModule.enterpriseSqliteLatestMigrationVersion, 6);
 
   const migrationV1 = migrationsModule.enterpriseSqliteMigrations[0];
   assert.equal(migrationV1.version, 1);
@@ -97,25 +97,39 @@ test("ums-memory-5cb.2: enterprise sqlite migration definitions and planning are
     "enterprise_sqlite_v4_storage_idempotency_ledger"
   );
   assert.equal(migrationV4.sql, `${migrationV4.statements.join("\n\n")}\n`);
+  const migrationV5 = migrationsModule.enterpriseSqliteMigrations[4];
+  assert.equal(migrationV5.version, 5);
+  assert.equal(
+    migrationV5.name,
+    "enterprise_sqlite_v5_identity_runtime_bindings"
+  );
+  assert.equal(migrationV5.sql, `${migrationV5.statements.join("\n\n")}\n`);
+  const migrationV6 = migrationsModule.enterpriseSqliteMigrations[5];
+  assert.equal(migrationV6.version, 6);
+  assert.equal(
+    migrationV6.name,
+    "enterprise_sqlite_v6_provenance_lineage_dimensions"
+  );
+  assert.equal(migrationV6.sql, `${migrationV6.statements.join("\n\n")}\n`);
 
   const planFromVersionZero = migrationsModule.planSqliteMigrations(
     migrationsModule.enterpriseSqliteMigrations,
     0
   );
   assert.equal(planFromVersionZero.currentVersion, 0);
-  assert.equal(planFromVersionZero.targetVersion, 4);
-  assert.equal(planFromVersionZero.latestVersion, 4);
+  assert.equal(planFromVersionZero.targetVersion, 6);
+  assert.equal(planFromVersionZero.latestVersion, 6);
   assert.equal(planFromVersionZero.isUpToDate, false);
   assert.deepEqual(
     toMigrationVersions(planFromVersionZero.pendingMigrations),
-    [1, 2, 3, 4]
+    [1, 2, 3, 4, 5, 6]
   );
 
   const planFromLatest = migrationsModule.planSqliteMigrations(
     migrationsModule.enterpriseSqliteMigrations,
-    4
+    6
   );
-  assert.equal(planFromLatest.currentVersion, 4);
+  assert.equal(planFromLatest.currentVersion, 6);
   assert.equal(planFromLatest.isUpToDate, true);
   assert.deepEqual(toMigrationVersions(planFromLatest.pendingMigrations), []);
 
@@ -126,7 +140,7 @@ test("ums-memory-5cb.2: enterprise sqlite migration definitions and planning are
   assert.equal(planFromVersionOne.currentVersion, 1);
   assert.deepEqual(
     toMigrationVersions(planFromVersionOne.pendingMigrations),
-    [2, 3, 4]
+    [2, 3, 4, 5, 6]
   );
 });
 
@@ -141,16 +155,16 @@ test("ums-memory-5cb.2: enterprise sqlite migration apply is replay-safe determi
 
       const initialPending =
         migrationsModule.listPendingEnterpriseSqliteMigrations(database);
-      assert.deepEqual(toMigrationVersions(initialPending), [1, 2, 3, 4]);
+      assert.deepEqual(toMigrationVersions(initialPending), [1, 2, 3, 4, 5, 6]);
 
       const firstApplyResult =
         migrationsModule.applyEnterpriseSqliteMigrations(database);
       assert.equal(firstApplyResult.isUpToDate, false);
       assert.deepEqual(
         toMigrationVersions(firstApplyResult.appliedMigrations),
-        [1, 2, 3, 4]
+        [1, 2, 3, 4, 5, 6]
       );
-      assert.equal(migrationsModule.readSqliteUserVersion(database), 4);
+      assert.equal(migrationsModule.readSqliteUserVersion(database), 6);
 
       const replayApplyResult =
         migrationsModule.applyEnterpriseSqliteMigrations(database);
@@ -159,7 +173,7 @@ test("ums-memory-5cb.2: enterprise sqlite migration apply is replay-safe determi
         toMigrationVersions(replayApplyResult.appliedMigrations),
         []
       );
-      assert.equal(migrationsModule.readSqliteUserVersion(database), 4);
+      assert.equal(migrationsModule.readSqliteUserVersion(database), 6);
 
       return readSchemaSignature(database);
     } finally {
@@ -254,13 +268,13 @@ test("ums-memory-5cb.6: migrating from v1 to v2 backfills FTS rows and uses virt
       )
     );
 
-    const v3AndV4ApplyResult =
+    const v3ToV6ApplyResult =
       migrationsModule.applyEnterpriseSqliteMigrations(database);
     assert.deepEqual(
-      toMigrationVersions(v3AndV4ApplyResult.appliedMigrations),
-      [3, 4]
+      toMigrationVersions(v3ToV6ApplyResult.appliedMigrations),
+      [3, 4, 5, 6]
     );
-    assert.equal(migrationsModule.readSqliteUserVersion(database), 4);
+    assert.equal(migrationsModule.readSqliteUserVersion(database), 6);
   } finally {
     database.close();
   }
@@ -341,8 +355,10 @@ test("ums-memory-5cb.10: migrating from v3 to v4 adds storage idempotency ledger
     );
     assert.equal(migrationsModule.readSqliteUserVersion(database), 3);
 
-    const v4ApplyResult =
-      migrationsModule.applyEnterpriseSqliteMigrations(database);
+    const v4ApplyResult = migrationsModule.applyEnterpriseSqliteMigrations(
+      database,
+      4
+    );
     assert.deepEqual(toMigrationVersions(v4ApplyResult.appliedMigrations), [4]);
     assert.equal(migrationsModule.readSqliteUserVersion(database), 4);
 
@@ -382,6 +398,338 @@ test("ums-memory-5cb.10: migrating from v3 to v4 adds storage idempotency ledger
         "idx_storage_idempotency_ledger_created",
         "idx_storage_idempotency_ledger_request_hash",
       ]
+    );
+  } finally {
+    database.close();
+  }
+});
+
+test("ums-memory-wt0.1: migrating from v4 to v5 adds deterministic identity runtime objects", async () => {
+  const migrationsModule = await loadSqliteMigrationModule();
+  const database = new DatabaseSync(":memory:");
+
+  try {
+    database.exec("PRAGMA foreign_keys = ON;");
+    const v4ApplyResult = migrationsModule.applyEnterpriseSqliteMigrations(
+      database,
+      4
+    );
+    assert.deepEqual(
+      toMigrationVersions(v4ApplyResult.appliedMigrations),
+      [1, 2, 3, 4]
+    );
+    assert.equal(migrationsModule.readSqliteUserVersion(database), 4);
+
+    const v5ApplyResult = migrationsModule.applyEnterpriseSqliteMigrations(
+      database,
+      5
+    );
+    assert.deepEqual(toMigrationVersions(v5ApplyResult.appliedMigrations), [5]);
+    assert.equal(migrationsModule.readSqliteUserVersion(database), 5);
+
+    const identityTableNames = database
+      .prepare(
+        [
+          "SELECT name FROM sqlite_schema",
+          "WHERE type = 'table'",
+          "  AND name IN ('identity_issuer_bindings', 'user_external_subjects', 'identity_sync_checkpoints')",
+          "ORDER BY name ASC;",
+        ].join("\n")
+      )
+      .all()
+      .map((row) => row.name);
+    assert.deepEqual(identityTableNames, [
+      "identity_issuer_bindings",
+      "identity_sync_checkpoints",
+      "user_external_subjects",
+    ]);
+
+    const now = 1_700_000_000_020;
+    database
+      .prepare(
+        "INSERT INTO tenants (tenant_id, tenant_slug, display_name, created_at_ms, updated_at_ms) VALUES (?, ?, ?, ?, ?);"
+      )
+      .run("tenant-id-v5", "tenant-id-v5", "Tenant Id V5", now, now);
+    database
+      .prepare(
+        "INSERT INTO users (tenant_id, user_id, email, display_name, status, created_at_ms, updated_at_ms) VALUES (?, ?, ?, ?, ?, ?, ?);"
+      )
+      .run(
+        "tenant-id-v5",
+        "user-id-v5",
+        "user-id-v5@example.com",
+        "User Id V5",
+        "active",
+        now,
+        now
+      );
+
+    database
+      .prepare(
+        "INSERT INTO identity_issuer_bindings (tenant_id, issuer_binding_id, issuer, issuer_kind, is_primary, created_at_ms, updated_at_ms) VALUES (?, ?, ?, ?, ?, ?, ?);"
+      )
+      .run(
+        "tenant-id-v5",
+        "issuer-v5-primary",
+        "https://idp.v5.example.com",
+        "oidc",
+        1,
+        now,
+        now
+      );
+    database
+      .prepare(
+        "INSERT INTO user_external_subjects (tenant_id, issuer_binding_id, external_subject_id, user_id, subject_hash_sha256, subject_source, first_seen_at_ms, last_seen_at_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?);"
+      )
+      .run(
+        "tenant-id-v5",
+        "issuer-v5-primary",
+        "subject-v5-001",
+        "user-id-v5",
+        "f".repeat(64),
+        "scim",
+        now,
+        now
+      );
+    database
+      .prepare(
+        "INSERT INTO identity_sync_checkpoints (tenant_id, issuer_binding_id, sync_channel, checkpoint_cursor, cursor_hash_sha256, cursor_sequence, checkpointed_at_ms, updated_at_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?);"
+      )
+      .run(
+        "tenant-id-v5",
+        "issuer-v5-primary",
+        "scim_users",
+        "cursor-v5-001",
+        "e".repeat(64),
+        1,
+        now,
+        now
+      );
+
+    assert.throws(
+      () =>
+        database
+          .prepare(
+            "INSERT INTO identity_issuer_bindings (tenant_id, issuer_binding_id, issuer, issuer_kind, is_primary, created_at_ms, updated_at_ms) VALUES (?, ?, ?, ?, ?, ?, ?);"
+          )
+          .run(
+            "tenant-id-v5",
+            "issuer-v5-secondary",
+            "https://idp.v5-secondary.example.com",
+            "oidc",
+            1,
+            now,
+            now
+          ),
+      /constraint|unique/i
+    );
+  } finally {
+    database.close();
+  }
+});
+
+test("ums-memory-i6m.2: migrating from v5 to v6 adds provenance lineage linkage objects", async () => {
+  const migrationsModule = await loadSqliteMigrationModule();
+  const database = new DatabaseSync(":memory:");
+
+  try {
+    database.exec("PRAGMA foreign_keys = ON;");
+    const v5ApplyResult = migrationsModule.applyEnterpriseSqliteMigrations(
+      database,
+      5
+    );
+    assert.deepEqual(
+      toMigrationVersions(v5ApplyResult.appliedMigrations),
+      [1, 2, 3, 4, 5]
+    );
+    assert.equal(migrationsModule.readSqliteUserVersion(database), 5);
+
+    const v6ApplyResult = migrationsModule.applyEnterpriseSqliteMigrations(
+      database,
+      6
+    );
+    assert.deepEqual(toMigrationVersions(v6ApplyResult.appliedMigrations), [6]);
+    assert.equal(migrationsModule.readSqliteUserVersion(database), 6);
+
+    const now = 1_700_000_000_030;
+    database
+      .prepare(
+        "INSERT INTO tenants (tenant_id, tenant_slug, display_name, created_at_ms, updated_at_ms) VALUES (?, ?, ?, ?, ?);"
+      )
+      .run("tenant-prov-v6", "tenant-prov-v6", "Tenant Prov V6", now, now);
+    database
+      .prepare(
+        "INSERT INTO projects (tenant_id, project_id, project_key, display_name, status, created_at_ms, archived_at_ms) VALUES (?, ?, ?, ?, ?, ?, ?);"
+      )
+      .run(
+        "tenant-prov-v6",
+        "project-prov-v6",
+        "PROV-V6",
+        "Project Prov V6",
+        "active",
+        now,
+        null
+      );
+    database
+      .prepare(
+        "INSERT INTO roles (tenant_id, role_id, role_code, display_name, role_type, created_at_ms) VALUES (?, ?, ?, ?, ?, ?);"
+      )
+      .run(
+        "tenant-prov-v6",
+        "role-prov-v6",
+        "ROLE_PROV_V6",
+        "Role Prov V6",
+        "project",
+        now
+      );
+    database
+      .prepare(
+        "INSERT INTO users (tenant_id, user_id, email, display_name, status, created_at_ms, updated_at_ms) VALUES (?, ?, ?, ?, ?, ?, ?);"
+      )
+      .run(
+        "tenant-prov-v6",
+        "user-prov-v6",
+        "user-prov-v6@example.com",
+        "User Prov V6",
+        "active",
+        now,
+        now
+      );
+    database
+      .prepare(
+        "INSERT INTO scopes (tenant_id, scope_id, scope_level, project_id, role_id, user_id, parent_scope_id, created_at_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?);"
+      )
+      .run(
+        "tenant-prov-v6",
+        "scope-common-prov-v6",
+        "common",
+        null,
+        null,
+        null,
+        null,
+        now
+      );
+    database
+      .prepare(
+        "INSERT INTO scopes (tenant_id, scope_id, scope_level, project_id, role_id, user_id, parent_scope_id, created_at_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?);"
+      )
+      .run(
+        "tenant-prov-v6",
+        "scope-project-prov-v6",
+        "project",
+        "project-prov-v6",
+        null,
+        null,
+        "scope-common-prov-v6",
+        now
+      );
+    database
+      .prepare(
+        "INSERT INTO memory_items (tenant_id, memory_id, scope_id, memory_layer, memory_kind, status, title, payload_json, created_by_user_id, supersedes_memory_id, created_at_ms, updated_at_ms, expires_at_ms, tombstoned_at_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);"
+      )
+      .run(
+        "tenant-prov-v6",
+        "memory-prov-v6",
+        "scope-project-prov-v6",
+        "working",
+        "note",
+        "active",
+        "Memory Prov V6",
+        "{}",
+        "user-prov-v6",
+        null,
+        now,
+        now,
+        null,
+        null
+      );
+    database
+      .prepare(
+        "INSERT INTO evidence (tenant_id, evidence_id, source_kind, source_ref, digest_sha256, payload_json, observed_at_ms, created_at_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?);"
+      )
+      .run(
+        "tenant-prov-v6",
+        "evidence-prov-v6",
+        "event",
+        "event://prov-v6-1",
+        "1".repeat(64),
+        "{}",
+        now,
+        now
+      );
+    database
+      .prepare(
+        "INSERT INTO audit_events (event_id, tenant_id, memory_id, operation, outcome, reason, details, reference_kind, reference_id, owner_tenant_id, recorded_at_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);"
+      )
+      .run(
+        "audit:prov-v6:event-1",
+        "tenant-prov-v6",
+        "memory-prov-v6",
+        "upsert",
+        "accepted",
+        "inserted",
+        "migration provenance test",
+        null,
+        null,
+        null,
+        now
+      );
+
+    database
+      .prepare(
+        "INSERT INTO provenance_envelopes (tenant_id, provenance_id, project_id, role_id, user_id, agent_id, conversation_id, message_id, source_id, batch_id, observed_at_ms, created_at_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);"
+      )
+      .run(
+        "tenant-prov-v6",
+        "prov-v6-1",
+        "project-prov-v6",
+        "role-prov-v6",
+        "user-prov-v6",
+        "agent-prov-v6",
+        "conversation-prov-v6",
+        "message-prov-v6",
+        "source-prov-v6",
+        "batch-prov-v6",
+        now,
+        now
+      );
+    database
+      .prepare(
+        "INSERT INTO memory_provenance_links (tenant_id, memory_id, provenance_id, linked_at_ms) VALUES (?, ?, ?, ?);"
+      )
+      .run("tenant-prov-v6", "memory-prov-v6", "prov-v6-1", now);
+    database
+      .prepare(
+        "INSERT INTO evidence_provenance_links (tenant_id, evidence_id, provenance_id, linked_at_ms) VALUES (?, ?, ?, ?);"
+      )
+      .run("tenant-prov-v6", "evidence-prov-v6", "prov-v6-1", now);
+    database
+      .prepare(
+        "INSERT INTO audit_event_provenance_links (event_id, tenant_id, provenance_id, linked_at_ms) VALUES (?, ?, ?, ?);"
+      )
+      .run("audit:prov-v6:event-1", "tenant-prov-v6", "prov-v6-1", now);
+
+    assert.throws(
+      () =>
+        database
+          .prepare(
+            "INSERT INTO provenance_envelopes (tenant_id, provenance_id, project_id, role_id, user_id, agent_id, conversation_id, message_id, source_id, batch_id, observed_at_ms, created_at_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);"
+          )
+          .run(
+            "tenant-prov-v6",
+            "prov-v6-empty",
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            now,
+            now
+          ),
+      /constraint|check/i
     );
   } finally {
     database.close();
@@ -525,8 +873,8 @@ test("ums-memory-5cb.2: enterprise sqlite migration planning rejects unknown fut
   const database = new DatabaseSync(":memory:");
 
   try {
-    migrationsModule.writeSqliteUserVersion(database, 5);
-    assert.equal(migrationsModule.readSqliteUserVersion(database), 5);
+    migrationsModule.writeSqliteUserVersion(database, 7);
+    assert.equal(migrationsModule.readSqliteUserVersion(database), 7);
 
     assert.throws(
       () => migrationsModule.planEnterpriseSqliteMigrations(database),

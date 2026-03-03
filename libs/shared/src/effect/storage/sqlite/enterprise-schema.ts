@@ -33,6 +33,21 @@ export const enterpriseRoleTypes = Object.freeze([
   "project",
   "custom",
 ] as const);
+export const enterpriseIdentityIssuerKinds = Object.freeze([
+  "oidc",
+  "saml",
+  "scim",
+] as const);
+export const enterpriseIdentitySubjectSources = Object.freeze([
+  "sso",
+  "scim",
+  "manual",
+] as const);
+export const enterpriseIdentitySyncChannels = Object.freeze([
+  "scim_users",
+  "scim_groups",
+  "sso_jit",
+] as const);
 export const enterpriseMemoryLayers = Object.freeze([
   "episodic",
   "working",
@@ -107,6 +122,12 @@ export type EnterpriseUserStatus = (typeof enterpriseUserStatuses)[number];
 export type EnterpriseProjectStatus =
   (typeof enterpriseProjectStatuses)[number];
 export type EnterpriseRoleType = (typeof enterpriseRoleTypes)[number];
+export type EnterpriseIdentityIssuerKind =
+  (typeof enterpriseIdentityIssuerKinds)[number];
+export type EnterpriseIdentitySubjectSource =
+  (typeof enterpriseIdentitySubjectSources)[number];
+export type EnterpriseIdentitySyncChannel =
+  (typeof enterpriseIdentitySyncChannels)[number];
 export type EnterpriseMemoryLayer = (typeof enterpriseMemoryLayers)[number];
 export type EnterpriseMemoryKind = (typeof enterpriseMemoryKinds)[number];
 export type EnterpriseMemoryStatus = (typeof enterpriseMemoryStatuses)[number];
@@ -133,13 +154,20 @@ export const enterpriseSqliteTableNames = Object.freeze([
   "roles",
   "project_memberships",
   "user_role_assignments",
+  "identity_issuer_bindings",
+  "user_external_subjects",
+  "identity_sync_checkpoints",
   "scopes",
   "memory_items",
   "memory_items_fts",
   "evidence",
+  "provenance_envelopes",
   "memory_evidence_links",
+  "memory_provenance_links",
+  "evidence_provenance_links",
   "feedback",
   "audit_events",
+  "audit_event_provenance_links",
   "storage_idempotency_ledger",
 ] as const);
 
@@ -252,6 +280,79 @@ const userRoleAssignmentsTableDdl = createStrictTableDdl(
   ]
 );
 
+const identityIssuerBindingsTableDdl = createStrictTableDdl(
+  "identity_issuer_bindings",
+  [
+    "tenant_id TEXT NOT NULL",
+    "issuer_binding_id TEXT NOT NULL",
+    "issuer TEXT NOT NULL",
+    "issuer_kind TEXT NOT NULL",
+    "is_primary INTEGER NOT NULL DEFAULT 0",
+    "created_at_ms INTEGER NOT NULL",
+    "updated_at_ms INTEGER NOT NULL",
+    "PRIMARY KEY (tenant_id, issuer_binding_id)",
+    "UNIQUE (tenant_id, issuer)",
+    "FOREIGN KEY (tenant_id) REFERENCES tenants (tenant_id) ON DELETE CASCADE ON UPDATE CASCADE",
+    "CHECK (length(trim(issuer_binding_id)) > 0)",
+    "CHECK (issuer_binding_id = trim(issuer_binding_id))",
+    "CHECK (length(trim(issuer)) > 0)",
+    "CHECK (issuer = trim(issuer))",
+    "CHECK (issuer = lower(issuer))",
+    `CHECK (issuer_kind IN (${toSqlStringLiteralList(enterpriseIdentityIssuerKinds)}))`,
+    "CHECK (is_primary IN (0, 1))",
+    "CHECK (created_at_ms >= 0)",
+    "CHECK (updated_at_ms >= created_at_ms)",
+  ]
+);
+
+const userExternalSubjectsTableDdl = createStrictTableDdl(
+  "user_external_subjects",
+  [
+    "tenant_id TEXT NOT NULL",
+    "issuer_binding_id TEXT NOT NULL",
+    "external_subject_id TEXT NOT NULL",
+    "user_id TEXT NOT NULL",
+    "subject_hash_sha256 TEXT NOT NULL",
+    "subject_source TEXT NOT NULL",
+    "first_seen_at_ms INTEGER NOT NULL",
+    "last_seen_at_ms INTEGER NOT NULL",
+    "PRIMARY KEY (tenant_id, issuer_binding_id, external_subject_id)",
+    "UNIQUE (tenant_id, issuer_binding_id, subject_hash_sha256)",
+    "FOREIGN KEY (tenant_id, issuer_binding_id) REFERENCES identity_issuer_bindings (tenant_id, issuer_binding_id) ON DELETE CASCADE ON UPDATE CASCADE",
+    "FOREIGN KEY (tenant_id, user_id) REFERENCES users (tenant_id, user_id) ON DELETE CASCADE ON UPDATE CASCADE",
+    "CHECK (length(trim(external_subject_id)) > 0)",
+    "CHECK (external_subject_id = trim(external_subject_id))",
+    "CHECK (length(subject_hash_sha256) = 64)",
+    "CHECK (subject_hash_sha256 NOT GLOB '*[^0-9A-Fa-f]*')",
+    `CHECK (subject_source IN (${toSqlStringLiteralList(enterpriseIdentitySubjectSources)}))`,
+    "CHECK (first_seen_at_ms >= 0)",
+    "CHECK (last_seen_at_ms >= first_seen_at_ms)",
+  ]
+);
+
+const identitySyncCheckpointsTableDdl = createStrictTableDdl(
+  "identity_sync_checkpoints",
+  [
+    "tenant_id TEXT NOT NULL",
+    "issuer_binding_id TEXT NOT NULL",
+    "sync_channel TEXT NOT NULL",
+    "checkpoint_cursor TEXT NOT NULL",
+    "cursor_hash_sha256 TEXT NOT NULL",
+    "cursor_sequence INTEGER NOT NULL",
+    "checkpointed_at_ms INTEGER NOT NULL",
+    "updated_at_ms INTEGER NOT NULL",
+    "PRIMARY KEY (tenant_id, issuer_binding_id, sync_channel)",
+    "FOREIGN KEY (tenant_id, issuer_binding_id) REFERENCES identity_issuer_bindings (tenant_id, issuer_binding_id) ON DELETE CASCADE ON UPDATE CASCADE",
+    `CHECK (sync_channel IN (${toSqlStringLiteralList(enterpriseIdentitySyncChannels)}))`,
+    "CHECK (length(trim(checkpoint_cursor)) > 0)",
+    "CHECK (length(cursor_hash_sha256) = 64)",
+    "CHECK (cursor_hash_sha256 NOT GLOB '*[^0-9A-Fa-f]*')",
+    "CHECK (cursor_sequence >= 0)",
+    "CHECK (checkpointed_at_ms >= 0)",
+    "CHECK (updated_at_ms >= checkpointed_at_ms)",
+  ]
+);
+
 const scopesTableDdl = createStrictTableDdl("scopes", [
   "tenant_id TEXT NOT NULL",
   "scope_id TEXT NOT NULL",
@@ -349,6 +450,50 @@ const evidenceTableDdl = createStrictTableDdl("evidence", [
   "CHECK (created_at_ms >= observed_at_ms)",
 ]);
 
+const provenanceEnvelopesTableDdl = createStrictTableDdl(
+  "provenance_envelopes",
+  [
+    "tenant_id TEXT NOT NULL",
+    "provenance_id TEXT NOT NULL",
+    "project_id TEXT",
+    "role_id TEXT",
+    "user_id TEXT",
+    "agent_id TEXT",
+    "conversation_id TEXT",
+    "message_id TEXT",
+    "source_id TEXT",
+    "batch_id TEXT",
+    "observed_at_ms INTEGER NOT NULL",
+    "created_at_ms INTEGER NOT NULL",
+    "PRIMARY KEY (tenant_id, provenance_id)",
+    "FOREIGN KEY (tenant_id) REFERENCES tenants (tenant_id) ON DELETE CASCADE ON UPDATE CASCADE",
+    "FOREIGN KEY (tenant_id, project_id) REFERENCES projects (tenant_id, project_id) ON DELETE CASCADE ON UPDATE CASCADE",
+    "FOREIGN KEY (tenant_id, role_id) REFERENCES roles (tenant_id, role_id) ON DELETE CASCADE ON UPDATE CASCADE",
+    "FOREIGN KEY (tenant_id, user_id) REFERENCES users (tenant_id, user_id) ON DELETE CASCADE ON UPDATE CASCADE",
+    "CHECK (length(trim(provenance_id)) > 0)",
+    "CHECK (project_id IS NULL OR length(trim(project_id)) > 0)",
+    "CHECK (role_id IS NULL OR length(trim(role_id)) > 0)",
+    "CHECK (user_id IS NULL OR length(trim(user_id)) > 0)",
+    "CHECK (agent_id IS NULL OR length(trim(agent_id)) > 0)",
+    "CHECK (conversation_id IS NULL OR length(trim(conversation_id)) > 0)",
+    "CHECK (message_id IS NULL OR length(trim(message_id)) > 0)",
+    "CHECK (source_id IS NULL OR length(trim(source_id)) > 0)",
+    "CHECK (batch_id IS NULL OR length(trim(batch_id)) > 0)",
+    "CHECK (observed_at_ms >= 0)",
+    "CHECK (created_at_ms >= observed_at_ms)",
+    `CHECK (
+      project_id IS NOT NULL OR
+      role_id IS NOT NULL OR
+      user_id IS NOT NULL OR
+      agent_id IS NOT NULL OR
+      conversation_id IS NOT NULL OR
+      message_id IS NOT NULL OR
+      source_id IS NOT NULL OR
+      batch_id IS NOT NULL
+    )`,
+  ]
+);
+
 const memoryEvidenceLinksTableDdl = createStrictTableDdl(
   "memory_evidence_links",
   [
@@ -363,6 +508,36 @@ const memoryEvidenceLinksTableDdl = createStrictTableDdl(
     "FOREIGN KEY (tenant_id, evidence_id) REFERENCES evidence (tenant_id, evidence_id) ON DELETE CASCADE ON UPDATE CASCADE",
     `CHECK (relation_kind IN (${toSqlStringLiteralList(enterpriseEvidenceRelationKinds)}))`,
     "CHECK (created_at_ms >= 0)",
+  ]
+);
+
+const memoryProvenanceLinksTableDdl = createStrictTableDdl(
+  "memory_provenance_links",
+  [
+    "tenant_id TEXT NOT NULL",
+    "memory_id TEXT NOT NULL",
+    "provenance_id TEXT NOT NULL",
+    "linked_at_ms INTEGER NOT NULL",
+    "PRIMARY KEY (tenant_id, memory_id, provenance_id)",
+    "FOREIGN KEY (tenant_id) REFERENCES tenants (tenant_id) ON DELETE CASCADE ON UPDATE CASCADE",
+    "FOREIGN KEY (tenant_id, memory_id) REFERENCES memory_items (tenant_id, memory_id) ON DELETE CASCADE ON UPDATE CASCADE",
+    "FOREIGN KEY (tenant_id, provenance_id) REFERENCES provenance_envelopes (tenant_id, provenance_id) ON DELETE CASCADE ON UPDATE CASCADE",
+    "CHECK (linked_at_ms >= 0)",
+  ]
+);
+
+const evidenceProvenanceLinksTableDdl = createStrictTableDdl(
+  "evidence_provenance_links",
+  [
+    "tenant_id TEXT NOT NULL",
+    "evidence_id TEXT NOT NULL",
+    "provenance_id TEXT NOT NULL",
+    "linked_at_ms INTEGER NOT NULL",
+    "PRIMARY KEY (tenant_id, evidence_id, provenance_id)",
+    "FOREIGN KEY (tenant_id) REFERENCES tenants (tenant_id) ON DELETE CASCADE ON UPDATE CASCADE",
+    "FOREIGN KEY (tenant_id, evidence_id) REFERENCES evidence (tenant_id, evidence_id) ON DELETE CASCADE ON UPDATE CASCADE",
+    "FOREIGN KEY (tenant_id, provenance_id) REFERENCES provenance_envelopes (tenant_id, provenance_id) ON DELETE CASCADE ON UPDATE CASCADE",
+    "CHECK (linked_at_ms >= 0)",
   ]
 );
 
@@ -429,6 +604,21 @@ const auditEventsTableDdl = createStrictTableDdl("audit_events", [
   )`,
 ]);
 
+const auditEventProvenanceLinksTableDdl = createStrictTableDdl(
+  "audit_event_provenance_links",
+  [
+    "event_id TEXT NOT NULL",
+    "tenant_id TEXT NOT NULL",
+    "provenance_id TEXT NOT NULL",
+    "linked_at_ms INTEGER NOT NULL",
+    "PRIMARY KEY (event_id, provenance_id)",
+    "FOREIGN KEY (event_id) REFERENCES audit_events (event_id) ON DELETE CASCADE ON UPDATE CASCADE",
+    "FOREIGN KEY (tenant_id, provenance_id) REFERENCES provenance_envelopes (tenant_id, provenance_id) ON DELETE CASCADE ON UPDATE CASCADE",
+    "CHECK (length(trim(event_id)) > 0)",
+    "CHECK (linked_at_ms >= 0)",
+  ]
+);
+
 const storageIdempotencyLedgerTableDdl = createStrictTableDdl(
   "storage_idempotency_ledger",
   [
@@ -481,6 +671,21 @@ export const enterpriseSqliteTables = Object.freeze([
     dependencies: ["tenants", "users", "roles"] as const,
   },
   {
+    name: "identity_issuer_bindings",
+    ddl: identityIssuerBindingsTableDdl,
+    dependencies: ["tenants"] as const,
+  },
+  {
+    name: "user_external_subjects",
+    ddl: userExternalSubjectsTableDdl,
+    dependencies: ["identity_issuer_bindings", "users"] as const,
+  },
+  {
+    name: "identity_sync_checkpoints",
+    ddl: identitySyncCheckpointsTableDdl,
+    dependencies: ["identity_issuer_bindings"] as const,
+  },
+  {
     name: "scopes",
     ddl: scopesTableDdl,
     dependencies: ["tenants", "projects", "roles", "users"] as const,
@@ -501,9 +706,24 @@ export const enterpriseSqliteTables = Object.freeze([
     dependencies: ["tenants"] as const,
   },
   {
+    name: "provenance_envelopes",
+    ddl: provenanceEnvelopesTableDdl,
+    dependencies: ["tenants", "projects", "roles", "users"] as const,
+  },
+  {
     name: "memory_evidence_links",
     ddl: memoryEvidenceLinksTableDdl,
     dependencies: ["tenants", "memory_items", "evidence"] as const,
+  },
+  {
+    name: "memory_provenance_links",
+    ddl: memoryProvenanceLinksTableDdl,
+    dependencies: ["tenants", "memory_items", "provenance_envelopes"] as const,
+  },
+  {
+    name: "evidence_provenance_links",
+    ddl: evidenceProvenanceLinksTableDdl,
+    dependencies: ["tenants", "evidence", "provenance_envelopes"] as const,
   },
   {
     name: "feedback",
@@ -514,6 +734,11 @@ export const enterpriseSqliteTables = Object.freeze([
     name: "audit_events",
     ddl: auditEventsTableDdl,
     dependencies: [] as const,
+  },
+  {
+    name: "audit_event_provenance_links",
+    ddl: auditEventProvenanceLinksTableDdl,
+    dependencies: ["audit_events", "provenance_envelopes"] as const,
   },
   {
     name: "storage_idempotency_ledger",
@@ -840,6 +1065,26 @@ const idxProjectMembershipsUserDdl =
   "CREATE INDEX IF NOT EXISTS idx_project_memberships_user ON project_memberships (tenant_id, user_id, project_id);";
 const idxUserRoleAssignmentsRoleDdl =
   "CREATE INDEX IF NOT EXISTS idx_user_role_assignments_role ON user_role_assignments (tenant_id, role_id, user_id);";
+const idxIdentityIssuerBindingsKindDdl = [
+  "CREATE INDEX IF NOT EXISTS idx_identity_issuer_bindings_kind ON identity_issuer_bindings",
+  "(tenant_id, issuer_kind, issuer_binding_id);",
+].join("\n");
+const uqIdentityIssuerBindingsPrimaryDdl = [
+  "CREATE UNIQUE INDEX IF NOT EXISTS uq_identity_issuer_bindings_primary ON identity_issuer_bindings (tenant_id)",
+  "WHERE is_primary = 1;",
+].join("\n");
+const idxUserExternalSubjectsUserDdl = [
+  "CREATE INDEX IF NOT EXISTS idx_user_external_subjects_user ON user_external_subjects",
+  "(tenant_id, user_id, issuer_binding_id, external_subject_id);",
+].join("\n");
+const idxUserExternalSubjectsSubjectHashDdl = [
+  "CREATE INDEX IF NOT EXISTS idx_user_external_subjects_subject_hash ON user_external_subjects",
+  "(tenant_id, issuer_binding_id, subject_hash_sha256);",
+].join("\n");
+const idxIdentitySyncCheckpointsUpdatedDdl = [
+  "CREATE INDEX IF NOT EXISTS idx_identity_sync_checkpoints_updated ON identity_sync_checkpoints",
+  "(tenant_id, issuer_binding_id, sync_channel, updated_at_ms DESC);",
+].join("\n");
 const uqScopesCommonSingletonDdl = [
   "CREATE UNIQUE INDEX IF NOT EXISTS uq_scopes_common_singleton ON scopes (tenant_id)",
   "WHERE scope_level = 'common';",
@@ -872,9 +1117,29 @@ const idxEvidenceSourceObservedDdl = [
   "CREATE INDEX IF NOT EXISTS idx_evidence_source_observed ON evidence",
   "(tenant_id, source_kind, observed_at_ms DESC);",
 ].join("\n");
+const idxProvenanceEnvelopesLookupDdl = [
+  "CREATE INDEX IF NOT EXISTS idx_provenance_envelopes_lookup ON provenance_envelopes",
+  "(tenant_id, source_id, conversation_id, message_id, created_at_ms DESC);",
+].join("\n");
 const idxMemoryEvidenceLinksMemoryDdl = [
   "CREATE INDEX IF NOT EXISTS idx_memory_evidence_links_memory ON memory_evidence_links",
   "(tenant_id, memory_id, relation_kind, evidence_id);",
+].join("\n");
+const idxMemoryProvenanceLinksMemoryDdl = [
+  "CREATE INDEX IF NOT EXISTS idx_memory_provenance_links_memory ON memory_provenance_links",
+  "(tenant_id, memory_id, linked_at_ms DESC, provenance_id);",
+].join("\n");
+const idxMemoryProvenanceLinksProvenanceDdl = [
+  "CREATE INDEX IF NOT EXISTS idx_memory_provenance_links_provenance ON memory_provenance_links",
+  "(tenant_id, provenance_id, memory_id);",
+].join("\n");
+const idxEvidenceProvenanceLinksEvidenceDdl = [
+  "CREATE INDEX IF NOT EXISTS idx_evidence_provenance_links_evidence ON evidence_provenance_links",
+  "(tenant_id, evidence_id, linked_at_ms DESC, provenance_id);",
+].join("\n");
+const idxEvidenceProvenanceLinksProvenanceDdl = [
+  "CREATE INDEX IF NOT EXISTS idx_evidence_provenance_links_provenance ON evidence_provenance_links",
+  "(tenant_id, provenance_id, evidence_id);",
 ].join("\n");
 const idxFeedbackMemoryStatusDdl = [
   "CREATE INDEX IF NOT EXISTS idx_feedback_memory_status ON feedback",
@@ -894,6 +1159,14 @@ const idxAuditEventsOwnerReferenceDdl = [
   "(owner_tenant_id, reference_kind, reference_id, tenant_id, recorded_at_ms, event_id)",
   "WHERE owner_tenant_id IS NOT NULL;",
 ].join("\n");
+const idxAuditEventProvenanceLinksEventDdl = [
+  "CREATE INDEX IF NOT EXISTS idx_audit_event_provenance_links_event ON audit_event_provenance_links",
+  "(event_id, linked_at_ms DESC, provenance_id);",
+].join("\n");
+const idxAuditEventProvenanceLinksTenantProvenanceDdl = [
+  "CREATE INDEX IF NOT EXISTS idx_audit_event_provenance_links_tenant_provenance ON audit_event_provenance_links",
+  "(tenant_id, provenance_id, event_id);",
+].join("\n");
 const idxStorageIdempotencyLedgerCreatedDdl = [
   "CREATE INDEX IF NOT EXISTS idx_storage_idempotency_ledger_created ON storage_idempotency_ledger",
   "(tenant_id, operation, created_at_ms DESC, idempotency_key);",
@@ -908,6 +1181,11 @@ export const enterpriseSqliteIndexNames = Object.freeze([
   "idx_projects_tenant_status",
   "idx_project_memberships_user",
   "idx_user_role_assignments_role",
+  "idx_identity_issuer_bindings_kind",
+  "uq_identity_issuer_bindings_primary",
+  "idx_user_external_subjects_user",
+  "idx_user_external_subjects_subject_hash",
+  "idx_identity_sync_checkpoints_updated",
   "uq_scopes_common_singleton",
   "uq_scopes_project_anchor",
   "uq_scopes_role_anchor",
@@ -916,11 +1194,18 @@ export const enterpriseSqliteIndexNames = Object.freeze([
   "idx_memory_items_scope_status",
   "idx_memory_items_supersedes",
   "idx_evidence_source_observed",
+  "idx_provenance_envelopes_lookup",
   "idx_memory_evidence_links_memory",
+  "idx_memory_provenance_links_memory",
+  "idx_memory_provenance_links_provenance",
+  "idx_evidence_provenance_links_evidence",
+  "idx_evidence_provenance_links_provenance",
   "idx_feedback_memory_status",
   "idx_feedback_actor_created",
   "idx_audit_events_tenant_operation",
   "idx_audit_events_owner_reference",
+  "idx_audit_event_provenance_links_event",
+  "idx_audit_event_provenance_links_tenant_provenance",
   "idx_storage_idempotency_ledger_created",
   "idx_storage_idempotency_ledger_request_hash",
 ] as const);
@@ -952,6 +1237,36 @@ export const enterpriseSqliteIndexes = Object.freeze([
     table: "user_role_assignments",
     unique: false,
     ddl: idxUserRoleAssignmentsRoleDdl,
+  },
+  {
+    name: "idx_identity_issuer_bindings_kind",
+    table: "identity_issuer_bindings",
+    unique: false,
+    ddl: idxIdentityIssuerBindingsKindDdl,
+  },
+  {
+    name: "uq_identity_issuer_bindings_primary",
+    table: "identity_issuer_bindings",
+    unique: true,
+    ddl: uqIdentityIssuerBindingsPrimaryDdl,
+  },
+  {
+    name: "idx_user_external_subjects_user",
+    table: "user_external_subjects",
+    unique: false,
+    ddl: idxUserExternalSubjectsUserDdl,
+  },
+  {
+    name: "idx_user_external_subjects_subject_hash",
+    table: "user_external_subjects",
+    unique: false,
+    ddl: idxUserExternalSubjectsSubjectHashDdl,
+  },
+  {
+    name: "idx_identity_sync_checkpoints_updated",
+    table: "identity_sync_checkpoints",
+    unique: false,
+    ddl: idxIdentitySyncCheckpointsUpdatedDdl,
   },
   {
     name: "uq_scopes_common_singleton",
@@ -1002,10 +1317,40 @@ export const enterpriseSqliteIndexes = Object.freeze([
     ddl: idxEvidenceSourceObservedDdl,
   },
   {
+    name: "idx_provenance_envelopes_lookup",
+    table: "provenance_envelopes",
+    unique: false,
+    ddl: idxProvenanceEnvelopesLookupDdl,
+  },
+  {
     name: "idx_memory_evidence_links_memory",
     table: "memory_evidence_links",
     unique: false,
     ddl: idxMemoryEvidenceLinksMemoryDdl,
+  },
+  {
+    name: "idx_memory_provenance_links_memory",
+    table: "memory_provenance_links",
+    unique: false,
+    ddl: idxMemoryProvenanceLinksMemoryDdl,
+  },
+  {
+    name: "idx_memory_provenance_links_provenance",
+    table: "memory_provenance_links",
+    unique: false,
+    ddl: idxMemoryProvenanceLinksProvenanceDdl,
+  },
+  {
+    name: "idx_evidence_provenance_links_evidence",
+    table: "evidence_provenance_links",
+    unique: false,
+    ddl: idxEvidenceProvenanceLinksEvidenceDdl,
+  },
+  {
+    name: "idx_evidence_provenance_links_provenance",
+    table: "evidence_provenance_links",
+    unique: false,
+    ddl: idxEvidenceProvenanceLinksProvenanceDdl,
   },
   {
     name: "idx_feedback_memory_status",
@@ -1032,6 +1377,18 @@ export const enterpriseSqliteIndexes = Object.freeze([
     ddl: idxAuditEventsOwnerReferenceDdl,
   },
   {
+    name: "idx_audit_event_provenance_links_event",
+    table: "audit_event_provenance_links",
+    unique: false,
+    ddl: idxAuditEventProvenanceLinksEventDdl,
+  },
+  {
+    name: "idx_audit_event_provenance_links_tenant_provenance",
+    table: "audit_event_provenance_links",
+    unique: false,
+    ddl: idxAuditEventProvenanceLinksTenantProvenanceDdl,
+  },
+  {
     name: "idx_storage_idempotency_ledger_created",
     table: "storage_idempotency_ledger",
     unique: false,
@@ -1056,7 +1413,7 @@ export const enterpriseSqliteSchemaStatements = Object.freeze([
 
 export const enterpriseSqliteSchemaSql = `${enterpriseSqliteSchemaStatements.join("\n\n")}\n`;
 
-export const enterpriseSqliteSchemaVersion = 4 as const;
+export const enterpriseSqliteSchemaVersion = 6 as const;
 
 export const enterpriseSqliteSchema: SqliteSchemaMetadata<
   EnterpriseSqliteTableName,

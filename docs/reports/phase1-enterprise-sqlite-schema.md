@@ -16,13 +16,20 @@ The schema is normalized around tenant-bound entities:
 4. `roles`
 5. `project_memberships`
 6. `user_role_assignments`
-7. `scopes`
-8. `memory_items`
-9. `evidence`
-10. `memory_evidence_links`
-11. `feedback`
-12. `audit_events`
-13. `storage_idempotency_ledger`
+7. `identity_issuer_bindings`
+8. `user_external_subjects`
+9. `identity_sync_checkpoints`
+10. `scopes`
+11. `memory_items`
+12. `evidence`
+13. `provenance_envelopes`
+14. `memory_evidence_links`
+15. `memory_provenance_links`
+16. `evidence_provenance_links`
+17. `feedback`
+18. `audit_events`
+19. `audit_event_provenance_links`
+20. `storage_idempotency_ledger`
 
 ## Key Constraint Strategy
 
@@ -34,6 +41,8 @@ The schema is normalized around tenant-bound entities:
 - Partial unique indexes enforce one common scope per tenant and one anchor per project/role/user scope.
 - Audit events are append-only with immutable update/delete triggers.
 - Storage idempotency ledger enforces deterministic replay by unique key + request-hash checks.
+- Identity issuer/subject/checkpoint tables provide deterministic Better Auth + SCIM federation anchors.
+- Provenance envelopes + link tables provide explicit lineage joins for memory, evidence, and audit events.
 
 ## Deterministic Export Contract
 

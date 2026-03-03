@@ -376,12 +376,36 @@ const toDeterministicMigrationStatements = (
     )
   );
 
+const statementDefinesAnySchemaObject = (
+  statement: string,
+  objectNames: readonly string[]
+): boolean => {
+  const definition = parseSqliteSchemaDefinition(statement);
+  return (
+    definition !== null &&
+    objectNames.some((objectName) => definition.name.includes(objectName))
+  );
+};
+
 const hasMemoryItemsFtsSchemaObject = (statement: string): boolean =>
-  statement.includes("memory_items_fts");
+  statementDefinesAnySchemaObject(statement, ["memory_items_fts"]);
 const hasAuditEventsSchemaObject = (statement: string): boolean =>
-  statement.includes("audit_events");
+  statementDefinesAnySchemaObject(statement, ["audit_events"]);
 const hasStorageIdempotencyLedgerSchemaObject = (statement: string): boolean =>
-  statement.includes("storage_idempotency_ledger");
+  statementDefinesAnySchemaObject(statement, ["storage_idempotency_ledger"]);
+const hasIdentityRuntimeSchemaObject = (statement: string): boolean =>
+  statementDefinesAnySchemaObject(statement, [
+    "identity_issuer_bindings",
+    "user_external_subjects",
+    "identity_sync_checkpoints",
+  ]);
+const hasProvenanceSchemaObject = (statement: string): boolean =>
+  statementDefinesAnySchemaObject(statement, [
+    "provenance_envelopes",
+    "memory_provenance_links",
+    "evidence_provenance_links",
+    "audit_event_provenance_links",
+  ]);
 
 const enterpriseSqliteSchemaObjectStatements =
   toDeterministicMigrationStatements(enterpriseSqliteSchemaStatements);
@@ -391,7 +415,9 @@ const enterpriseSqliteV1Statements = Object.freeze(
     (statement) =>
       !hasMemoryItemsFtsSchemaObject(statement) &&
       !hasAuditEventsSchemaObject(statement) &&
-      !hasStorageIdempotencyLedgerSchemaObject(statement)
+      !hasStorageIdempotencyLedgerSchemaObject(statement) &&
+      !hasIdentityRuntimeSchemaObject(statement) &&
+      !hasProvenanceSchemaObject(statement)
   )
 );
 
@@ -416,6 +442,18 @@ const enterpriseSqliteV3Statements = Object.freeze(
 const enterpriseSqliteV4Statements = Object.freeze(
   enterpriseSqliteSchemaObjectStatements.filter((statement) =>
     hasStorageIdempotencyLedgerSchemaObject(statement)
+  )
+);
+
+const enterpriseSqliteV5Statements = Object.freeze(
+  enterpriseSqliteSchemaObjectStatements.filter((statement) =>
+    hasIdentityRuntimeSchemaObject(statement)
+  )
+);
+
+const enterpriseSqliteV6Statements = Object.freeze(
+  enterpriseSqliteSchemaObjectStatements.filter((statement) =>
+    hasProvenanceSchemaObject(statement)
   )
 );
 
@@ -475,11 +513,41 @@ const enterpriseStorageIdempotencyLedgerMigrationWithSql = Object.freeze({
   sql: `${enterpriseStorageIdempotencyLedgerMigration.statements.join("\n\n")}\n`,
 } as const satisfies SqliteMigrationDefinition<4>);
 
+const enterpriseIdentityRuntimeMigration = Object.freeze({
+  version: 5,
+  name: "enterprise_sqlite_v5_identity_runtime_bindings",
+  description:
+    "Adds deterministic enterprise identity runtime tables and indexes for issuer bindings, external subject mappings, and sync checkpoints.",
+  statements: enterpriseSqliteV5Statements,
+  sql: "",
+} as const satisfies SqliteMigrationDefinition<5>);
+
+const enterpriseIdentityRuntimeMigrationWithSql = Object.freeze({
+  ...enterpriseIdentityRuntimeMigration,
+  sql: `${enterpriseIdentityRuntimeMigration.statements.join("\n\n")}\n`,
+} as const satisfies SqliteMigrationDefinition<5>);
+
+const enterpriseProvenanceSchemaMigration = Object.freeze({
+  version: 6,
+  name: "enterprise_sqlite_v6_provenance_lineage_dimensions",
+  description:
+    "Adds provenance envelope and linkage tables/indexes for deterministic memory, evidence, and audit lineage joins.",
+  statements: enterpriseSqliteV6Statements,
+  sql: "",
+} as const satisfies SqliteMigrationDefinition<6>);
+
+const enterpriseProvenanceSchemaMigrationWithSql = Object.freeze({
+  ...enterpriseProvenanceSchemaMigration,
+  sql: `${enterpriseProvenanceSchemaMigration.statements.join("\n\n")}\n`,
+} as const satisfies SqliteMigrationDefinition<6>);
+
 export const enterpriseSqliteMigrations = Object.freeze([
   enterpriseInitialMigrationWithSql,
   enterpriseFtsMigrationWithSql,
   enterpriseAuditEventLedgerMigrationWithSql,
   enterpriseStorageIdempotencyLedgerMigrationWithSql,
+  enterpriseIdentityRuntimeMigrationWithSql,
+  enterpriseProvenanceSchemaMigrationWithSql,
 ] as const satisfies readonly SqliteMigrationDefinition[]);
 
 export type EnterpriseSqliteMigration =

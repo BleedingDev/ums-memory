@@ -88,11 +88,17 @@ Validation rules:
 
 ### Identity key contract
 
-Current schema has no dedicated external-identity link table. Until that exists, the federation contract is:
+Current schema now includes dedicated identity runtime mapping tables:
 
-- Canonical external subject key: `idp_issuer + \"::\" + scim_user_id`.
-- Deterministic `users.user_id` generation from that key (stable hash/encoding strategy).
-- Raw external IDs (`externalId`, `id`, issuer) must be preserved in `audit_events.details`.
+- `identity_issuer_bindings`: tenant-scoped issuer binding registry.
+- `user_external_subjects`: deterministic `(tenant, issuer_binding, external_subject)` -> `users.user_id` mapping.
+- `identity_sync_checkpoints`: replay-safe sync cursor checkpoints per issuer/channel.
+
+Federation contract:
+
+- Canonical external subject key: `idp_issuer + \"::\" + scim_user_id` (materialized as subject mapping row).
+- Deterministic `users.user_id` binding remains immutable once mapped.
+- Raw external IDs (`externalId`, `id`, issuer) remain preserved in `audit_events.details` for audit traceability.
 - Normalization is mandatory before key generation:
   - trim whitespace for issuer and SCIM id
   - lowercase issuer value

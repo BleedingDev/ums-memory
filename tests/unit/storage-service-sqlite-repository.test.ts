@@ -3945,7 +3945,7 @@ test("ums-memory-5cb.9: sqlite storage snapshot export is deterministic and sign
       payloadDocument.format,
       "ums-memory/sqlite-storage-snapshot/v1"
     );
-    assert.equal(payloadDocument.userVersion, 4);
+    assert.equal(payloadDocument.userVersion, 6);
     assert.equal(payloadDocument.tables.length, firstExport.tableCount);
   } finally {
     db.close();

@@ -18,13 +18,20 @@ const expectedTableOrder = Object.freeze([
   "roles",
   "project_memberships",
   "user_role_assignments",
+  "identity_issuer_bindings",
+  "user_external_subjects",
+  "identity_sync_checkpoints",
   "scopes",
   "memory_items",
   "memory_items_fts",
   "evidence",
+  "provenance_envelopes",
   "memory_evidence_links",
+  "memory_provenance_links",
+  "evidence_provenance_links",
   "feedback",
   "audit_events",
+  "audit_event_provenance_links",
   "storage_idempotency_ledger",
 ]);
 
@@ -33,6 +40,11 @@ const expectedIndexOrder = Object.freeze([
   "idx_projects_tenant_status",
   "idx_project_memberships_user",
   "idx_user_role_assignments_role",
+  "idx_identity_issuer_bindings_kind",
+  "uq_identity_issuer_bindings_primary",
+  "idx_user_external_subjects_user",
+  "idx_user_external_subjects_subject_hash",
+  "idx_identity_sync_checkpoints_updated",
   "uq_scopes_common_singleton",
   "uq_scopes_project_anchor",
   "uq_scopes_role_anchor",
@@ -41,11 +53,18 @@ const expectedIndexOrder = Object.freeze([
   "idx_memory_items_scope_status",
   "idx_memory_items_supersedes",
   "idx_evidence_source_observed",
+  "idx_provenance_envelopes_lookup",
   "idx_memory_evidence_links_memory",
+  "idx_memory_provenance_links_memory",
+  "idx_memory_provenance_links_provenance",
+  "idx_evidence_provenance_links_evidence",
+  "idx_evidence_provenance_links_provenance",
   "idx_feedback_memory_status",
   "idx_feedback_actor_created",
   "idx_audit_events_tenant_operation",
   "idx_audit_events_owner_reference",
+  "idx_audit_event_provenance_links_event",
+  "idx_audit_event_provenance_links_tenant_provenance",
   "idx_storage_idempotency_ledger_created",
   "idx_storage_idempotency_ledger_request_hash",
 ]);
@@ -155,7 +174,7 @@ test("ums-memory-5cb.1: enterprise sqlite schema ordering is deterministic", asy
     schema.enterpriseSqliteSchemaSql,
     `${schema.enterpriseSqliteSchemaStatements.join("\n\n")}\n`
   );
-  assert.equal(schema.enterpriseSqliteSchemaVersion, 4);
+  assert.equal(schema.enterpriseSqliteSchemaVersion, 6);
 });
 
 test("ums-memory-5cb.1: enterprise sqlite schema enforces key constraints at runtime", async () => {
@@ -204,6 +223,83 @@ test("ums-memory-5cb.1: enterprise sqlite schema enforces key constraints at run
     db.prepare(
       "INSERT INTO roles (tenant_id, role_id, role_code, display_name, role_type, created_at_ms) VALUES (?, ?, ?, ?, ?, ?)"
     ).run("tenant_a", "role_b", "ROLE_B", "Role B", "project", now);
+
+    db.prepare(
+      "INSERT INTO identity_issuer_bindings (tenant_id, issuer_binding_id, issuer, issuer_kind, is_primary, created_at_ms, updated_at_ms) VALUES (?, ?, ?, ?, ?, ?, ?)"
+    ).run(
+      "tenant_a",
+      "issuer_primary",
+      "https://idp.example.com",
+      "oidc",
+      1,
+      now,
+      now
+    );
+    expectConstraintFailure(() => {
+      db.prepare(
+        "INSERT INTO identity_issuer_bindings (tenant_id, issuer_binding_id, issuer, issuer_kind, is_primary, created_at_ms, updated_at_ms) VALUES (?, ?, ?, ?, ?, ?, ?)"
+      ).run(
+        "tenant_a",
+        "issuer_uppercase",
+        "HTTPS://IDP.EXAMPLE.COM/UPPER",
+        "oidc",
+        0,
+        now,
+        now
+      );
+    });
+    db.prepare(
+      "INSERT INTO user_external_subjects (tenant_id, issuer_binding_id, external_subject_id, user_id, subject_hash_sha256, subject_source, first_seen_at_ms, last_seen_at_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+    ).run(
+      "tenant_a",
+      "issuer_primary",
+      "subject_user_a",
+      "user_a",
+      "b".repeat(64),
+      "sso",
+      now,
+      now
+    );
+    expectConstraintFailure(() => {
+      db.prepare(
+        "INSERT INTO user_external_subjects (tenant_id, issuer_binding_id, external_subject_id, user_id, subject_hash_sha256, subject_source, first_seen_at_ms, last_seen_at_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+      ).run(
+        "tenant_a",
+        "issuer_primary",
+        "subject_invalid_hash",
+        "user_a",
+        "not-a-sha256",
+        "sso",
+        now,
+        now
+      );
+    });
+    db.prepare(
+      "INSERT INTO identity_sync_checkpoints (tenant_id, issuer_binding_id, sync_channel, checkpoint_cursor, cursor_hash_sha256, cursor_sequence, checkpointed_at_ms, updated_at_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+    ).run(
+      "tenant_a",
+      "issuer_primary",
+      "scim_users",
+      "cursor-001",
+      "c".repeat(64),
+      0,
+      now,
+      now
+    );
+    expectConstraintFailure(() => {
+      db.prepare(
+        "INSERT INTO identity_sync_checkpoints (tenant_id, issuer_binding_id, sync_channel, checkpoint_cursor, cursor_hash_sha256, cursor_sequence, checkpointed_at_ms, updated_at_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+      ).run(
+        "tenant_a",
+        "issuer_primary",
+        "scim_users",
+        "cursor-negative",
+        "d".repeat(64),
+        -1,
+        now,
+        now
+      );
+    });
 
     db.prepare(
       "INSERT INTO scopes (tenant_id, scope_id, scope_level, project_id, role_id, user_id, parent_scope_id, created_at_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
@@ -408,6 +504,46 @@ test("ums-memory-5cb.1: enterprise sqlite schema enforces key constraints at run
     db.prepare(
       "INSERT INTO memory_evidence_links (tenant_id, memory_id, evidence_id, relation_kind, created_at_ms) VALUES (?, ?, ?, ?, ?)"
     ).run("tenant_a", "memory_ok", "evidence_ok", "supports", now);
+    db.prepare(
+      "INSERT INTO provenance_envelopes (tenant_id, provenance_id, project_id, role_id, user_id, agent_id, conversation_id, message_id, source_id, batch_id, observed_at_ms, created_at_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    ).run(
+      "tenant_a",
+      "prov_a",
+      "project_a",
+      "role_b",
+      "user_a",
+      "agent_001",
+      "conversation_001",
+      "message_001",
+      "source_001",
+      "batch_001",
+      now,
+      now
+    );
+    db.prepare(
+      "INSERT INTO memory_provenance_links (tenant_id, memory_id, provenance_id, linked_at_ms) VALUES (?, ?, ?, ?)"
+    ).run("tenant_a", "memory_ok", "prov_a", now);
+    db.prepare(
+      "INSERT INTO evidence_provenance_links (tenant_id, evidence_id, provenance_id, linked_at_ms) VALUES (?, ?, ?, ?)"
+    ).run("tenant_a", "evidence_ok", "prov_a", now);
+    expectConstraintFailure(() => {
+      db.prepare(
+        "INSERT INTO provenance_envelopes (tenant_id, provenance_id, project_id, role_id, user_id, agent_id, conversation_id, message_id, source_id, batch_id, observed_at_ms, created_at_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+      ).run(
+        "tenant_a",
+        "prov_empty",
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        now,
+        now
+      );
+    });
 
     db.prepare(
       "INSERT INTO audit_events (event_id, tenant_id, memory_id, operation, outcome, reason, details, reference_kind, reference_id, owner_tenant_id, recorded_at_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
@@ -424,6 +560,9 @@ test("ums-memory-5cb.1: enterprise sqlite schema enforces key constraints at run
       null,
       now
     );
+    db.prepare(
+      "INSERT INTO audit_event_provenance_links (event_id, tenant_id, provenance_id, linked_at_ms) VALUES (?, ?, ?, ?)"
+    ).run("audit:test:event-1", "tenant_a", "prov_a", now);
     expectConstraintFailure(() => {
       db.prepare("UPDATE audit_events SET details = ? WHERE event_id = ?").run(
         "attempted mutation",
@@ -663,6 +802,19 @@ test("ums-memory-5cb.1: enterprise sqlite schema enforces key constraints at run
 
     db.prepare("DELETE FROM tenants WHERE tenant_id = ?").run("tenant_a");
     assert.equal(countRowsByTenant(db, "tenants", "tenant_a"), 0);
+    assert.equal(
+      countRowsByTenant(db, "identity_issuer_bindings", "tenant_a"),
+      0
+    );
+    assert.equal(countRowsByTenant(db, "provenance_envelopes", "tenant_a"), 0);
+    assert.equal(
+      countRowsByTenant(db, "memory_provenance_links", "tenant_a"),
+      0
+    );
+    assert.equal(
+      countRowsByTenant(db, "evidence_provenance_links", "tenant_a"),
+      0
+    );
     assert.equal(countRowsByTenant(db, "scopes", "tenant_a"), 0);
     assert.equal(countRowsByTenant(db, "memory_items", "tenant_a"), 0);
     assert.equal(countRows(db, "tenants"), 1);

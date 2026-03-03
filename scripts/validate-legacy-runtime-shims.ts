@@ -233,6 +233,7 @@ export async function validateLegacyRuntimeShims({
   const duplicateInventoryEntries = findDuplicates(expectedPaths);
   const invalidFollowUpBeadIds = findInvalidFollowUpBeadIds(inventory.entries);
   const inventoryOrderStable = validateInventoryOrder(inventory.entries);
+  const inventoryMustBeEmpty = expectedPaths.length === 0;
 
   const diff = compareExpectedAndActual(expectedPaths, actualPaths);
   const result = {
@@ -246,6 +247,7 @@ export async function validateLegacyRuntimeShims({
     duplicateInventoryEntries,
     invalidFollowUpBeadIds,
     inventoryOrderStable,
+    inventoryMustBeEmpty,
   };
 
   const hasIssues =
@@ -253,7 +255,8 @@ export async function validateLegacyRuntimeShims({
     result.missingOnDisk.length > 0 ||
     result.duplicateInventoryEntries.length > 0 ||
     result.invalidFollowUpBeadIds.length > 0 ||
-    !result.inventoryOrderStable;
+    !result.inventoryOrderStable ||
+    !result.inventoryMustBeEmpty;
 
   return {
     ...result,
@@ -325,6 +328,11 @@ function parseArgs(argv) {
 
 function renderFailureSummary(result) {
   const lines = ["Legacy runtime shim validation failed."];
+  if (!result.inventoryMustBeEmpty) {
+    lines.push(
+      "- Inventory must remain empty after TS runtime cutover; remove legacy shim entries."
+    );
+  }
   if (!result.inventoryOrderStable) {
     lines.push("- Inventory entries are not sorted by path.");
   }

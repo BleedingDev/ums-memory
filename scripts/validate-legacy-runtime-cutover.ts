@@ -6,14 +6,7 @@ import { pathToFileURL } from "node:url";
 const INVENTORY_SCHEMA_VERSION = "legacy_runtime_shim_inventory.v1";
 const RESULT_SCHEMA_VERSION = "legacy_runtime_cutover_validation.v1";
 const SOURCE_DIRECTORIES = ["apps", "libs", "scripts", "tests", "benchmarks"];
-const SOURCE_EXTENSIONS = new Set([
-  ".ts",
-  ".tsx",
-  ".mts",
-  ".cts",
-  ".mjs",
-  ".js",
-]);
+const SOURCE_EXTENSIONS = new Set([".ts", ".tsx", ".mts", ".cts"]);
 
 function compareStrings(left, right) {
   return left < right ? -1 : left > right ? 1 : 0;
@@ -233,10 +226,14 @@ async function resolveImportTarget(projectRoot, importerPath, specifier) {
   const candidates = extension
     ? [rawResolved]
     : [
-        `${rawResolved}.mjs`,
-        `${rawResolved}.js`,
         `${rawResolved}.ts`,
-        path.join(rawResolved, "index.mjs"),
+        `${rawResolved}.tsx`,
+        `${rawResolved}.mts`,
+        `${rawResolved}.cts`,
+        path.join(rawResolved, "index.ts"),
+        path.join(rawResolved, "index.tsx"),
+        path.join(rawResolved, "index.mts"),
+        path.join(rawResolved, "index.cts"),
       ];
 
   for (const candidate of candidates) {
@@ -278,6 +275,7 @@ export async function validateLegacyRuntimeCutover({
   const absoluteProjectRoot = path.resolve(projectRoot);
   const absoluteInventoryPath = path.resolve(inventoryPath);
   const inventoryPaths = await readInventoryPaths(absoluteInventoryPath);
+  const inventoryMustBeEmpty = inventoryPaths.length === 0;
   const legacyPathSet = new Set(inventoryPaths);
   const sourceFiles = await collectSourceFiles(absoluteProjectRoot);
 
@@ -317,6 +315,7 @@ export async function validateLegacyRuntimeCutover({
     projectRoot: normalizePath(absoluteProjectRoot),
     inventoryPath: normalizePath(absoluteInventoryPath),
     legacyShimCount: inventoryPaths.length,
+    inventoryMustBeEmpty,
     legacyImportEdgeCount: legacyImportEdges.length,
     strictTypeScriptViolations,
     unexpectedLegacyImporters,
@@ -325,6 +324,7 @@ export async function validateLegacyRuntimeCutover({
   return {
     ...result,
     ok:
+      inventoryMustBeEmpty &&
       strictTypeScriptViolations.length === 0 &&
       unexpectedLegacyImporters.length === 0,
   };
@@ -332,6 +332,11 @@ export async function validateLegacyRuntimeCutover({
 
 function renderFailureSummary(result) {
   const lines = ["Legacy runtime cutover validation failed."];
+  if (!result.inventoryMustBeEmpty) {
+    lines.push(
+      "- Legacy runtime shim inventory must remain empty after TS runtime cutover."
+    );
+  }
   if (result.strictTypeScriptViolations.length > 0) {
     lines.push("- Strict TypeScript files importing legacy shims:");
     for (const edge of result.strictTypeScriptViolations) {

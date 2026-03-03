@@ -487,7 +487,10 @@ test("ums-memory-d6q.3.8: integration/replay curriculum lane keeps deterministic
     "Recursion is still important but rank below DP objective."
   );
 
-  const rankedObjectives = [...snapshotProfile('learner-cur-lane', 'tenant-cur-lane-a').curriculumPlanItems]
+  const rankedObjectives = [
+    ...snapshotProfile("learner-cur-lane", "tenant-cur-lane-a")
+      .curriculumPlanItems,
+  ]
     .sort(
       (left, right) =>
         left.recommendationRank - right.recommendationRank ||

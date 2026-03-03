@@ -27,19 +27,18 @@ Define enforceable CI contract for:
    - no `libs/**/src/**/*.mjs`
    - no `libs/**/src/**/*.js`
 
-## Transitional Rule
+## Runtime Shim Policy
 
-If temporary shims are still present, the corresponding bead must stay open
-and the shim validator must explicitly list each remaining shim with owner/task
-linkage.
+Runtime shim inventory is no longer transitional:
 
-Until full shim removal lands, extension checks are staged and informational;
-the authoritative enforcement remains `validate:legacy-shims` +
-`validate:cutover` with bead linkage.
+- `docs/migration/legacy-runtime-shim-inventory.v1.json` must remain empty.
+- `validate:legacy-shims` fails when inventory contains entries.
+- `validate:cutover` fails when inventory is non-empty or when any source imports legacy shim paths.
 
 Current status (March 3, 2026):
 
-- TS strictness and include policy can be enforced immediately.
+- TS strictness and include policy are enforced.
+- Legacy runtime shim policy is enforced as zero-inventory invariant.
 - Effect beta pin check remains staged until the compatibility cutover (`ums-memory-cjd.5`) is merged.
 
 ## Ownership
