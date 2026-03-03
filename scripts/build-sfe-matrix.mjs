@@ -5,8 +5,8 @@ import { resolve } from "node:path";
 const DEFAULT_TARGETS = ["bun-linux-x64", "bun-windows-x64"];
 const DEFAULT_APPS = ["single"];
 const SUPPORTED_APPS = new Map([
-  ["single", { entry: "apps/ums/src/index.mjs", artifact: "ums" }],
-  ["cli", { entry: "apps/cli/src/index.mjs", artifact: "ums-cli" }],
+  ["single", { entry: "apps/ums/src/index.ts", artifact: "ums" }],
+  ["cli", { entry: "apps/cli/src/index.ts", artifact: "ums-cli" }],
   ["api", { entry: "apps/api/src/server.mjs", artifact: "ums-api" }],
 ]);
 
@@ -51,7 +51,9 @@ function parseArgs(argv) {
   }
 
   if (parsed.targets.length === 0) {
-    throw new Error("At least one target is required. Example: --targets bun-linux-x64,bun-windows-x64");
+    throw new Error(
+      "At least one target is required. Example: --targets bun-linux-x64,bun-windows-x64"
+    );
   }
   if (parsed.apps.length === 0) {
     throw new Error("At least one app is required. Example: --apps single");
@@ -61,7 +63,9 @@ function parseArgs(argv) {
   }
   for (const app of parsed.apps) {
     if (!SUPPORTED_APPS.has(app)) {
-      throw new Error(`Unsupported app '${app}'. Supported values: ${[...SUPPORTED_APPS.keys()].join(", ")}`);
+      throw new Error(
+        `Unsupported app '${app}'. Supported values: ${[...SUPPORTED_APPS.keys()].join(", ")}`
+      );
     }
   }
 
@@ -95,6 +99,8 @@ function runBunBuild({ target, entry, outfile }) {
   const args = [
     "build",
     "--compile",
+    "--format",
+    "esm",
     "--minify",
     "--sourcemap",
     "--bytecode",
@@ -108,7 +114,9 @@ function runBunBuild({ target, entry, outfile }) {
     throw result.error;
   }
   if (typeof result.status === "number" && result.status !== 0) {
-    throw new Error(`bun build failed for target '${target}' and entry '${entry}' (exit=${result.status}).`);
+    throw new Error(
+      `bun build failed for target '${target}' and entry '${entry}' (exit=${result.status}).`
+    );
   }
 }
 
@@ -125,7 +133,10 @@ async function main(argv = process.argv.slice(2)) {
     await mkdir(targetDir, { recursive: true });
     for (const appName of parsed.apps) {
       const app = SUPPORTED_APPS.get(appName);
-      const outfile = resolve(targetDir, `${app.artifact}${extensionForTarget(target)}`);
+      const outfile = resolve(
+        targetDir,
+        `${app.artifact}${extensionForTarget(target)}`
+      );
       process.stdout.write(`[build] ${appName} -> ${target} -> ${outfile}\n`);
       runBunBuild({
         target,
@@ -148,7 +159,9 @@ main().then(
     process.exitCode = code;
   },
   (error) => {
-    process.stderr.write(`build-sfe-matrix failed: ${error instanceof Error ? error.message : String(error)}\n`);
+    process.stderr.write(
+      `build-sfe-matrix failed: ${error instanceof Error ? error.message : String(error)}\n`
+    );
     process.exitCode = 1;
-  },
+  }
 );

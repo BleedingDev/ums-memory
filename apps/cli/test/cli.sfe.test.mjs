@@ -1,20 +1,24 @@
-import test from "node:test";
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import { constants as fsConstants } from "node:fs";
 import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
+import test from "node:test";
 
 const ROOT = process.cwd();
-const BUN_AVAILABLE = spawnSync("bun", ["--version"], { encoding: "utf8" }).status === 0;
+const BUN_AVAILABLE =
+  spawnSync("bun", ["--version"], { encoding: "utf8" }).status === 0;
 
 let buildDir = null;
 let cliBinaryPath = null;
 
 function runBinary(binaryPath, args, { stdin = "", cwd = ROOT } = {}) {
   return new Promise((resolvePromise) => {
-    const proc = spawn(binaryPath, args, { cwd, stdio: ["pipe", "pipe", "pipe"] });
+    const proc = spawn(binaryPath, args, {
+      cwd,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
     let stdout = "";
     let stderr = "";
     proc.stdout.on("data", (chunk) => {
@@ -44,19 +48,21 @@ test.before(async () => {
     [
       "build",
       "--compile",
+      "--format",
+      "esm",
       "--minify",
       "--sourcemap",
       "--bytecode",
-      "apps/cli/src/index.mjs",
+      "apps/cli/src/index.ts",
       "--outfile",
       cliBinaryPath,
     ],
-    { cwd: ROOT, encoding: "utf8" },
+    { cwd: ROOT, encoding: "utf8" }
   );
   assert.equal(
     build.status,
     0,
-    `Failed to build compiled CLI executable.\nstdout:\n${build.stdout}\nstderr:\n${build.stderr}`,
+    `Failed to build compiled CLI executable.\nstdout:\n${build.stdout}\nstderr:\n${build.stderr}`
   );
   await access(cliBinaryPath, fsConstants.X_OK);
 });
@@ -83,7 +89,13 @@ test(
         "--input",
         JSON.stringify({
           profile: "sfe-cli",
-          events: [{ type: "note", source: "sfe", content: "compiled binary ingest path" }],
+          events: [
+            {
+              type: "note",
+              source: "sfe",
+              content: "compiled binary ingest path",
+            },
+          ],
         }),
       ]);
       assert.equal(ingest.code, 0);
@@ -112,7 +124,7 @@ test(
     } finally {
       await rm(tempDir, { recursive: true, force: true });
     }
-  },
+  }
 );
 
 test(
@@ -127,9 +139,11 @@ test(
         inputFile,
         `${JSON.stringify({
           profile: "sfe-cli-file",
-          events: [{ type: "note", source: "fixture", content: "file payload" }],
+          events: [
+            { type: "note", source: "fixture", content: "file payload" },
+          ],
         })}\n`,
-        "utf8",
+        "utf8"
       );
       const ingest = await runBinary(cliBinaryPath, [
         "ingest",
@@ -140,14 +154,14 @@ test(
         "--pretty",
       ]);
       assert.equal(ingest.code, 0);
-      assert.match(ingest.stdout, /\n  "ok": true,/);
+      assert.match(ingest.stdout, /\n {2}"ok": true,/);
       const ingestBody = JSON.parse(ingest.stdout);
       assert.equal(ingestBody.ok, true);
       assert.equal(ingestBody.data.accepted, 1);
     } finally {
       await rm(tempDir, { recursive: true, force: true });
     }
-  },
+  }
 );
 
 test(
@@ -163,9 +177,11 @@ test(
         {
           stdin: JSON.stringify({
             profile: "sfe-cli-stdin",
-            events: [{ type: "task", source: "stdin", content: "stdin payload path" }],
+            events: [
+              { type: "task", source: "stdin", content: "stdin payload path" },
+            ],
           }),
-        },
+        }
       );
       assert.equal(ingest.code, 0);
       const body = JSON.parse(ingest.stdout);
@@ -174,7 +190,7 @@ test(
     } finally {
       await rm(tempDir, { recursive: true, force: true });
     }
-  },
+  }
 );
 
 test(
@@ -216,7 +232,7 @@ test(
     } finally {
       await rm(tempDir, { recursive: true, force: true });
     }
-  },
+  }
 );
 
 test(
@@ -256,5 +272,5 @@ test(
     } finally {
       await rm(tempDir, { recursive: true, force: true });
     }
-  },
+  }
 );

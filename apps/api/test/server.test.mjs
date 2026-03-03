@@ -1,18 +1,19 @@
-import test from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
-import { startApiServer } from "../src/server.mjs";
+import test from "node:test";
+
 import { resetStore } from "../src/core.mjs";
+import { startApiServer } from "../src/server.mjs";
 import { createInMemoryApiTelemetry } from "../src/telemetry.mjs";
 
-const CLI_PATH = resolve(process.cwd(), "apps/cli/src/index.mjs");
+const CLI_PATH = resolve(process.cwd(), "apps/cli/src/index.ts");
 
 function runCli(args, stdin = "") {
   return new Promise((resolvePromise) => {
-    const proc = spawn(process.execPath, [CLI_PATH, ...args], {
+    const proc = spawn(process.execPath, ["--import", "tsx", CLI_PATH, ...args], {
       stdio: ["pipe", "pipe", "pipe"],
     });
     let stdout = "";
@@ -60,14 +61,23 @@ test("http server exposes prometheus metrics and deterministic structured teleme
   try {
     const initialMetricsRes = await fetch(`${base}/metrics`);
     assert.equal(initialMetricsRes.status, 200);
-    assert.match(initialMetricsRes.headers.get("content-type") ?? "", /^text\/plain/i);
+    assert.match(
+      initialMetricsRes.headers.get("content-type") ?? "",
+      /^text\/plain/i
+    );
     const initialMetrics = await initialMetricsRes.text();
     assert.match(initialMetrics, /# HELP ums_api_operation_requests_total/);
-    assert.match(initialMetrics, /# TYPE ums_api_operation_latency_ms histogram/);
+    assert.match(
+      initialMetrics,
+      /# TYPE ums_api_operation_latency_ms histogram/
+    );
 
     const shadowRes = await fetch(`${base}/v1/shadow_write`, {
       method: "POST",
-      headers: { "content-type": "application/json", "x-ums-store": "tenant-telemetry" },
+      headers: {
+        "content-type": "application/json",
+        "x-ums-store": "tenant-telemetry",
+      },
       body: JSON.stringify({
         profile: "telemetry-http",
         statement: "Structured telemetry should include trace context.",
@@ -84,7 +94,10 @@ test("http server exposes prometheus metrics and deterministic structured teleme
 
     const failureRes = await fetch(`${base}/v1/misconception_update`, {
       method: "POST",
-      headers: { "content-type": "application/json", "x-ums-store": "tenant-telemetry" },
+      headers: {
+        "content-type": "application/json",
+        "x-ums-store": "tenant-telemetry",
+      },
       body: JSON.stringify({
         profile: "telemetry-http",
         misconceptionKey: "missing-evidence",
@@ -96,11 +109,17 @@ test("http server exposes prometheus metrics and deterministic structured teleme
     assert.equal(failureBody.ok, false);
     assert.equal(failureBody.error.code, "BAD_REQUEST");
 
-    const unsupportedRes = await fetch(`${base}/v1/operation-never-implemented`, {
-      method: "POST",
-      headers: { "content-type": "application/json", "x-ums-store": "tenant-telemetry" },
-      body: JSON.stringify({ profile: "telemetry-http" }),
-    });
+    const unsupportedRes = await fetch(
+      `${base}/v1/operation-never-implemented`,
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-ums-store": "tenant-telemetry",
+        },
+        body: JSON.stringify({ profile: "telemetry-http" }),
+      }
+    );
     assert.equal(unsupportedRes.status, 404);
     const unsupportedBody = await unsupportedRes.json();
     assert.equal(unsupportedBody.ok, false);
@@ -112,27 +131,29 @@ test("http server exposes prometheus metrics and deterministic structured teleme
     const metrics = await metricsRes.text();
     assert.match(
       metrics,
-      /ums_api_operation_requests_total\{operation="misconception_update",result="failure"\} 1/,
+      /ums_api_operation_requests_total\{operation="misconception_update",result="failure"\} 1/
     );
     assert.match(
       metrics,
-      /ums_api_operation_requests_total\{operation="shadow_write",result="success"\} 1/,
+      /ums_api_operation_requests_total\{operation="shadow_write",result="success"\} 1/
     );
     assert.match(
       metrics,
-      /ums_api_operation_latency_ms_count\{operation="misconception_update",result="failure"\} 1/,
+      /ums_api_operation_latency_ms_count\{operation="misconception_update",result="failure"\} 1/
     );
     assert.match(
       metrics,
-      /ums_api_operation_latency_ms_count\{operation="shadow_write",result="success"\} 1/,
+      /ums_api_operation_latency_ms_count\{operation="shadow_write",result="success"\} 1/
     );
     assert.doesNotMatch(
       metrics,
-      /ums_api_operation_requests_total\{operation="operation-never-implemented",result="failure"\}/,
+      /ums_api_operation_requests_total\{operation="operation-never-implemented",result="failure"\}/
     );
 
     assert.equal(events.length, 2);
-    const shadowEvent = events.find((event) => event.operation === "shadow_write");
+    const shadowEvent = events.find(
+      (event) => event.operation === "shadow_write"
+    );
     assert.ok(shadowEvent);
     assert.equal(shadowEvent.event, "ums.api.operation.result");
     assert.equal(shadowEvent.service, "ums-api");
@@ -147,10 +168,15 @@ test("http server exposes prometheus metrics and deterministic structured teleme
     assert.equal(shadowEvent.parentSpanId, shadowBody.data.trace.parentSpanId);
     assert.equal(shadowEvent.trace_id, shadowBody.data.trace.traceId);
     assert.equal(shadowEvent.span_id, shadowBody.data.trace.spanId);
-    assert.equal(shadowEvent.parent_span_id, shadowBody.data.trace.parentSpanId);
+    assert.equal(
+      shadowEvent.parent_span_id,
+      shadowBody.data.trace.parentSpanId
+    );
     assert.equal(shadowEvent.trace_flags, "01");
 
-    const failureEvent = events.find((event) => event.operation === "misconception_update");
+    const failureEvent = events.find(
+      (event) => event.operation === "misconception_update"
+    );
     assert.ok(failureEvent);
     assert.equal(failureEvent.event, "ums.api.operation.result");
     assert.equal(failureEvent.service, "ums-api");
@@ -162,7 +188,9 @@ test("http server exposes prometheus metrics and deterministic structured teleme
     assert.equal(failureEvent.deterministic, true);
   } finally {
     await new Promise((resolvePromise, rejectPromise) => {
-      server.close((error) => (error ? rejectPromise(error) : resolvePromise()));
+      server.close((error) =>
+        error ? rejectPromise(error) : resolvePromise()
+      );
     });
   }
 });
@@ -175,7 +203,7 @@ test("http server exposes deterministic JSON operation routes", async () => {
     stateFile: null,
   });
   const address = server.address();
-  assert(address && typeof address === "object");
+  assert.ok(address && typeof address === "object");
   const base = `http://${host}:${address.port}`;
 
   try {
@@ -186,26 +214,74 @@ test("http server exposes deterministic JSON operation routes", async () => {
     assert.equal(rootBody.deterministic, true);
     assert.equal(rootBody.consoleUi.enabled, false);
     assert.deepEqual(rootBody.consoleUi.routes, []);
-    assert.equal(rootBody.operations.includes("/v1/learner_profile_update"), true);
-    assert.equal(rootBody.operations.includes("/v1/identity_graph_update"), true);
-    assert.equal(rootBody.operations.includes("/v1/misconception_update"), true);
-    assert.equal(rootBody.operations.includes("/v1/curriculum_plan_update"), true);
-    assert.equal(rootBody.operations.includes("/v1/review_schedule_update"), true);
-    assert.equal(rootBody.operations.includes("/v1/policy_decision_update"), true);
-    assert.equal(rootBody.operations.includes("/v1/incident_escalation_signal"), true);
-    assert.equal(rootBody.operations.includes("/v1/manual_quarantine_override"), true);
-    assert.equal(rootBody.operations.includes("/v1/memory_console_search"), true);
-    assert.equal(rootBody.operations.includes("/v1/memory_console_timeline"), true);
-    assert.equal(rootBody.operations.includes("/v1/memory_console_provenance"), true);
-    assert.equal(rootBody.operations.includes("/v1/memory_console_policy_audit"), true);
-    assert.equal(rootBody.operations.includes("/v1/memory_console_anomaly_alerts"), true);
+    assert.equal(
+      rootBody.operations.includes("/v1/learner_profile_update"),
+      true
+    );
+    assert.equal(
+      rootBody.operations.includes("/v1/identity_graph_update"),
+      true
+    );
+    assert.equal(
+      rootBody.operations.includes("/v1/misconception_update"),
+      true
+    );
+    assert.equal(
+      rootBody.operations.includes("/v1/curriculum_plan_update"),
+      true
+    );
+    assert.equal(
+      rootBody.operations.includes("/v1/review_schedule_update"),
+      true
+    );
+    assert.equal(
+      rootBody.operations.includes("/v1/policy_decision_update"),
+      true
+    );
+    assert.equal(
+      rootBody.operations.includes("/v1/incident_escalation_signal"),
+      true
+    );
+    assert.equal(
+      rootBody.operations.includes("/v1/manual_quarantine_override"),
+      true
+    );
+    assert.equal(
+      rootBody.operations.includes("/v1/memory_console_search"),
+      true
+    );
+    assert.equal(
+      rootBody.operations.includes("/v1/memory_console_timeline"),
+      true
+    );
+    assert.equal(
+      rootBody.operations.includes("/v1/memory_console_provenance"),
+      true
+    );
+    assert.equal(
+      rootBody.operations.includes("/v1/memory_console_policy_audit"),
+      true
+    );
+    assert.equal(
+      rootBody.operations.includes("/v1/memory_console_anomaly_alerts"),
+      true
+    );
 
     const ingestRes = await fetch(`${base}/v1/ingest`, {
       method: "POST",
-      headers: { "content-type": "application/json", "x-ums-store": "coding-agent" },
+      headers: {
+        "content-type": "application/json",
+        "x-ums-store": "coding-agent",
+      },
       body: JSON.stringify({
         profile: "api-test",
-        events: [{ type: "note", source: "test", content: "deterministic server response" }],
+        events: [
+          {
+            type: "note",
+            source: "test",
+            content: "deterministic server response",
+          },
+        ],
       }),
     });
     assert.equal(ingestRes.status, 200);
@@ -217,7 +293,10 @@ test("http server exposes deterministic JSON operation routes", async () => {
 
     const shadowRes = await fetch(`${base}/v1/shadow_write`, {
       method: "POST",
-      headers: { "content-type": "application/json", "x-ums-store": "coding-agent" },
+      headers: {
+        "content-type": "application/json",
+        "x-ums-store": "coding-agent",
+      },
       body: JSON.stringify({
         profile: "api-manual-override",
         statement: "Manual override should be reachable via HTTP route.",
@@ -240,11 +319,17 @@ test("http server exposes deterministic JSON operation routes", async () => {
       sourceEventIds: ["evt-api-manual-override-2"],
       timestamp: "2026-03-02T22:00:00.000Z",
     };
-    const manualFirstRes = await fetch(`${base}/v1/manual_quarantine_override`, {
-      method: "POST",
-      headers: { "content-type": "application/json", "x-ums-store": "coding-agent" },
-      body: JSON.stringify(manualRequest),
-    });
+    const manualFirstRes = await fetch(
+      `${base}/v1/manual_quarantine_override`,
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-ums-store": "coding-agent",
+        },
+        body: JSON.stringify(manualRequest),
+      }
+    );
     assert.equal(manualFirstRes.status, 200);
     const manualFirstBody = await manualFirstRes.json();
     assert.equal(manualFirstBody.ok, true);
@@ -253,11 +338,17 @@ test("http server exposes deterministic JSON operation routes", async () => {
     assert.equal(manualFirstBody.data.override.action, "promote");
     assert.equal(manualFirstBody.data.override.changed, true);
 
-    const manualReplayRes = await fetch(`${base}/v1/manual_quarantine_override`, {
-      method: "POST",
-      headers: { "content-type": "application/json", "x-ums-store": "coding-agent" },
-      body: JSON.stringify(manualRequest),
-    });
+    const manualReplayRes = await fetch(
+      `${base}/v1/manual_quarantine_override`,
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-ums-store": "coding-agent",
+        },
+        body: JSON.stringify(manualRequest),
+      }
+    );
     assert.equal(manualReplayRes.status, 200);
     const manualReplayBody = await manualReplayRes.json();
     assert.equal(manualReplayBody.ok, true);
@@ -295,7 +386,9 @@ test("ums-memory-yji.7 keeps console UI routes disabled by default", async () =>
     }
   } finally {
     await new Promise((resolvePromise, rejectPromise) => {
-      server.close((error) => (error ? rejectPromise(error) : resolvePromise()));
+      server.close((error) =>
+        error ? rejectPromise(error) : resolvePromise()
+      );
     });
   }
 });
@@ -331,7 +424,11 @@ test("ums-memory-yji.7 serves deterministic memory console UI and static assets 
     assert.equal(rootRes.status, 200);
     const rootBody = await rootRes.json();
     assert.equal(rootBody.consoleUi.enabled, true);
-    assert.deepEqual(rootBody.consoleUi.routes, ["/console", "/console.js", "/console.css"]);
+    assert.deepEqual(rootBody.consoleUi.routes, [
+      "/console",
+      "/console.js",
+      "/console.css",
+    ]);
 
     const scriptRes = await fetch(`${base}/console.js`);
     assert.equal(scriptRes.status, 200);
@@ -363,7 +460,9 @@ test("ums-memory-yji.7 serves deterministic memory console UI and static assets 
     }
   } finally {
     await new Promise((resolvePromise, rejectPromise) => {
-      server.close((error) => (error ? rejectPromise(error) : resolvePromise()));
+      server.close((error) =>
+        error ? rejectPromise(error) : resolvePromise()
+      );
     });
   }
 });
@@ -387,7 +486,9 @@ test("ums-memory-yji.7 console UI toggle parses string config values safely", as
       assert.equal(rootBody.consoleUi.enabled, expectedStatus === 200);
     } finally {
       await new Promise((resolvePromise, rejectPromise) => {
-        server.close((error) => (error ? rejectPromise(error) : resolvePromise()));
+        server.close((error) =>
+          error ? rejectPromise(error) : resolvePromise()
+        );
       });
     }
   };
@@ -410,11 +511,20 @@ test("ums-memory-yji.6 memory_console HTTP routes expose deterministic operator 
   try {
     const profileRes = await fetch(`${base}/v1/learner_profile_update`, {
       method: "POST",
-      headers: { "content-type": "application/json", "x-ums-store": "tenant-yji6-http" },
+      headers: {
+        "content-type": "application/json",
+        "x-ums-store": "tenant-yji6-http",
+      },
       body: JSON.stringify({
         profile: "operator-yji6-http",
         learnerId: "learner-http-yji6",
-        identityRefs: [{ namespace: "email", value: "http-yji6@example.com", isPrimary: true }],
+        identityRefs: [
+          {
+            namespace: "email",
+            value: "http-yji6@example.com",
+            isPrimary: true,
+          },
+        ],
         goals: ["incident-response"],
         evidenceEventIds: ["ep-http-profile-yji6-1"],
         timestamp: "2026-03-01T10:00:00.000Z",
@@ -427,7 +537,10 @@ test("ums-memory-yji.6 memory_console HTTP routes expose deterministic operator 
 
     const misconceptionRes = await fetch(`${base}/v1/misconception_update`, {
       method: "POST",
-      headers: { "content-type": "application/json", "x-ums-store": "tenant-yji6-http" },
+      headers: {
+        "content-type": "application/json",
+        "x-ums-store": "tenant-yji6-http",
+      },
       body: JSON.stringify({
         profile: "operator-yji6-http",
         misconceptionKey: "timeline-gap",
@@ -440,7 +553,10 @@ test("ums-memory-yji.6 memory_console HTTP routes expose deterministic operator 
 
     const policyRes = await fetch(`${base}/v1/policy_decision_update`, {
       method: "POST",
-      headers: { "content-type": "application/json", "x-ums-store": "tenant-yji6-http" },
+      headers: {
+        "content-type": "application/json",
+        "x-ums-store": "tenant-yji6-http",
+      },
       body: JSON.stringify({
         profile: "operator-yji6-http",
         policyKey: "operator-safety-http",
@@ -465,12 +581,18 @@ test("ums-memory-yji.6 memory_console HTTP routes expose deterministic operator 
     };
     const searchRes = await fetch(`${base}/v1/memory_console_search`, {
       method: "POST",
-      headers: { "content-type": "application/json", "x-ums-store": "tenant-yji6-http" },
+      headers: {
+        "content-type": "application/json",
+        "x-ums-store": "tenant-yji6-http",
+      },
       body: JSON.stringify(searchRequest),
     });
     const searchReplayRes = await fetch(`${base}/v1/memory_console_search`, {
       method: "POST",
-      headers: { "content-type": "application/json", "x-ums-store": "tenant-yji6-http" },
+      headers: {
+        "content-type": "application/json",
+        "x-ums-store": "tenant-yji6-http",
+      },
       body: JSON.stringify(searchRequest),
     });
     assert.equal(searchRes.status, 200);
@@ -491,7 +613,10 @@ test("ums-memory-yji.6 memory_console HTTP routes expose deterministic operator 
     };
     const timelineRes = await fetch(`${base}/v1/memory_console_timeline`, {
       method: "POST",
-      headers: { "content-type": "application/json", "x-ums-store": "tenant-yji6-http" },
+      headers: {
+        "content-type": "application/json",
+        "x-ums-store": "tenant-yji6-http",
+      },
       body: JSON.stringify(timelineRequest),
     });
     assert.equal(timelineRes.status, 200);
@@ -500,15 +625,25 @@ test("ums-memory-yji.6 memory_console HTTP routes expose deterministic operator 
     assert.equal(timelineBody.data.operation, "memory_console_timeline");
     assert.equal(
       timelineBody.data.events.every(
-        (event) => event.timestamp >= timelineRequest.since && event.timestamp <= timelineRequest.until,
+        (event) =>
+          event.timestamp >= timelineRequest.since &&
+          event.timestamp <= timelineRequest.until
       ),
-      true,
+      true
     );
-    assert.equal(timelineBody.data.events.some((event) => event.entityType === "policy_decision"), true);
+    assert.equal(
+      timelineBody.data.events.some(
+        (event) => event.entityType === "policy_decision"
+      ),
+      true
+    );
 
     const provenanceRes = await fetch(`${base}/v1/memory_console_provenance`, {
       method: "POST",
-      headers: { "content-type": "application/json", "x-ums-store": "tenant-yji6-http" },
+      headers: {
+        "content-type": "application/json",
+        "x-ums-store": "tenant-yji6-http",
+      },
       body: JSON.stringify({
         profile: "operator-yji6-http",
         entityRefs: [
@@ -529,9 +664,9 @@ test("ums-memory-yji.6 memory_console HTTP routes expose deterministic operator 
         (entity) =>
           entity.entityType === "policy_decision" &&
           entity.entityId === decisionId &&
-          entity.linkedSourceIds.includes("evt-pol-http-yji6-1"),
+          entity.linkedSourceIds.includes("evt-pol-http-yji6-1")
       ),
-      true,
+      true
     );
 
     const policyAuditRequest = {
@@ -542,16 +677,28 @@ test("ums-memory-yji.6 memory_console HTTP routes expose deterministic operator 
       policyKey: "operator-safety-http",
       limit: 5,
     };
-    const policyAuditRes = await fetch(`${base}/v1/memory_console_policy_audit`, {
-      method: "POST",
-      headers: { "content-type": "application/json", "x-ums-store": "tenant-yji6-http" },
-      body: JSON.stringify(policyAuditRequest),
-    });
-    const policyAuditReplayRes = await fetch(`${base}/v1/memory_console_policy_audit`, {
-      method: "POST",
-      headers: { "content-type": "application/json", "x-ums-store": "tenant-yji6-http" },
-      body: JSON.stringify(policyAuditRequest),
-    });
+    const policyAuditRes = await fetch(
+      `${base}/v1/memory_console_policy_audit`,
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-ums-store": "tenant-yji6-http",
+        },
+        body: JSON.stringify(policyAuditRequest),
+      }
+    );
+    const policyAuditReplayRes = await fetch(
+      `${base}/v1/memory_console_policy_audit`,
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-ums-store": "tenant-yji6-http",
+        },
+        body: JSON.stringify(policyAuditRequest),
+      }
+    );
     assert.equal(policyAuditRes.status, 200);
     assert.equal(policyAuditReplayRes.status, 200);
     const policyAuditBody = await policyAuditRes.json();
@@ -559,8 +706,14 @@ test("ums-memory-yji.6 memory_console HTTP routes expose deterministic operator 
     assert.equal(policyAuditBody.ok, true);
     assert.equal(policyAuditBody.data.operation, "memory_console_policy_audit");
     assert.equal(policyAuditBody.data.totalPolicyDecisions, 1);
-    assert.equal(policyAuditBody.data.policyDecisions[0].decisionId, decisionId);
-    assert.deepEqual(policyAuditBody.data.policyDecisions, policyAuditReplayBody.data.policyDecisions);
+    assert.equal(
+      policyAuditBody.data.policyDecisions[0].decisionId,
+      decisionId
+    );
+    assert.deepEqual(
+      policyAuditBody.data.policyDecisions,
+      policyAuditReplayBody.data.policyDecisions
+    );
 
     const anomalyRequest = {
       profile: "operator-yji6-http",
@@ -570,14 +723,23 @@ test("ums-memory-yji.6 memory_console HTTP routes expose deterministic operator 
     };
     const anomalyRes = await fetch(`${base}/v1/memory_console_anomaly_alerts`, {
       method: "POST",
-      headers: { "content-type": "application/json", "x-ums-store": "tenant-yji6-http" },
+      headers: {
+        "content-type": "application/json",
+        "x-ums-store": "tenant-yji6-http",
+      },
       body: JSON.stringify(anomalyRequest),
     });
-    const anomalyReplayRes = await fetch(`${base}/v1/memory_console_anomaly_alerts`, {
-      method: "POST",
-      headers: { "content-type": "application/json", "x-ums-store": "tenant-yji6-http" },
-      body: JSON.stringify(anomalyRequest),
-    });
+    const anomalyReplayRes = await fetch(
+      `${base}/v1/memory_console_anomaly_alerts`,
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-ums-store": "tenant-yji6-http",
+        },
+        body: JSON.stringify(anomalyRequest),
+      }
+    );
     assert.equal(anomalyRes.status, 200);
     assert.equal(anomalyReplayRes.status, 200);
     const anomalyBody = await anomalyRes.json();
@@ -588,7 +750,9 @@ test("ums-memory-yji.6 memory_console HTTP routes expose deterministic operator 
     assert.equal(Array.isArray(anomalyBody.data.alerts), true);
   } finally {
     await new Promise((resolvePromise, rejectPromise) => {
-      server.close((error) => (error ? rejectPromise(error) : resolvePromise()));
+      server.close((error) =>
+        error ? rejectPromise(error) : resolvePromise()
+      );
     });
   }
 });
@@ -610,7 +774,10 @@ test("policy_audit_export returns SERVICE_MISCONFIGURATION when signing env is m
   try {
     const response = await fetch(`${base}/v1/policy_audit_export`, {
       method: "POST",
-      headers: { "content-type": "application/json", "x-ums-store": "tenant-policy-audit-server" },
+      headers: {
+        "content-type": "application/json",
+        "x-ums-store": "tenant-policy-audit-server",
+      },
       body: JSON.stringify({
         profile: "policy-audit-server",
         timestamp: "2026-03-02T20:30:00.000Z",
@@ -622,11 +789,13 @@ test("policy_audit_export returns SERVICE_MISCONFIGURATION when signing env is m
     assert.equal(body.error.code, "SERVICE_MISCONFIGURATION");
     assert.equal(
       body.error.message,
-      "SERVICE_MISCONFIGURATION: policy_audit_export signing secret is not configured.",
+      "SERVICE_MISCONFIGURATION: policy_audit_export signing secret is not configured."
     );
   } finally {
     await new Promise((resolvePromise, rejectPromise) => {
-      server.close((error) => (error ? rejectPromise(error) : resolvePromise()));
+      server.close((error) =>
+        error ? rejectPromise(error) : resolvePromise()
+      );
     });
     if (previousSecret === undefined) {
       delete process.env.UMS_POLICY_AUDIT_EXPORT_SIGNING_SECRET;
@@ -643,15 +812,22 @@ test("policy_audit_export returns SERVICE_MISCONFIGURATION when signing env is m
 
 test("ums-memory-d6q.2.4/3.4/4.4/5.4 http routes expose deterministic P3 contract handlers", async () => {
   resetStore();
-  const { server, host } = await startApiServer({ host: "127.0.0.1", port: 0, stateFile: null });
+  const { server, host } = await startApiServer({
+    host: "127.0.0.1",
+    port: 0,
+    stateFile: null,
+  });
   const address = server.address();
-  assert(address && typeof address === "object");
+  assert.ok(address && typeof address === "object");
   const base = `http://${host}:${address.port}`;
 
   try {
     const misconceptionRes = await fetch(`${base}/v1/misconception_update`, {
       method: "POST",
-      headers: { "content-type": "application/json", "x-ums-store": "tenant-p3-http" },
+      headers: {
+        "content-type": "application/json",
+        "x-ums-store": "tenant-p3-http",
+      },
       body: JSON.stringify({
         profile: "learner-p3-http",
         misconceptionKey: "off-by-one",
@@ -667,7 +843,10 @@ test("ums-memory-d6q.2.4/3.4/4.4/5.4 http routes expose deterministic P3 contrac
 
     const curriculumRes = await fetch(`${base}/v1/curriculum_plan_update`, {
       method: "POST",
-      headers: { "content-type": "application/json", "x-ums-store": "tenant-p3-http" },
+      headers: {
+        "content-type": "application/json",
+        "x-ums-store": "tenant-p3-http",
+      },
       body: JSON.stringify({
         profile: "learner-p3-http",
         objectiveId: "objective-1",
@@ -684,7 +863,10 @@ test("ums-memory-d6q.2.4/3.4/4.4/5.4 http routes expose deterministic P3 contrac
 
     const reviewRes = await fetch(`${base}/v1/review_schedule_update`, {
       method: "POST",
-      headers: { "content-type": "application/json", "x-ums-store": "tenant-p3-http" },
+      headers: {
+        "content-type": "application/json",
+        "x-ums-store": "tenant-p3-http",
+      },
       body: JSON.stringify({
         profile: "learner-p3-http",
         targetId: "rule-xyz",
@@ -700,7 +882,10 @@ test("ums-memory-d6q.2.4/3.4/4.4/5.4 http routes expose deterministic P3 contrac
 
     const policyRes = await fetch(`${base}/v1/policy_decision_update`, {
       method: "POST",
-      headers: { "content-type": "application/json", "x-ums-store": "tenant-p3-http" },
+      headers: {
+        "content-type": "application/json",
+        "x-ums-store": "tenant-p3-http",
+      },
       body: JSON.stringify({
         profile: "learner-p3-http",
         policyKey: "safe-guidance",
@@ -724,19 +909,32 @@ test("ums-memory-d6q.2.4/3.4/4.4/5.4 http routes expose deterministic P3 contrac
 
 test("ums-memory-d6q.1.4 http routes learner profile + identity graph updates via dynamic operations", async () => {
   resetStore();
-  const { server, host } = await startApiServer({ host: "127.0.0.1", port: 0, stateFile: null });
+  const { server, host } = await startApiServer({
+    host: "127.0.0.1",
+    port: 0,
+    stateFile: null,
+  });
   const address = server.address();
-  assert(address && typeof address === "object");
+  assert.ok(address && typeof address === "object");
   const base = `http://${host}:${address.port}`;
 
   try {
     const profileRes = await fetch(`${base}/v1/learner_profile_update`, {
       method: "POST",
-      headers: { "content-type": "application/json", "x-ums-store": "tenant-http" },
+      headers: {
+        "content-type": "application/json",
+        "x-ums-store": "tenant-http",
+      },
       body: JSON.stringify({
         profile: "learner-http",
         learnerId: "learner-77",
-        identityRefs: [{ namespace: "email", value: "learner77@example.com", isPrimary: true }],
+        identityRefs: [
+          {
+            namespace: "email",
+            value: "learner77@example.com",
+            isPrimary: true,
+          },
+        ],
         goals: ["graph", "dp"],
         evidenceEventIds: ["ep-profile-http-1"],
       }),
@@ -750,11 +948,20 @@ test("ums-memory-d6q.1.4 http routes learner profile + identity graph updates vi
 
     const profileReplayRes = await fetch(`${base}/v1/learner_profile_update`, {
       method: "POST",
-      headers: { "content-type": "application/json", "x-ums-store": "tenant-http" },
+      headers: {
+        "content-type": "application/json",
+        "x-ums-store": "tenant-http",
+      },
       body: JSON.stringify({
         profile: "learner-http",
         learnerId: "learner-77",
-        identityRefs: [{ namespace: "email", value: "learner77@example.com", isPrimary: true }],
+        identityRefs: [
+          {
+            namespace: "email",
+            value: "learner77@example.com",
+            isPrimary: true,
+          },
+        ],
         goals: ["dp", "graph"],
         evidenceEventIds: ["ep-profile-http-1"],
       }),
@@ -767,7 +974,10 @@ test("ums-memory-d6q.1.4 http routes learner profile + identity graph updates vi
 
     const edgeRes = await fetch(`${base}/v1/identity_graph_update`, {
       method: "POST",
-      headers: { "content-type": "application/json", "x-ums-store": "tenant-http" },
+      headers: {
+        "content-type": "application/json",
+        "x-ums-store": "tenant-http",
+      },
       body: JSON.stringify({
         profile: "learner-http",
         profileId: profileBody.data.profileId,
@@ -786,7 +996,10 @@ test("ums-memory-d6q.1.4 http routes learner profile + identity graph updates vi
 
     const edgeReplayRes = await fetch(`${base}/v1/identity_graph_update`, {
       method: "POST",
-      headers: { "content-type": "application/json", "x-ums-store": "tenant-http" },
+      headers: {
+        "content-type": "application/json",
+        "x-ums-store": "tenant-http",
+      },
       body: JSON.stringify({
         profile: "learner-http",
         profileId: profileBody.data.profileId,
@@ -810,9 +1023,13 @@ test("ums-memory-d6q.1.4 http routes learner profile + identity graph updates vi
 
 test("http server rejects non-object JSON payloads", async () => {
   resetStore();
-  const { server, host } = await startApiServer({ host: "127.0.0.1", port: 0, stateFile: null });
+  const { server, host } = await startApiServer({
+    host: "127.0.0.1",
+    port: 0,
+    stateFile: null,
+  });
   const address = server.address();
-  assert(address && typeof address === "object");
+  assert.ok(address && typeof address === "object");
   const base = `http://${host}:${address.port}`;
 
   try {
@@ -834,15 +1051,22 @@ test("http server rejects non-object JSON payloads", async () => {
 
 test("ums-memory-d6q.1.11/ums-memory-d6q.1.9 http routes reject missing evidence pointers and expose policy exception observability", async () => {
   resetStore();
-  const { server, host } = await startApiServer({ host: "127.0.0.1", port: 0, stateFile: null });
+  const { server, host } = await startApiServer({
+    host: "127.0.0.1",
+    port: 0,
+    stateFile: null,
+  });
   const address = server.address();
-  assert(address && typeof address === "object");
+  assert.ok(address && typeof address === "object");
   const base = `http://${host}:${address.port}`;
 
   try {
     const rejectedRes = await fetch(`${base}/v1/misconception_update`, {
       method: "POST",
-      headers: { "content-type": "application/json", "x-ums-store": "tenant-http-guardrail" },
+      headers: {
+        "content-type": "application/json",
+        "x-ums-store": "tenant-http-guardrail",
+      },
       body: JSON.stringify({
         profile: "learner-http-guardrail",
         misconceptionKey: "missing-evidence-pointer",
@@ -857,7 +1081,10 @@ test("ums-memory-d6q.1.11/ums-memory-d6q.1.9 http routes reject missing evidence
 
     const policyRes = await fetch(`${base}/v1/policy_decision_update`, {
       method: "POST",
-      headers: { "content-type": "application/json", "x-ums-store": "tenant-http-guardrail" },
+      headers: {
+        "content-type": "application/json",
+        "x-ums-store": "tenant-http-guardrail",
+      },
       body: JSON.stringify({
         profile: "learner-http-guardrail",
         policyKey: "evidence-pointer-contract",
@@ -887,9 +1114,13 @@ test("ums-memory-d6q.1.11/ums-memory-d6q.1.9 http routes reject missing evidence
 
 test("ums-memory-d6q.2.6/ums-memory-d6q.3.6/ums-memory-d6q.4.6/ums-memory-d6q.5.6 http guardrails reject invalid domain payloads", async () => {
   resetStore();
-  const { server, host } = await startApiServer({ host: "127.0.0.1", port: 0, stateFile: null });
+  const { server, host } = await startApiServer({
+    host: "127.0.0.1",
+    port: 0,
+    stateFile: null,
+  });
   const address = server.address();
-  assert(address && typeof address === "object");
+  assert.ok(address && typeof address === "object");
   const base = `http://${host}:${address.port}`;
 
   const guardrailCases = [
@@ -936,7 +1167,10 @@ test("ums-memory-d6q.2.6/ums-memory-d6q.3.6/ums-memory-d6q.4.6/ums-memory-d6q.5.
     for (const entry of guardrailCases) {
       const response = await fetch(`${base}/v1/${entry.operation}`, {
         method: "POST",
-        headers: { "content-type": "application/json", "x-ums-store": "tenant-http-guardrails" },
+        headers: {
+          "content-type": "application/json",
+          "x-ums-store": "tenant-http-guardrails",
+        },
         body: JSON.stringify(entry.payload),
       });
       assert.equal(response.status, 400);
@@ -954,15 +1188,22 @@ test("ums-memory-d6q.2.6/ums-memory-d6q.3.6/ums-memory-d6q.4.6/ums-memory-d6q.5.
 
 test("ums-memory-d6q.2.7/ums-memory-d6q.2.9/ums-memory-d6q.3.7/ums-memory-d6q.3.9/ums-memory-d6q.4.7/ums-memory-d6q.4.9/ums-memory-d6q.5.7/ums-memory-d6q.5.9 http domain operations return positive observability payloads", async () => {
   resetStore();
-  const { server, host } = await startApiServer({ host: "127.0.0.1", port: 0, stateFile: null });
+  const { server, host } = await startApiServer({
+    host: "127.0.0.1",
+    port: 0,
+    stateFile: null,
+  });
   const address = server.address();
-  assert(address && typeof address === "object");
+  assert.ok(address && typeof address === "object");
   const base = `http://${host}:${address.port}`;
 
   try {
     const misconceptionRes = await fetch(`${base}/v1/misconception_update`, {
       method: "POST",
-      headers: { "content-type": "application/json", "x-ums-store": "tenant-http-positive" },
+      headers: {
+        "content-type": "application/json",
+        "x-ums-store": "tenant-http-positive",
+      },
       body: JSON.stringify({
         profile: "learner-http-positive",
         misconceptionKey: "boundary-check",
@@ -982,7 +1223,10 @@ test("ums-memory-d6q.2.7/ums-memory-d6q.2.9/ums-memory-d6q.3.7/ums-memory-d6q.3.
 
     const curriculumRes = await fetch(`${base}/v1/curriculum_plan_update`, {
       method: "POST",
-      headers: { "content-type": "application/json", "x-ums-store": "tenant-http-positive" },
+      headers: {
+        "content-type": "application/json",
+        "x-ums-store": "tenant-http-positive",
+      },
       body: JSON.stringify({
         profile: "learner-http-positive",
         objectiveId: "objective-http-positive",
@@ -997,13 +1241,19 @@ test("ums-memory-d6q.2.7/ums-memory-d6q.2.9/ums-memory-d6q.3.7/ums-memory-d6q.3.
     assert.equal(curriculumBody.data.action, "created");
     assert.equal(curriculumBody.data.observability.evidenceCount, 1);
     assert.equal(curriculumBody.data.observability.provenanceCount, 2);
-    assert.equal(curriculumBody.data.observability.boundedRecommendationRank, 2);
+    assert.equal(
+      curriculumBody.data.observability.boundedRecommendationRank,
+      2
+    );
     assert.equal(curriculumBody.data.deterministic, true);
     assert.ok(curriculumBody.data.requestDigest.length > 10);
 
     const reviewRes = await fetch(`${base}/v1/review_schedule_update`, {
       method: "POST",
-      headers: { "content-type": "application/json", "x-ums-store": "tenant-http-positive" },
+      headers: {
+        "content-type": "application/json",
+        "x-ums-store": "tenant-http-positive",
+      },
       body: JSON.stringify({
         profile: "learner-http-positive",
         targetId: "rule-http-positive",
@@ -1015,7 +1265,10 @@ test("ums-memory-d6q.2.7/ums-memory-d6q.2.9/ums-memory-d6q.3.7/ums-memory-d6q.3.
     const reviewBody = await reviewRes.json();
     assert.equal(reviewBody.ok, true);
     assert.equal(reviewBody.data.action, "created");
-    assert.equal(reviewBody.data.observability.dueAt, "2026-03-12T00:00:00.000Z");
+    assert.equal(
+      reviewBody.data.observability.dueAt,
+      "2026-03-12T00:00:00.000Z"
+    );
     assert.equal(reviewBody.data.observability.sourceEventCount, 2);
     assert.equal(reviewBody.data.observability.storeIsolationEnforced, true);
     assert.equal(reviewBody.data.deterministic, true);
@@ -1023,7 +1276,10 @@ test("ums-memory-d6q.2.7/ums-memory-d6q.2.9/ums-memory-d6q.3.7/ums-memory-d6q.3.
 
     const policyRes = await fetch(`${base}/v1/policy_decision_update`, {
       method: "POST",
-      headers: { "content-type": "application/json", "x-ums-store": "tenant-http-positive" },
+      headers: {
+        "content-type": "application/json",
+        "x-ums-store": "tenant-http-positive",
+      },
       body: JSON.stringify({
         profile: "learner-http-positive",
         policyKey: "policy-http-positive",
@@ -1050,15 +1306,22 @@ test("ums-memory-d6q.2.7/ums-memory-d6q.2.9/ums-memory-d6q.3.7/ums-memory-d6q.3.
 
 test("ums-memory-d6q.3.11/ums-memory-d6q.4.11/ums-memory-d6q.4.12/ums-memory-d6q.5.11/ums-memory-d6q.5.12/ums-memory-d6q.5.13/ums-memory-d6q.5.14 http routes preserve explanation, scheduler, and security payload paths", async () => {
   resetStore();
-  const { server, host } = await startApiServer({ host: "127.0.0.1", port: 0, stateFile: null });
+  const { server, host } = await startApiServer({
+    host: "127.0.0.1",
+    port: 0,
+    stateFile: null,
+  });
   const address = server.address();
-  assert(address && typeof address === "object");
+  assert.ok(address && typeof address === "object");
   const base = `http://${host}:${address.port}`;
 
   try {
     const curriculumRes = await fetch(`${base}/v1/curriculum_plan_update`, {
       method: "POST",
-      headers: { "content-type": "application/json", "x-ums-store": "tenant-http-features" },
+      headers: {
+        "content-type": "application/json",
+        "x-ums-store": "tenant-http-features",
+      },
       body: JSON.stringify({
         profile: "learner-http-features",
         objectiveId: "objective-http-explainable",
@@ -1067,7 +1330,8 @@ test("ums-memory-d6q.3.11/ums-memory-d6q.4.11/ums-memory-d6q.4.12/ums-memory-d6q
         provenanceSignalIds: ["sig-http-cur-2", "sig-http-cur-1"],
         metadata: {
           explanation: {
-            summary: "Deterministic recommendation with evidence-backed rationale.",
+            summary:
+              "Deterministic recommendation with evidence-backed rationale.",
             rationaleSteps: ["normalize pointers", "rank by urgency"],
           },
         },
@@ -1079,43 +1343,62 @@ test("ums-memory-d6q.3.11/ums-memory-d6q.4.11/ums-memory-d6q.4.12/ums-memory-d6q
     assert.equal(curriculumBody.data.action, "created");
     assert.equal(
       curriculumBody.data.planItem.metadata.explanation.summary,
-      "Deterministic recommendation with evidence-backed rationale.",
+      "Deterministic recommendation with evidence-backed rationale."
     );
 
-    const curriculumReplayRes = await fetch(`${base}/v1/curriculum_plan_update`, {
-      method: "POST",
-      headers: { "content-type": "application/json", "x-ums-store": "tenant-http-features" },
-      body: JSON.stringify({
-        profile: "learner-http-features",
-        objectiveId: "objective-http-explainable",
-        recommendationRank: 2,
-        evidenceEventIds: ["evt-http-cur-1", "evt-http-cur-2"],
-        provenanceSignalIds: ["sig-http-cur-1", "sig-http-cur-2"],
-        metadata: {
-          explanation: {
-            summary: "Deterministic recommendation with evidence-backed rationale.",
-            rationaleSteps: ["normalize pointers", "rank by urgency"],
-          },
+    const curriculumReplayRes = await fetch(
+      `${base}/v1/curriculum_plan_update`,
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-ums-store": "tenant-http-features",
         },
-      }),
-    });
+        body: JSON.stringify({
+          profile: "learner-http-features",
+          objectiveId: "objective-http-explainable",
+          recommendationRank: 2,
+          evidenceEventIds: ["evt-http-cur-1", "evt-http-cur-2"],
+          provenanceSignalIds: ["sig-http-cur-1", "sig-http-cur-2"],
+          metadata: {
+            explanation: {
+              summary:
+                "Deterministic recommendation with evidence-backed rationale.",
+              rationaleSteps: ["normalize pointers", "rank by urgency"],
+            },
+          },
+        }),
+      }
+    );
     assert.equal(curriculumReplayRes.status, 200);
     const curriculumReplayBody = await curriculumReplayRes.json();
     assert.equal(curriculumReplayBody.ok, true);
     assert.equal(curriculumReplayBody.data.action, "noop");
-    assert.equal(curriculumReplayBody.data.observability.boundedRecommendationRank, 2);
+    assert.equal(
+      curriculumReplayBody.data.observability.boundedRecommendationRank,
+      2
+    );
 
     const reviewRes = await fetch(`${base}/v1/review_schedule_update`, {
       method: "POST",
-      headers: { "content-type": "application/json", "x-ums-store": "tenant-http-features" },
+      headers: {
+        "content-type": "application/json",
+        "x-ums-store": "tenant-http-features",
+      },
       body: JSON.stringify({
         profile: "learner-http-features",
         targetId: "rule-http-clocks",
         dueAt: "2026-03-25T00:00:00.000Z",
         sourceEventIds: ["evt-http-srs-2", "evt-http-srs-1"],
         metadata: {
-          interactionClock: { tick: 7, lastInteractionAt: "2026-03-24T23:40:00.000Z" },
-          sleepClock: { window: "nightly", nextConsolidationAt: "2026-03-25T03:30:00.000Z" },
+          interactionClock: {
+            tick: 7,
+            lastInteractionAt: "2026-03-24T23:40:00.000Z",
+          },
+          sleepClock: {
+            window: "nightly",
+            nextConsolidationAt: "2026-03-25T03:30:00.000Z",
+          },
           archive: { tier: "warm", tiers: ["hot", "warm", "cold"] },
         },
       }),
@@ -1124,20 +1407,32 @@ test("ums-memory-d6q.3.11/ums-memory-d6q.4.11/ums-memory-d6q.4.12/ums-memory-d6q
     const reviewBody = await reviewRes.json();
     assert.equal(reviewBody.ok, true);
     assert.equal(reviewBody.data.action, "created");
-    assert.equal(reviewBody.data.scheduleEntry.metadata.interactionClock.tick, 7);
+    assert.equal(
+      reviewBody.data.scheduleEntry.metadata.interactionClock.tick,
+      7
+    );
     assert.equal(reviewBody.data.scheduleEntry.metadata.archive.tier, "warm");
 
     const reviewReplayRes = await fetch(`${base}/v1/review_schedule_update`, {
       method: "POST",
-      headers: { "content-type": "application/json", "x-ums-store": "tenant-http-features" },
+      headers: {
+        "content-type": "application/json",
+        "x-ums-store": "tenant-http-features",
+      },
       body: JSON.stringify({
         profile: "learner-http-features",
         targetId: "rule-http-clocks",
         dueAt: "2026-03-25T00:00:00.000Z",
         sourceEventIds: ["evt-http-srs-1", "evt-http-srs-2"],
         metadata: {
-          interactionClock: { tick: 7, lastInteractionAt: "2026-03-24T23:40:00.000Z" },
-          sleepClock: { window: "nightly", nextConsolidationAt: "2026-03-25T03:30:00.000Z" },
+          interactionClock: {
+            tick: 7,
+            lastInteractionAt: "2026-03-24T23:40:00.000Z",
+          },
+          sleepClock: {
+            window: "nightly",
+            nextConsolidationAt: "2026-03-25T03:30:00.000Z",
+          },
           archive: { tier: "warm", tiers: ["hot", "warm", "cold"] },
         },
       }),
@@ -1150,7 +1445,10 @@ test("ums-memory-d6q.3.11/ums-memory-d6q.4.11/ums-memory-d6q.4.12/ums-memory-d6q
 
     const policyRes = await fetch(`${base}/v1/policy_decision_update`, {
       method: "POST",
-      headers: { "content-type": "application/json", "x-ums-store": "tenant-http-features" },
+      headers: {
+        "content-type": "application/json",
+        "x-ums-store": "tenant-http-features",
+      },
       body: JSON.stringify({
         profile: "learner-http-features",
         policyKey: "policy-http-security",
@@ -1159,7 +1457,11 @@ test("ums-memory-d6q.3.11/ums-memory-d6q.4.11/ums-memory-d6q.4.12/ums-memory-d6q
         provenanceEventIds: ["evt-http-pol-2", "evt-http-pol-1"],
         metadata: {
           security: { promptInjectionDetected: true, quarantined: true },
-          allowlist: { requestedSpace: "space-b", allowedSpaces: ["space-a"], authorized: false },
+          allowlist: {
+            requestedSpace: "space-b",
+            allowedSpaces: ["space-a"],
+            authorized: false,
+          },
           degraded: {
             enabled: true,
             reason: "llm_unavailable",
@@ -1187,7 +1489,10 @@ test("ums-memory-d6q.3.11/ums-memory-d6q.4.11/ums-memory-d6q.4.12/ums-memory-d6q
 
     const policyReplayRes = await fetch(`${base}/v1/policy_decision_update`, {
       method: "POST",
-      headers: { "content-type": "application/json", "x-ums-store": "tenant-http-features" },
+      headers: {
+        "content-type": "application/json",
+        "x-ums-store": "tenant-http-features",
+      },
       body: JSON.stringify({
         profile: "learner-http-features",
         policyKey: "policy-http-security",
@@ -1196,7 +1501,11 @@ test("ums-memory-d6q.3.11/ums-memory-d6q.4.11/ums-memory-d6q.4.12/ums-memory-d6q
         provenanceEventIds: ["evt-http-pol-1", "evt-http-pol-2"],
         metadata: {
           security: { promptInjectionDetected: true, quarantined: true },
-          allowlist: { requestedSpace: "space-b", allowedSpaces: ["space-a"], authorized: false },
+          allowlist: {
+            requestedSpace: "space-b",
+            allowedSpaces: ["space-a"],
+            authorized: false,
+          },
           degraded: {
             enabled: true,
             reason: "llm_unavailable",
@@ -1218,14 +1527,19 @@ test("ums-memory-d6q.3.11/ums-memory-d6q.4.11/ums-memory-d6q.4.12/ums-memory-d6q
 
     const auditRes = await fetch(`${base}/v1/audit`, {
       method: "POST",
-      headers: { "content-type": "application/json", "x-ums-store": "tenant-http-features" },
+      headers: {
+        "content-type": "application/json",
+        "x-ums-store": "tenant-http-features",
+      },
       body: JSON.stringify({ profile: "learner-http-features" }),
     });
     assert.equal(auditRes.status, 200);
     const auditBody = await auditRes.json();
     assert.equal(auditBody.ok, true);
     assert.equal(auditBody.data.operation, "audit");
-    assert.ok(auditBody.data.checks.some((check) => check.name === "duplicate_rules"));
+    assert.ok(
+      auditBody.data.checks.some((check) => check.name === "duplicate_rules")
+    );
   } finally {
     await new Promise((resolve, reject) => {
       server.close((error) => (error ? reject(error) : resolve()));
@@ -1259,13 +1573,16 @@ test("api and cli share persisted state file across restart boundaries", async (
       stateFile,
     });
     const firstAddress = firstServer.server.address();
-    assert(firstAddress && typeof firstAddress === "object");
+    assert.ok(firstAddress && typeof firstAddress === "object");
     const firstBase = `http://${firstServer.host}:${firstAddress.port}`;
 
     try {
       const contextRes = await fetch(`${firstBase}/v1/context`, {
         method: "POST",
-        headers: { "content-type": "application/json", "x-ums-store": "coding-agent" },
+        headers: {
+          "content-type": "application/json",
+          "x-ums-store": "coding-agent",
+        },
         body: JSON.stringify({
           profile: "shared-profile",
           query: "event-from-cli",
@@ -1278,7 +1595,10 @@ test("api and cli share persisted state file across restart boundaries", async (
 
       const apiIngestRes = await fetch(`${firstBase}/v1/ingest`, {
         method: "POST",
-        headers: { "content-type": "application/json", "x-ums-store": "coding-agent" },
+        headers: {
+          "content-type": "application/json",
+          "x-ums-store": "coding-agent",
+        },
         body: JSON.stringify({
           profile: "shared-profile",
           events: [{ type: "note", source: "api", content: "event-from-api" }],
@@ -1290,7 +1610,9 @@ test("api and cli share persisted state file across restart boundaries", async (
       assert.equal(apiIngestBody.data.accepted, 1);
     } finally {
       await new Promise((resolvePromise, rejectPromise) => {
-        firstServer.server.close((error) => (error ? rejectPromise(error) : resolvePromise()));
+        firstServer.server.close((error) =>
+          error ? rejectPromise(error) : resolvePromise()
+        );
       });
     }
 
@@ -1300,12 +1622,15 @@ test("api and cli share persisted state file across restart boundaries", async (
       stateFile,
     });
     const secondAddress = secondServer.server.address();
-    assert(secondAddress && typeof secondAddress === "object");
+    assert.ok(secondAddress && typeof secondAddress === "object");
     const secondBase = `http://${secondServer.host}:${secondAddress.port}`;
     try {
       const contextAfterRestart = await fetch(`${secondBase}/v1/context`, {
         method: "POST",
-        headers: { "content-type": "application/json", "x-ums-store": "coding-agent" },
+        headers: {
+          "content-type": "application/json",
+          "x-ums-store": "coding-agent",
+        },
         body: JSON.stringify({
           profile: "shared-profile",
           query: "event-from-api",
@@ -1317,7 +1642,9 @@ test("api and cli share persisted state file across restart boundaries", async (
       assert.equal(restartBody.data.matches.length, 1);
     } finally {
       await new Promise((resolvePromise, rejectPromise) => {
-        secondServer.server.close((error) => (error ? rejectPromise(error) : resolvePromise()));
+        secondServer.server.close((error) =>
+          error ? rejectPromise(error) : resolvePromise()
+        );
       });
     }
 

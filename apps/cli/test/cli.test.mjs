@@ -1,16 +1,17 @@
-import test from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
+import test from "node:test";
+
 import { resetStore } from "../../api/src/core.mjs";
 
-const CLI_PATH = resolve(process.cwd(), "apps/cli/src/index.mjs");
+const CLI_PATH = resolve(process.cwd(), "apps/cli/src/index.ts");
 
 function runCli(args, stdin = "", { env = process.env } = {}) {
   return new Promise((resolvePromise) => {
-    const proc = spawn(process.execPath, [CLI_PATH, ...args], {
+    const proc = spawn(process.execPath, ["--import", "tsx", CLI_PATH, ...args], {
       stdio: ["pipe", "pipe", "pipe"],
       env,
     });
@@ -47,8 +48,8 @@ test("cli maps ingest command to shared operation core", async () => {
       "--input",
       JSON.stringify({
         profile: "cli-test",
-        events: [{ type: "note", source: "cli", content: "wire same core" }]
-      })
+        events: [{ type: "note", source: "cli", content: "wire same core" }],
+      }),
     ]);
     assert.equal(ingest.code, 0);
     const ingestBody = JSON.parse(ingest.stdout);
@@ -61,7 +62,7 @@ test("cli maps ingest command to shared operation core", async () => {
       "--state-file",
       stateFile,
       "--input",
-      "{\"profile\":\"cli-test\",\"query\":\"wire\"}"
+      '{"profile":"cli-test","query":"wire"}',
     ]);
     assert.equal(context.code, 0);
     const contextBody = JSON.parse(context.stdout);
@@ -81,7 +82,7 @@ test("cli supports stdin json input", async () => {
       ["ingest", "--state-file", stateFile],
       JSON.stringify({
         profile: "stdin-test",
-        events: [{ type: "task", source: "stdin", content: "stdin payload" }]
+        events: [{ type: "task", source: "stdin", content: "stdin payload" }],
       })
     );
     assert.equal(ingest.code, 0);
@@ -107,11 +108,17 @@ test("cli honors UMS_STATE_FILE as shared default state path", async () => {
         "--input",
         JSON.stringify({
           profile: "shared-default",
-          events: [{ type: "note", source: "cli", content: "shared default state file" }],
+          events: [
+            {
+              type: "note",
+              source: "cli",
+              content: "shared default state file",
+            },
+          ],
         }),
       ],
       "",
-      { env },
+      { env }
     );
     assert.equal(ingest.code, 0);
 
@@ -125,7 +132,7 @@ test("cli honors UMS_STATE_FILE as shared default state path", async () => {
         }),
       ],
       "",
-      { env },
+      { env }
     );
     assert.equal(context.code, 0);
     const contextBody = JSON.parse(context.stdout);
@@ -164,7 +171,9 @@ test("cli store-id flag isolates memories across stores", async () => {
       "--input",
       JSON.stringify({
         profile: "shared-profile",
-        events: [{ type: "note", source: "codex", content: "coding only note" }],
+        events: [
+          { type: "note", source: "codex", content: "coding only note" },
+        ],
       }),
     ]);
     assert.equal(codingIngest.code, 0);
@@ -214,7 +223,13 @@ test("ums-memory-d6q.1.4 cli routes learner profile + identity graph updates wit
       JSON.stringify({
         profile: "learner-cli",
         learnerId: "learner-88",
-        identityRefs: [{ namespace: "email", value: "learner88@example.com", isPrimary: true }],
+        identityRefs: [
+          {
+            namespace: "email",
+            value: "learner88@example.com",
+            isPrimary: true,
+          },
+        ],
         goals: ["graph", "dp"],
         evidenceEventIds: ["ep-profile-cli-1"],
       }),
@@ -235,7 +250,13 @@ test("ums-memory-d6q.1.4 cli routes learner profile + identity graph updates wit
       JSON.stringify({
         profile: "learner-cli",
         learnerId: "learner-88",
-        identityRefs: [{ namespace: "email", value: "learner88@example.com", isPrimary: true }],
+        identityRefs: [
+          {
+            namespace: "email",
+            value: "learner88@example.com",
+            isPrimary: true,
+          },
+        ],
         goals: ["dp", "graph"],
         evidenceEventIds: ["ep-profile-cli-1"],
       }),
@@ -244,7 +265,10 @@ test("ums-memory-d6q.1.4 cli routes learner profile + identity graph updates wit
     const profileReplayBody = JSON.parse(profileReplay.stdout);
     assert.equal(profileReplayBody.ok, true);
     assert.equal(profileReplayBody.data.action, "noop");
-    assert.equal(profileReplayBody.data.profileId, profileCreateBody.data.profileId);
+    assert.equal(
+      profileReplayBody.data.profileId,
+      profileCreateBody.data.profileId
+    );
 
     const edgeCreate = await runCli([
       "identity_graph_update",
@@ -578,7 +602,10 @@ test("ums-memory-d6q.2.7/ums-memory-d6q.2.9/ums-memory-d6q.3.7/ums-memory-d6q.3.
     assert.equal(curriculumBody.data.action, "created");
     assert.equal(curriculumBody.data.observability.evidenceCount, 1);
     assert.equal(curriculumBody.data.observability.provenanceCount, 2);
-    assert.equal(curriculumBody.data.observability.boundedRecommendationRank, 2);
+    assert.equal(
+      curriculumBody.data.observability.boundedRecommendationRank,
+      2
+    );
     assert.equal(curriculumBody.data.deterministic, true);
     assert.ok(curriculumBody.data.requestDigest.length > 10);
 
@@ -600,7 +627,10 @@ test("ums-memory-d6q.2.7/ums-memory-d6q.2.9/ums-memory-d6q.3.7/ums-memory-d6q.3.
     const reviewBody = JSON.parse(review.stdout);
     assert.equal(reviewBody.ok, true);
     assert.equal(reviewBody.data.action, "created");
-    assert.equal(reviewBody.data.observability.dueAt, "2026-03-12T00:00:00.000Z");
+    assert.equal(
+      reviewBody.data.observability.dueAt,
+      "2026-03-12T00:00:00.000Z"
+    );
     assert.equal(reviewBody.data.observability.sourceEventCount, 2);
     assert.equal(reviewBody.data.observability.storeIsolationEnforced, true);
     assert.equal(reviewBody.data.deterministic, true);
@@ -708,7 +738,10 @@ test("ums-memory-d6q.2.11/ums-memory-d6q.2.12/ums-memory-d6q.4.11/ums-memory-d6q
     assert.equal(implicitBody.ok, true);
     assert.equal(implicitBody.data.action, "updated");
     assert.equal(implicitBody.data.observability.signalCount, 2);
-    assert.equal(implicitBody.data.record.metadata.mappedOutcomeId, outcomeBody.data.outcomeId);
+    assert.equal(
+      implicitBody.data.record.metadata.mappedOutcomeId,
+      outcomeBody.data.outcomeId
+    );
 
     const implicitReplay = await runCli([
       "misconception_update",
@@ -748,8 +781,14 @@ test("ums-memory-d6q.2.11/ums-memory-d6q.2.12/ums-memory-d6q.4.11/ums-memory-d6q
         dueAt: "2026-03-26T00:00:00.000Z",
         sourceEventIds: ["evt-cli-srs-2", "evt-cli-srs-1"],
         metadata: {
-          interactionClock: { tick: 4, lastInteractionAt: "2026-03-25T23:30:00.000Z" },
-          sleepClock: { window: "nightly", nextConsolidationAt: "2026-03-26T02:30:00.000Z" },
+          interactionClock: {
+            tick: 4,
+            lastInteractionAt: "2026-03-25T23:30:00.000Z",
+          },
+          sleepClock: {
+            window: "nightly",
+            nextConsolidationAt: "2026-03-26T02:30:00.000Z",
+          },
           activeSet: { limit: 3, size: 2, strategy: "lru" },
           archive: { tier: "warm", tiers: ["hot", "warm", "cold"] },
         },
@@ -759,7 +798,10 @@ test("ums-memory-d6q.2.11/ums-memory-d6q.2.12/ums-memory-d6q.4.11/ums-memory-d6q
     const scheduleBody = JSON.parse(schedule.stdout);
     assert.equal(scheduleBody.ok, true);
     assert.equal(scheduleBody.data.action, "created");
-    assert.equal(scheduleBody.data.scheduleEntry.metadata.interactionClock.tick, 4);
+    assert.equal(
+      scheduleBody.data.scheduleEntry.metadata.interactionClock.tick,
+      4
+    );
     assert.equal(scheduleBody.data.scheduleEntry.metadata.archive.tier, "warm");
 
     const scheduleReplay = await runCli([
@@ -775,8 +817,14 @@ test("ums-memory-d6q.2.11/ums-memory-d6q.2.12/ums-memory-d6q.4.11/ums-memory-d6q
         dueAt: "2026-03-26T00:00:00.000Z",
         sourceEventIds: ["evt-cli-srs-1", "evt-cli-srs-2"],
         metadata: {
-          interactionClock: { tick: 4, lastInteractionAt: "2026-03-25T23:30:00.000Z" },
-          sleepClock: { window: "nightly", nextConsolidationAt: "2026-03-26T02:30:00.000Z" },
+          interactionClock: {
+            tick: 4,
+            lastInteractionAt: "2026-03-25T23:30:00.000Z",
+          },
+          sleepClock: {
+            window: "nightly",
+            nextConsolidationAt: "2026-03-26T02:30:00.000Z",
+          },
           activeSet: { limit: 3, size: 2, strategy: "lru" },
           archive: { tier: "warm", tiers: ["hot", "warm", "cold"] },
         },

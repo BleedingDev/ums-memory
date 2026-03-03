@@ -1,12 +1,9 @@
-import test from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { resolve } from "node:path";
-import {
-  executeOperation,
-  listOperations,
-  resetStore,
-} from "../src/core.mjs";
+import test from "node:test";
+
+import { executeOperation, listOperations, resetStore } from "../src/core.mjs";
 import { executeOperationWithSharedState } from "../src/persistence.mjs";
 import {
   clearRuntimeAdapterCache,
@@ -15,14 +12,14 @@ import {
 } from "../src/runtime-adapter.mjs";
 import { startApiServer } from "../src/server.mjs";
 
-const CLI_PATH = resolve(process.cwd(), "apps/cli/src/index.mjs");
+const CLI_PATH = resolve(process.cwd(), "apps/cli/src/index.ts");
 const RUNTIME_ADAPTER_FIXTURE = resolve(
   process.cwd(),
-  "apps/api/test/fixtures/runtime-adapter-override.mjs",
+  "apps/api/test/fixtures/runtime-adapter-override.mjs"
 );
 const POLICY_PACK_PLUGIN_FIXTURE = resolve(
   process.cwd(),
-  "apps/api/test/fixtures/policy-pack-plugin-override.mjs",
+  "apps/api/test/fixtures/policy-pack-plugin-override.mjs"
 );
 const ORIGINAL_RUNTIME_ADAPTER_MODULE = process.env.UMS_RUNTIME_ADAPTER_MODULE;
 const ORIGINAL_RUNTIME_ADAPTER_EXPORT = process.env.UMS_RUNTIME_ADAPTER_EXPORT;
@@ -33,7 +30,7 @@ const ORIGINAL_POLICY_PACK_PLUGIN_EXPORT =
 
 function runCli(args, stdin = "", { env = process.env } = {}) {
   return new Promise((resolvePromise) => {
-    const proc = spawn(process.execPath, [CLI_PATH, ...args], {
+    const proc = spawn(process.execPath, ["--import", "tsx", CLI_PATH, ...args], {
       stdio: ["pipe", "pipe", "pipe"],
       env,
     });
@@ -86,12 +83,14 @@ test.after(() => {
     delete process.env.UMS_RUNTIME_ADAPTER_EXPORT;
   }
   if (ORIGINAL_POLICY_PACK_PLUGIN_MODULE) {
-    process.env.UMS_POLICY_PACK_PLUGIN_MODULE = ORIGINAL_POLICY_PACK_PLUGIN_MODULE;
+    process.env.UMS_POLICY_PACK_PLUGIN_MODULE =
+      ORIGINAL_POLICY_PACK_PLUGIN_MODULE;
   } else {
     delete process.env.UMS_POLICY_PACK_PLUGIN_MODULE;
   }
   if (ORIGINAL_POLICY_PACK_PLUGIN_EXPORT) {
-    process.env.UMS_POLICY_PACK_PLUGIN_EXPORT = ORIGINAL_POLICY_PACK_PLUGIN_EXPORT;
+    process.env.UMS_POLICY_PACK_PLUGIN_EXPORT =
+      ORIGINAL_POLICY_PACK_PLUGIN_EXPORT;
   } else {
     delete process.env.UMS_POLICY_PACK_PLUGIN_EXPORT;
   }
@@ -186,8 +185,14 @@ test("legacy runtime adapter can load policy pack plugins from env module", asyn
 
   assert.equal(first.action, "created");
   assert.equal(first.decision.outcome, "deny");
-  assert.equal(first.decision.reasonCodes.includes("fixture-plugin-deny"), true);
-  assert.equal(first.decision.metadata.policyPackPlugin.pluginName, "fixture-policy-pack-plugin");
+  assert.equal(
+    first.decision.reasonCodes.includes("fixture-plugin-deny"),
+    true
+  );
+  assert.equal(
+    first.decision.metadata.policyPackPlugin.pluginName,
+    "fixture-policy-pack-plugin"
+  );
   assert.equal(first.decision.metadata.policyPackPlugin.status, "executed");
   assert.equal(replay.action, "noop");
   assert.equal(replay.decisionDigest, first.decisionDigest);
@@ -195,9 +200,13 @@ test("legacy runtime adapter can load policy pack plugins from env module", asyn
 
 test("api server routes through runtime adapter override for list + operation execution", async () => {
   useFixtureRuntimeAdapter();
-  const { server, host } = await startApiServer({ host: "127.0.0.1", port: 0, stateFile: null });
+  const { server, host } = await startApiServer({
+    host: "127.0.0.1",
+    port: 0,
+    stateFile: null,
+  });
   const address = server.address();
-  assert(address && typeof address === "object");
+  assert.ok(address && typeof address === "object");
   const base = `http://${host}:${address.port}`;
 
   try {
@@ -239,7 +248,9 @@ test("api server routes through runtime adapter override for list + operation ex
     assert.equal(secondBody.data.requestDigest, firstBody.data.requestDigest);
   } finally {
     await new Promise((resolvePromise, rejectPromise) => {
-      server.close((error) => (error ? rejectPromise(error) : resolvePromise()));
+      server.close((error) =>
+        error ? rejectPromise(error) : resolvePromise()
+      );
     });
   }
 });

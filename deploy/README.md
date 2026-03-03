@@ -30,7 +30,7 @@ node apps/api/src/server.mjs
 Worker command in image:
 
 ```bash
-node apps/ums/src/index.mjs worker
+node --import tsx apps/ums/src/index.ts worker
 ```
 
 ## Run With Docker Compose

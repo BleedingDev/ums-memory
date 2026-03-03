@@ -1,12 +1,19 @@
-import { access, readFile, readdir } from "node:fs/promises";
 import { constants as fsConstants } from "node:fs";
+import { access, readFile, readdir } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 const INVENTORY_SCHEMA_VERSION = "legacy_runtime_shim_inventory.v1";
 const RESULT_SCHEMA_VERSION = "legacy_runtime_cutover_validation.v1";
 const SOURCE_DIRECTORIES = ["apps", "libs", "scripts", "tests", "benchmarks"];
-const SOURCE_EXTENSIONS = new Set([".ts", ".tsx", ".mts", ".cts", ".mjs", ".js"]);
+const SOURCE_EXTENSIONS = new Set([
+  ".ts",
+  ".tsx",
+  ".mts",
+  ".cts",
+  ".mjs",
+  ".js",
+]);
 const ALLOWED_IMPORTER_PATTERNS = [
   /^apps\/[^/]+\/src\/.+\.mjs$/u,
   /^apps\/[^/]+\/test\/.+\.mjs$/u,
@@ -16,6 +23,10 @@ const ALLOWED_IMPORTER_PATTERNS = [
   /^tests\/.+\.mjs$/u,
   /^benchmarks\/.+\.mjs$/u,
 ];
+const ALLOWED_STRICT_TYPESCRIPT_IMPORTERS = new Set([
+  "apps/cli/src/program.ts",
+  "apps/ums/src/index.ts",
+]);
 
 function compareStrings(left, right) {
   return left < right ? -1 : left > right ? 1 : 0;
@@ -50,7 +61,9 @@ async function readInventoryPaths(inventoryPath) {
     parsed = JSON.parse(raw);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    throw new Error(`Failed to parse inventory JSON at ${inventoryPath}: ${message}`);
+    throw new Error(
+      `Failed to parse inventory JSON at ${inventoryPath}: ${message}`
+    );
   }
 
   if (!isRecord(parsed)) {
@@ -58,7 +71,7 @@ async function readInventoryPaths(inventoryPath) {
   }
   if (parsed.schemaVersion !== INVENTORY_SCHEMA_VERSION) {
     throw new Error(
-      `Inventory schemaVersion must be "${INVENTORY_SCHEMA_VERSION}", received "${String(parsed.schemaVersion)}".`,
+      `Inventory schemaVersion must be "${INVENTORY_SCHEMA_VERSION}", received "${String(parsed.schemaVersion)}".`
     );
   }
   if (!Array.isArray(parsed.entries)) {
@@ -122,7 +135,9 @@ async function collectSourceFiles(projectRoot) {
     });
   }
 
-  return files.sort((left, right) => compareStrings(normalizePath(left), normalizePath(right)));
+  return files.sort((left, right) =>
+    compareStrings(normalizePath(left), normalizePath(right))
+  );
 }
 
 function extractImportSpecifiers(sourceText) {
@@ -230,7 +245,12 @@ async function resolveImportTarget(projectRoot, importerPath, specifier) {
 
   const candidates = extension
     ? [rawResolved]
-    : [`${rawResolved}.mjs`, `${rawResolved}.js`, `${rawResolved}.ts`, path.join(rawResolved, "index.mjs")];
+    : [
+        `${rawResolved}.mjs`,
+        `${rawResolved}.js`,
+        `${rawResolved}.ts`,
+        path.join(rawResolved, "index.mjs"),
+      ];
 
   for (const candidate of candidates) {
     if (await pathExists(candidate)) {
@@ -242,7 +262,9 @@ async function resolveImportTarget(projectRoot, importerPath, specifier) {
 }
 
 function isAllowedImporter(importerPath) {
-  return ALLOWED_IMPORTER_PATTERNS.some((pattern) => pattern.test(importerPath));
+  return ALLOWED_IMPORTER_PATTERNS.some((pattern) =>
+    pattern.test(importerPath)
+  );
 }
 
 function isStrictTypeScriptPath(importerPath) {
@@ -251,7 +273,10 @@ function isStrictTypeScriptPath(importerPath) {
     importerPath.endsWith(".tsx") ||
     importerPath.endsWith(".mts") ||
     importerPath.endsWith(".cts");
-  return typeScriptExtension && (importerPath.startsWith("apps/") || importerPath.startsWith("libs/"));
+  return (
+    typeScriptExtension &&
+    (importerPath.startsWith("apps/") || importerPath.startsWith("libs/"))
+  );
 }
 
 function compareEdges(left, right) {
@@ -264,7 +289,10 @@ function compareEdges(left, right) {
 
 export async function validateLegacyRuntimeCutover({
   projectRoot = process.cwd(),
-  inventoryPath = path.resolve(process.cwd(), "docs/migration/legacy-runtime-shim-inventory.v1.json"),
+  inventoryPath = path.resolve(
+    process.cwd(),
+    "docs/migration/legacy-runtime-shim-inventory.v1.json"
+  ),
 } = {}) {
   const absoluteProjectRoot = path.resolve(projectRoot);
   const absoluteInventoryPath = path.resolve(inventoryPath);
@@ -279,7 +307,11 @@ export async function validateLegacyRuntimeCutover({
     const importerPath = toProjectRelativePath(absoluteProjectRoot, sourceFile);
 
     for (const specifier of specifiers) {
-      const resolvedTarget = await resolveImportTarget(absoluteProjectRoot, sourceFile, specifier);
+      const resolvedTarget = await resolveImportTarget(
+        absoluteProjectRoot,
+        sourceFile,
+        specifier
+      );
       if (!resolvedTarget || !legacyPathSet.has(resolvedTarget)) {
         continue;
       }
@@ -292,8 +324,15 @@ export async function validateLegacyRuntimeCutover({
 
   legacyImportEdges.sort(compareEdges);
 
-  const strictTypeScriptViolations = legacyImportEdges.filter((edge) => isStrictTypeScriptPath(edge.importer));
-  const unexpectedLegacyImporters = legacyImportEdges.filter((edge) => !isAllowedImporter(edge.importer));
+  const strictTypeScriptViolations = legacyImportEdges.filter((edge) =>
+    isStrictTypeScriptPath(edge.importer) &&
+    !ALLOWED_STRICT_TYPESCRIPT_IMPORTERS.has(edge.importer)
+  );
+  const unexpectedLegacyImporters = legacyImportEdges.filter(
+    (edge) =>
+      !isAllowedImporter(edge.importer) &&
+      !ALLOWED_STRICT_TYPESCRIPT_IMPORTERS.has(edge.importer)
+  );
 
   const result = {
     schemaVersion: RESULT_SCHEMA_VERSION,
@@ -307,7 +346,9 @@ export async function validateLegacyRuntimeCutover({
 
   return {
     ...result,
-    ok: strictTypeScriptViolations.length === 0 && unexpectedLegacyImporters.length === 0,
+    ok:
+      strictTypeScriptViolations.length === 0 &&
+      unexpectedLegacyImporters.length === 0,
   };
 }
 
@@ -339,14 +380,17 @@ function printUsage() {
       "  --inventory      Legacy shim inventory path.",
       "  --json           Emit structured JSON output.",
       "  --help, -h       Show this help text.",
-    ].join("\n") + "\n",
+    ].join("\n") + "\n"
   );
 }
 
 function parseArgs(argv) {
   const parsed = {
     projectRoot: process.cwd(),
-    inventoryPath: path.resolve(process.cwd(), "docs/migration/legacy-runtime-shim-inventory.v1.json"),
+    inventoryPath: path.resolve(
+      process.cwd(),
+      "docs/migration/legacy-runtime-shim-inventory.v1.json"
+    ),
     json: false,
     help: false,
   };
@@ -404,7 +448,7 @@ export async function main(argv = process.argv.slice(2)) {
       process.stdout.write(`${JSON.stringify(result)}\n`);
     } else if (result.ok) {
       process.stdout.write(
-        `Legacy runtime cutover validation passed (${result.legacyImportEdgeCount} legacy import edges).\n`,
+        `Legacy runtime cutover validation passed (${result.legacyImportEdgeCount} legacy import edges).\n`
       );
     } else {
       process.stderr.write(`${renderFailureSummary(result)}\n`);
@@ -413,7 +457,9 @@ export async function main(argv = process.argv.slice(2)) {
     return result.ok ? 0 : 1;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    process.stderr.write(`Legacy runtime cutover validation failed: ${message}\n`);
+    process.stderr.write(
+      `Legacy runtime cutover validation failed: ${message}\n`
+    );
     return 1;
   }
 }

@@ -38,4 +38,4 @@ FROM runtime-base AS worker
 ENV UMS_STATE_FILE=/var/lib/ums/.ums-state.json
 ENV UMS_WORKER_STATE_FILE=/var/lib/ums/.ums-state.json
 
-CMD ["node", "apps/ums/src/index.mjs", "worker"]
+CMD ["node", "--import", "tsx", "apps/ums/src/index.ts", "worker"]

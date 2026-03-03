@@ -1,15 +1,21 @@
 import { createServer } from "node:http";
+
+import { CONSOLE_CSS, CONSOLE_HTML, CONSOLE_JS } from "./console-ui.mjs";
 import {
   DEFAULT_RUNTIME_STATE_FILE,
   executeRuntimeOperation,
   listRuntimeOperations,
 } from "./runtime-adapter.mjs";
-import { createInMemoryApiTelemetry, PROMETHEUS_CONTENT_TYPE } from "./telemetry.mjs";
-import { CONSOLE_CSS, CONSOLE_HTML, CONSOLE_JS } from "./console-ui.mjs";
+import {
+  createInMemoryApiTelemetry,
+  PROMETHEUS_CONTENT_TYPE,
+} from "./telemetry.mjs";
 
 const HOST = process.env.UMS_API_HOST ?? "127.0.0.1";
 const PORT = Number.parseInt(process.env.UMS_API_PORT ?? "8787", 10);
-const ENABLE_CONSOLE_UI = parseBooleanFlag(process.env.UMS_API_ENABLE_CONSOLE_UI);
+const ENABLE_CONSOLE_UI = parseBooleanFlag(
+  process.env.UMS_API_ENABLE_CONSOLE_UI
+);
 const API_PREFIX = "/v1";
 const CONSOLE_SECURITY_HEADERS = Object.freeze({
   "content-security-policy":
@@ -40,7 +46,12 @@ function parseBooleanFlag(value) {
     return false;
   }
   const normalized = value.trim().toLowerCase();
-  return normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "on";
+  return (
+    normalized === "1" ||
+    normalized === "true" ||
+    normalized === "yes" ||
+    normalized === "on"
+  );
 }
 
 function normalizeConsoleUiToggle(value) {
@@ -67,13 +78,13 @@ function text(
   statusCode,
   body,
   contentType = PROMETHEUS_CONTENT_TYPE,
-  additionalHeaders = undefined,
+  additionalHeaders
 ) {
   const payload = String(body ?? "");
   res.writeHead(statusCode, {
     "content-type": contentType,
     "content-length": Buffer.byteLength(payload),
-    ...(additionalHeaders ?? {}),
+    ...additionalHeaders,
   });
   res.end(payload);
 }
@@ -85,7 +96,10 @@ function notFound(res) {
   });
 }
 
-function methodNotAllowed(res, message = "Only POST is supported for operation routes.") {
+function methodNotAllowed(
+  res,
+  message = "Only POST is supported for operation routes."
+) {
   return json(res, 405, {
     ok: false,
     error: { code: "METHOD_NOT_ALLOWED", message },
@@ -96,14 +110,19 @@ function parseOperation(pathname) {
   if (!pathname.startsWith(`${API_PREFIX}/`)) {
     return null;
   }
-  const operation = pathname.slice(`${API_PREFIX}/`.length).trim().toLowerCase();
+  const operation = pathname
+    .slice(`${API_PREFIX}/`.length)
+    .trim()
+    .toLowerCase();
   return operation || null;
 }
 
 function parseStoreHeader(req) {
   const value = req.headers["x-ums-store"];
   if (Array.isArray(value)) {
-    return value.find((entry) => typeof entry === "string" && entry.trim()) ?? null;
+    return (
+      value.find((entry) => typeof entry === "string" && entry.trim()) ?? null
+    );
   }
   if (typeof value === "string" && value.trim()) {
     return value.trim();
@@ -136,7 +155,11 @@ function toErrorResponse(error) {
       },
     };
   }
-  if (error && typeof error === "object" && error.code === "UNSUPPORTED_OPERATION") {
+  if (
+    error &&
+    typeof error === "object" &&
+    error.code === "UNSUPPORTED_OPERATION"
+  ) {
     return {
       statusCode: 404,
       body: {
@@ -148,7 +171,11 @@ function toErrorResponse(error) {
       },
     };
   }
-  if (error && typeof error === "object" && error.code === "STATE_LOCK_TIMEOUT") {
+  if (
+    error &&
+    typeof error === "object" &&
+    error.code === "STATE_LOCK_TIMEOUT"
+  ) {
     return {
       statusCode: 503,
       body: {
@@ -160,7 +187,11 @@ function toErrorResponse(error) {
       },
     };
   }
-  if (error && typeof error === "object" && error.code === "STATE_FILE_CORRUPT") {
+  if (
+    error &&
+    typeof error === "object" &&
+    error.code === "STATE_FILE_CORRUPT"
+  ) {
     return {
       statusCode: 500,
       body: {
@@ -172,7 +203,11 @@ function toErrorResponse(error) {
       },
     };
   }
-  if (error && typeof error === "object" && error.code === "RUNTIME_ADAPTER_LOAD_ERROR") {
+  if (
+    error &&
+    typeof error === "object" &&
+    error.code === "RUNTIME_ADAPTER_LOAD_ERROR"
+  ) {
     return {
       statusCode: 500,
       body: {
@@ -184,7 +219,11 @@ function toErrorResponse(error) {
       },
     };
   }
-  if (error && typeof error === "object" && error.code === "RUNTIME_ADAPTER_CONTRACT_ERROR") {
+  if (
+    error &&
+    typeof error === "object" &&
+    error.code === "RUNTIME_ADAPTER_CONTRACT_ERROR"
+  ) {
     return {
       statusCode: 500,
       body: {
@@ -196,7 +235,10 @@ function toErrorResponse(error) {
       },
     };
   }
-  if (error instanceof Error && error.message.startsWith("SERVICE_MISCONFIGURATION:")) {
+  if (
+    error instanceof Error &&
+    error.message.startsWith("SERVICE_MISCONFIGURATION:")
+  ) {
     return {
       statusCode: 500,
       body: {
@@ -239,7 +281,10 @@ export function createApiServer({
   const activeTelemetry = resolveTelemetry(telemetry);
   const consoleUiEnabled = normalizeConsoleUiToggle(enableConsoleUi);
   return createServer(async (req, res) => {
-    const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
+    const url = new URL(
+      req.url ?? "/",
+      `http://${req.headers.host ?? "localhost"}`
+    );
     if (url.pathname === "/" && req.method === "GET") {
       try {
         const operations = await listRuntimeOperations();
@@ -247,7 +292,9 @@ export function createApiServer({
           ok: true,
           service: "ums-api",
           version: "v1",
-          operations: operations.map((operation) => `${API_PREFIX}/${operation}`),
+          operations: operations.map(
+            (operation) => `${API_PREFIX}/${operation}`
+          ),
           deterministic: true,
           storeSelection: {
             bodyField: "storeId",
@@ -280,7 +327,13 @@ export function createApiServer({
       if (req.method !== "GET") {
         return methodNotAllowed(res, consoleRoute.methodError);
       }
-      return text(res, 200, consoleRoute.body, consoleRoute.contentType, CONSOLE_SECURITY_HEADERS);
+      return text(
+        res,
+        200,
+        consoleRoute.body,
+        consoleRoute.contentType,
+        CONSOLE_SECURITY_HEADERS
+      );
     }
 
     const operation = parseOperation(url.pathname);
@@ -296,7 +349,8 @@ export function createApiServer({
       requestBody = null,
       failureCode = null,
     }) => {
-      const latencyMs = Number(process.hrtime.bigint() - operationStart) / 1_000_000;
+      const latencyMs =
+        Number(process.hrtime.bigint() - operationStart) / 1_000_000;
       try {
         activeTelemetry.recordOperationResult({
           operation,
@@ -372,7 +426,11 @@ export function startApiServer({
   enableConsoleUi = ENABLE_CONSOLE_UI,
 } = {}) {
   const activeTelemetry = resolveTelemetry(telemetry);
-  const server = createApiServer({ stateFile, telemetry: activeTelemetry, enableConsoleUi });
+  const server = createApiServer({
+    stateFile,
+    telemetry: activeTelemetry,
+    enableConsoleUi,
+  });
   return new Promise((resolve, reject) => {
     const onError = (error) => {
       server.off("error", onError);
@@ -383,7 +441,9 @@ export function startApiServer({
       server.off("error", onError);
       const address = server.address();
       const resolvedPort =
-        address && typeof address === "object" && typeof address.port === "number"
+        address &&
+        typeof address === "object" &&
+        typeof address.port === "number"
           ? address.port
           : port;
       resolve({
@@ -396,9 +456,11 @@ export function startApiServer({
   });
 }
 
+const isStandaloneServerInvocation = process.argv.slice(2).length === 0;
 const isMainModule =
-  (typeof import.meta.main === "boolean" && import.meta.main) ||
-  import.meta.url === `file://${process.argv[1]}`;
+  isStandaloneServerInvocation &&
+  ((typeof import.meta.main === "boolean" && import.meta.main) ||
+    import.meta.url === `file://${process.argv[1]}`);
 
 // Bun-compiled executables can be more aggressive with GC; keep a strong
 // process-lifetime reference so the listener stays active.
@@ -411,7 +473,7 @@ if (isMainModule) {
         host: HOST,
         port: PORT,
         stateFile: DEFAULT_RUNTIME_STATE_FILE,
-      }),
+      })
     )
     .then(({ service, host, port }) => {
       activeServerHandle = service;
@@ -421,7 +483,7 @@ if (isMainModule) {
         if (snapshot.phase === "failed") {
           clearInterval(supervisionWatcher);
           process.stderr.write(
-            `UMS API supervision failed: ${snapshot.lastError ?? "unknown failure"}\n`,
+            `UMS API supervision failed: ${snapshot.lastError ?? "unknown failure"}\n`
           );
           process.exit(1);
           return;

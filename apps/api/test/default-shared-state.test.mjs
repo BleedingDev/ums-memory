@@ -1,13 +1,14 @@
-import test from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
+import test from "node:test";
 
 const ROOT = process.cwd();
-const CLI_PATH = resolve(ROOT, "apps/cli/src/index.mjs");
+const CLI_PATH = resolve(ROOT, "apps/cli/src/index.ts");
 const API_PATH = resolve(ROOT, "apps/api/src/server.mjs");
+const TSX_LOADER_PATH = resolve(ROOT, "node_modules/tsx/dist/loader.mjs");
 
 function cleanSharedStateEnv() {
   const env = { ...process.env };
@@ -18,7 +19,10 @@ function cleanSharedStateEnv() {
 
 function runNode(scriptPath, args, { cwd, env, stdin = "" }) {
   return new Promise((resolvePromise) => {
-    const proc = spawn(process.execPath, [scriptPath, ...args], {
+    const commandArgs = scriptPath.endsWith(".ts")
+      ? ["--import", TSX_LOADER_PATH, scriptPath, ...args]
+      : [scriptPath, ...args];
+    const proc = spawn(process.execPath, commandArgs, {
       cwd,
       env,
       stdio: ["pipe", "pipe", "pipe"],
@@ -60,12 +64,18 @@ function startSourceApiServer({ cwd, env }) {
         return;
       }
       proc.kill("SIGTERM");
-      rejectPromise(new Error(`Timed out waiting for API startup.\nstdout:\n${stdout}\nstderr:\n${stderr}`));
+      rejectPromise(
+        new Error(
+          `Timed out waiting for API startup.\nstdout:\n${stdout}\nstderr:\n${stderr}`
+        )
+      );
     }, 8000);
 
     proc.stdout.on("data", (chunk) => {
       stdout += chunk.toString("utf8");
-      const match = stdout.match(/UMS API listening on http:\/\/([^\s:]+):(\d+)/);
+      const match = stdout.match(
+        /UMS API listening on http:\/\/([^\s:]+):(\d+)/
+      );
       if (!match || resolved) {
         return;
       }
@@ -90,7 +100,9 @@ function startSourceApiServer({ cwd, env }) {
       if (!resolved) {
         clearTimeout(timeout);
         rejectPromise(
-          new Error(`API exited before startup (code=${code}).\nstdout:\n${stdout}\nstderr:\n${stderr}`),
+          new Error(
+            `API exited before startup (code=${code}).\nstdout:\n${stdout}\nstderr:\n${stderr}`
+          )
         );
       }
     });
@@ -119,10 +131,16 @@ test("cli and api default to the same .ums-state.json file without env overrides
         "--input",
         JSON.stringify({
           profile: "default-shared-state",
-          events: [{ type: "note", source: "cli", content: "default-shared-event-from-cli" }],
+          events: [
+            {
+              type: "note",
+              source: "cli",
+              content: "default-shared-event-from-cli",
+            },
+          ],
         }),
       ],
-      { cwd: tempDir, env },
+      { cwd: tempDir, env }
     );
     assert.equal(cliIngest.code, 0, `cli ingest failed: ${cliIngest.stderr}`);
 
@@ -158,7 +176,13 @@ test("cli and api default to the same .ums-state.json file without env overrides
         },
         body: JSON.stringify({
           profile: "default-shared-state",
-          events: [{ type: "note", source: "api", content: "default-shared-event-from-api" }],
+          events: [
+            {
+              type: "note",
+              source: "api",
+              content: "default-shared-event-from-api",
+            },
+          ],
         }),
       });
       assert.equal(apiIngestResponse.status, 200);
@@ -181,9 +205,13 @@ test("cli and api default to the same .ums-state.json file without env overrides
           query: "default-shared-event-from-api",
         }),
       ],
-      { cwd: tempDir, env },
+      { cwd: tempDir, env }
     );
-    assert.equal(cliContext.code, 0, `cli context failed: ${cliContext.stderr}`);
+    assert.equal(
+      cliContext.code,
+      0,
+      `cli context failed: ${cliContext.stderr}`
+    );
     const cliContextBody = JSON.parse(cliContext.stdout);
     assert.equal(cliContextBody.ok, true);
     assert.equal(cliContextBody.data.matches.length, 1);

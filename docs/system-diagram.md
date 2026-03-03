@@ -29,8 +29,8 @@ flowchart TB
 ```mermaid
 flowchart LR
   C1["Klienti (CLI call, HTTP call)"]
-  C2["UMS wrapper apps/ums/src/index.mjs"]
-  C3["CLI adapter apps/cli/src/index.mjs"]
+  C2["UMS wrapper apps/ums/src/index.ts"]
+  C3["CLI adapter apps/cli/src/index.ts"]
   C4["API adapter apps/api/src/server.mjs"]
   C5["Shared-state facade apps/api/src/persistence.mjs"]
   C6["Operation engine apps/api/src/core.mjs"]
@@ -112,21 +112,25 @@ flowchart LR
 ### Manualni ingest
 
 1. Bulk import lokalni historie agentu:
+
 ```bash
 npm run ingest:coding-history
 ```
 
 2. Varianta s explicitnim store/profile/state:
+
 ```bash
 npm run ingest:coding-history -- --store-id coding-agent --profile agent-history --state-file .ums-state.json
 ```
 
 3. Primy ingest jedne udalosti pres CLI:
+
 ```bash
 npm run cli -- ingest --store-id coding-agent --input '{"profile":"agent-history","events":[{"type":"note","source":"codex-cli","content":"example insight"}]}'
 ```
 
 4. Primy ingest pres HTTP API:
+
 ```bash
 curl -sS -X POST http://127.0.0.1:8787/v1/ingest \
   -H 'content-type: application/json' \
@@ -138,9 +142,11 @@ curl -sS -X POST http://127.0.0.1:8787/v1/ingest \
 1. V repu neni vestaveny daemon, periodic worker ani filesystem trigger pro ingest.
 2. Automatizace je aktualne "external orchestration": scheduler spousti stejny prikaz `npm run ingest:coding-history`.
 3. Prakticky priklad (cron kazdych 30 minut):
+
 ```bash
 */30 * * * * cd /Users/satan/Developer/ums-memory && npm run ingest:coding-history -- --store-id coding-agent --profile agent-history >> /tmp/ums-ingest.log 2>&1
 ```
+
 4. Ingest je navrzen replay-safe a deduplikuje duplicity; periodicke spousteni nevede k nekontrolovanemu rustu stejnych zaznamu.
 
 ## Co je dobre pro architekt review s Jirkou

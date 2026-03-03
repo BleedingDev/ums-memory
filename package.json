@@ -5,11 +5,11 @@
   "type": "module",
   "scripts": {
     "api": "node apps/api/src/server.mjs",
-    "cli": "node apps/cli/src/index.mjs",
-    "ums": "node apps/ums/src/index.mjs",
-    "build:sfe:single": "node -e \"require('node:fs').mkdirSync('dist',{recursive:true})\" && bun build --compile --minify --sourcemap --bytecode apps/ums/src/index.mjs --outfile dist/ums",
-    "build:sfe:cli": "node -e \"require('node:fs').mkdirSync('dist',{recursive:true})\" && bun build --compile --minify --sourcemap --bytecode apps/cli/src/index.mjs --outfile dist/ums-cli",
-    "build:sfe:api": "node -e \"require('node:fs').mkdirSync('dist',{recursive:true})\" && bun build --compile --minify --sourcemap --bytecode apps/api/src/server.mjs --outfile dist/ums-api",
+    "cli": "node --import tsx apps/cli/src/index.ts",
+    "ums": "node --import tsx apps/ums/src/index.ts",
+    "build:sfe:single": "node -e \"require('node:fs').mkdirSync('dist',{recursive:true})\" && bun build --compile --format esm --minify --sourcemap --bytecode apps/ums/src/index.ts --outfile dist/ums",
+    "build:sfe:cli": "node -e \"require('node:fs').mkdirSync('dist',{recursive:true})\" && bun build --compile --format esm --minify --sourcemap --bytecode apps/cli/src/index.ts --outfile dist/ums-cli",
+    "build:sfe:api": "node -e \"require('node:fs').mkdirSync('dist',{recursive:true})\" && bun build --compile --format esm --minify --sourcemap --bytecode apps/api/src/server.mjs --outfile dist/ums-api",
     "build:sfe": "npm run build:sfe:single",
     "build:sfe:matrix": "node scripts/build-sfe-matrix.mjs",
     "build:sfe:linux-x64": "node scripts/build-sfe-matrix.mjs --targets bun-linux-x64",
@@ -47,13 +47,13 @@
     "pilot:slo": "node scripts/evaluate-production-slos.mjs"
   },
   "dependencies": {
-    "effect": "4.0.0-beta.25"
+    "effect": "4.0.0-beta.25",
+    "tsx": "^4.20.5"
   },
   "devDependencies": {
     "@types/node": "22.13.10",
     "oxfmt": "^0.35.0",
     "oxlint": "^1.50.0",
-    "tsx": "^4.20.5",
     "typescript": "5.8.2",
     "ultracite": "^7.2.4"
   },

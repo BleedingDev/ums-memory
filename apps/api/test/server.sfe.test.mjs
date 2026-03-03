@@ -1,14 +1,16 @@
-import test from "node:test";
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import { constants as fsConstants } from "node:fs";
 import { access, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
+import test from "node:test";
 
 const ROOT = process.cwd();
-const BUN_AVAILABLE = spawnSync("bun", ["--version"], { encoding: "utf8" }).status === 0;
-const CURL_AVAILABLE = spawnSync("curl", ["--version"], { encoding: "utf8" }).status === 0;
+const BUN_AVAILABLE =
+  spawnSync("bun", ["--version"], { encoding: "utf8" }).status === 0;
+const CURL_AVAILABLE =
+  spawnSync("curl", ["--version"], { encoding: "utf8" }).status === 0;
 
 let buildDir = null;
 let apiBinaryPath = null;
@@ -33,12 +35,18 @@ function startBinaryServer(binaryPath, envOverrides = {}) {
         return;
       }
       proc.kill("SIGTERM");
-      rejectPromise(new Error(`Timed out waiting for compiled API server startup.\nstdout:\n${stdout}\nstderr:\n${stderr}`));
+      rejectPromise(
+        new Error(
+          `Timed out waiting for compiled API server startup.\nstdout:\n${stdout}\nstderr:\n${stderr}`
+        )
+      );
     }, 8000);
 
     const onData = (chunk) => {
       stdout += chunk.toString("utf8");
-      const match = stdout.match(/UMS API listening on http:\/\/([^\s:]+):(\d+)/);
+      const match = stdout.match(
+        /UMS API listening on http:\/\/([^\s:]+):(\d+)/
+      );
       if (!match || resolved) {
         return;
       }
@@ -67,7 +75,9 @@ function startBinaryServer(binaryPath, envOverrides = {}) {
       if (!resolved) {
         clearTimeout(timeout);
         rejectPromise(
-          new Error(`Compiled API server exited before startup (code=${code}).\nstdout:\n${stdout}\nstderr:\n${stderr}`),
+          new Error(
+            `Compiled API server exited before startup (code=${code}).\nstdout:\n${stdout}\nstderr:\n${stderr}`
+          )
         );
       }
     });
@@ -92,12 +102,15 @@ function requestJson(url, { method = "GET", headers = {}, body = null } = {}) {
   args.push("-w", "\n%{http_code}", url);
   const result = spawnSync("curl", args, { cwd: ROOT, encoding: "utf8" });
   if (result.status !== 0) {
-    throw new Error(`curl request failed (status=${result.status}): ${result.stderr || result.stdout}`);
+    throw new Error(
+      `curl request failed (status=${result.status}): ${result.stderr || result.stdout}`
+    );
   }
   const output = result.stdout ?? "";
   const newlineIndex = output.lastIndexOf("\n");
-  const rawBody = newlineIndex >= 0 ? output.slice(0, newlineIndex) : "";
-  const statusCodeRaw = newlineIndex >= 0 ? output.slice(newlineIndex + 1).trim() : "0";
+  const rawBody = newlineIndex !== -1 ? output.slice(0, newlineIndex) : "";
+  const statusCodeRaw =
+    newlineIndex !== -1 ? output.slice(newlineIndex + 1).trim() : "0";
   const status = Number.parseInt(statusCodeRaw, 10);
   return {
     status: Number.isFinite(status) ? status : 0,
@@ -116,6 +129,8 @@ test.before(async () => {
     [
       "build",
       "--compile",
+      "--format",
+      "esm",
       "--minify",
       "--sourcemap",
       "--bytecode",
@@ -123,12 +138,12 @@ test.before(async () => {
       "--outfile",
       apiBinaryPath,
     ],
-    { cwd: ROOT, encoding: "utf8" },
+    { cwd: ROOT, encoding: "utf8" }
   );
   assert.equal(
     build.status,
     0,
-    `Failed to build compiled API executable.\nstdout:\n${build.stdout}\nstderr:\n${build.stderr}`,
+    `Failed to build compiled API executable.\nstdout:\n${build.stdout}\nstderr:\n${build.stderr}`
   );
   await access(apiBinaryPath, fsConstants.X_OK);
 });
@@ -145,7 +160,9 @@ test(
   async () => {
     const tempDir = await mkdtemp(resolve(tmpdir(), "ums-api-sfe-state-"));
     const stateFile = resolve(tempDir, "state.json");
-    const server = await startBinaryServer(apiBinaryPath, { UMS_STATE_FILE: stateFile });
+    const server = await startBinaryServer(apiBinaryPath, {
+      UMS_STATE_FILE: stateFile,
+    });
     const base = `http://${server.host}:${server.port}`;
     try {
       const rootRes = await requestJson(`${base}/`);
@@ -159,10 +176,15 @@ test(
 
       const ingestRes = await requestJson(`${base}/v1/ingest`, {
         method: "POST",
-        headers: { "content-type": "application/json", "x-ums-store": "sfe-store" },
+        headers: {
+          "content-type": "application/json",
+          "x-ums-store": "sfe-store",
+        },
         body: JSON.stringify({
           profile: "sfe-api",
-          events: [{ type: "note", source: "sfe", content: "compiled api ingest" }],
+          events: [
+            { type: "note", source: "sfe", content: "compiled api ingest" },
+          ],
         }),
       });
       assert.equal(ingestRes.status, 200);
@@ -174,7 +196,10 @@ test(
 
       const contextRes = await requestJson(`${base}/v1/context`, {
         method: "POST",
-        headers: { "content-type": "application/json", "x-ums-store": "sfe-store" },
+        headers: {
+          "content-type": "application/json",
+          "x-ums-store": "sfe-store",
+        },
         body: JSON.stringify({
           profile: "sfe-api",
           query: "compiled api ingest",
@@ -189,7 +214,7 @@ test(
       await stopBinaryServer(server.proc);
       await rm(tempDir, { recursive: true, force: true });
     }
-  },
+  }
 );
 
 test(
@@ -198,7 +223,9 @@ test(
   async () => {
     const tempDir = await mkdtemp(resolve(tmpdir(), "ums-api-sfe-state-"));
     const stateFile = resolve(tempDir, "state.json");
-    const server = await startBinaryServer(apiBinaryPath, { UMS_STATE_FILE: stateFile });
+    const server = await startBinaryServer(apiBinaryPath, {
+      UMS_STATE_FILE: stateFile,
+    });
     const base = `http://${server.host}:${server.port}`;
     try {
       const notFound = await requestJson(`${base}/v1/not-real`, {
@@ -224,5 +251,5 @@ test(
       await stopBinaryServer(server.proc);
       await rm(tempDir, { recursive: true, force: true });
     }
-  },
+  }
 );

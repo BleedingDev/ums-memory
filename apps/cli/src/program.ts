@@ -1,45 +1,58 @@
 import { readFile } from "node:fs/promises";
+
 import {
   DEFAULT_RUNTIME_STATE_FILE,
   executeRuntimeOperation,
   listRuntimeOperations,
 } from "../../api/src/runtime-adapter.mjs";
 
-async function printUsage() {
+interface ParsedArgs {
+  operation: string | null | undefined;
+  pretty: boolean;
+  input: string | null;
+  file: string | null;
+  stateFile: string;
+  storeId: string | null;
+  help: boolean;
+}
+
+async function printUsage(): Promise<void> {
   let ops = "unknown";
   try {
-    ops = (await listRuntimeOperations()).join(", ");
+    const operations = await listRuntimeOperations();
+    ops = operations.join(", ");
   } catch {
     ops = "unavailable (runtime adapter failed to load)";
   }
   process.stderr.write(
-    [
+    `${[
       "Usage:",
-      "  node apps/cli/src/index.mjs <operation> [--input '<json>'] [--file path] [--state-file path] [--store-id id] [--pretty]",
+      "  node --import tsx apps/cli/src/index.ts <operation> [--input '<json>'] [--file path] [--state-file path] [--store-id id] [--pretty]",
       "",
       `Operations: ${ops}`,
       "",
       "Examples:",
-      "  node apps/cli/src/index.mjs ingest --store-id coding-agent --input '{\"events\":[{\"type\":\"note\",\"content\":\"Use deterministic IDs\"}]}'",
-      "  echo '{\"query\":\"deterministic\"}' | node apps/cli/src/index.mjs context"
-    ].join("\n") + "\n"
+      '  node --import tsx apps/cli/src/index.ts ingest --store-id coding-agent --input \'{"events":[{"type":"note","content":"Use deterministic IDs"}]}\'',
+      '  echo \'{"query":"deterministic"}\' | node --import tsx apps/cli/src/index.ts context',
+    ].join("\n")}\n`
   );
 }
 
-function parseArgs(argv) {
+function parseArgs(argv: readonly string[]): ParsedArgs {
   const args = [...argv];
   const cliStateFileEnv =
-    typeof process.env.UMS_CLI_STATE_FILE === "string" && process.env.UMS_CLI_STATE_FILE.trim()
-      ? process.env.UMS_CLI_STATE_FILE.trim()
+    typeof process.env["UMS_CLI_STATE_FILE"] === "string" &&
+    process.env["UMS_CLI_STATE_FILE"].trim()
+      ? process.env["UMS_CLI_STATE_FILE"].trim()
       : null;
   const operation = args.shift();
   const flags = {
     pretty: false,
-    input: null,
-    file: null,
+    input: null as string | null,
+    file: null as string | null,
     stateFile: cliStateFileEnv ?? DEFAULT_RUNTIME_STATE_FILE,
-    storeId: null,
-    help: false
+    storeId: null as string | null,
+    help: false,
   };
 
   if (operation === "--help" || operation === "-h" || operation === "help") {
@@ -80,19 +93,25 @@ function parseArgs(argv) {
 
   return {
     operation: flags.help ? null : operation,
-    ...flags
+    ...flags,
   };
 }
 
-async function readStdin() {
-  const chunks = [];
+async function readStdin(): Promise<string> {
+  const chunks: Buffer[] = [];
   for await (const chunk of process.stdin) {
     chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
   }
   return Buffer.concat(chunks).toString("utf8").trim();
 }
 
-async function readInput({ input, file }) {
+async function readInput({
+  input,
+  file,
+}: {
+  input: string | null;
+  file: string | null;
+}): Promise<string> {
   if (typeof input === "string" && input.trim()) {
     return input;
   }
@@ -106,14 +125,16 @@ async function readInput({ input, file }) {
   return "{}";
 }
 
-function safeJsonParse(raw) {
+function safeJsonParse(raw: string): unknown {
   if (!raw || !raw.trim()) {
     return {};
   }
   return JSON.parse(raw);
 }
 
-async function main(argv = process.argv.slice(2)) {
+async function main(
+  argv: readonly string[] = process.argv.slice(2)
+): Promise<number> {
   const parsed = parseArgs(argv);
   if (parsed.help || !parsed.operation) {
     await printUsage();
@@ -122,14 +143,14 @@ async function main(argv = process.argv.slice(2)) {
 
   const requestRaw = await readInput(parsed);
   const requestBody = safeJsonParse(requestRaw);
-  if (
-    parsed.storeId &&
+  const requestBodyObject =
     typeof requestBody === "object" &&
     requestBody &&
-    !Array.isArray(requestBody) &&
-    !requestBody.storeId
-  ) {
-    requestBody.storeId = parsed.storeId;
+    !Array.isArray(requestBody)
+      ? (requestBody as { storeId?: unknown })
+      : null;
+  if (parsed.storeId && requestBodyObject && !requestBodyObject.storeId) {
+    requestBodyObject.storeId = parsed.storeId;
   }
   const data = await executeRuntimeOperation({
     operation: parsed.operation,
@@ -138,39 +159,11 @@ async function main(argv = process.argv.slice(2)) {
   });
   const payload = {
     ok: true,
-    data
+    data,
   };
   const spacer = parsed.pretty ? 2 : 0;
   process.stdout.write(`${JSON.stringify(payload, null, spacer)}\n`);
   return 0;
-}
-
-const isMainModule =
-  (typeof import.meta.main === "boolean" && import.meta.main) ||
-  import.meta.url === `file://${process.argv[1]}`;
-
-if (isMainModule) {
-  main().then(
-    (code) => {
-      process.exitCode = code;
-    },
-    (error) => {
-      process.stderr.write(
-        `${JSON.stringify(
-          {
-            ok: false,
-            error: {
-              code: "CLI_ERROR",
-              message: error instanceof Error ? error.message : String(error)
-            }
-          },
-          null,
-          2
-        )}\n`
-      );
-      process.exitCode = 1;
-    }
-  );
 }
 
 export { main };

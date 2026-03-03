@@ -1,20 +1,24 @@
-import test from "node:test";
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import { constants as fsConstants } from "node:fs";
 import { access, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
+import test from "node:test";
 
 const ROOT = process.cwd();
-const BUN_AVAILABLE = spawnSync("bun", ["--version"], { encoding: "utf8" }).status === 0;
+const BUN_AVAILABLE =
+  spawnSync("bun", ["--version"], { encoding: "utf8" }).status === 0;
 
 let buildDir = null;
 let umsBinaryPath = null;
 
 function runBinary(binaryPath, args, { stdin = "", cwd = ROOT } = {}) {
   return new Promise((resolvePromise) => {
-    const proc = spawn(binaryPath, args, { cwd, stdio: ["pipe", "pipe", "pipe"] });
+    const proc = spawn(binaryPath, args, {
+      cwd,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
     let stdout = "";
     let stderr = "";
     proc.stdout.on("data", (chunk) => {
@@ -48,12 +52,18 @@ function startBinaryServer(binaryPath, args, { cwd = ROOT } = {}) {
         return;
       }
       proc.kill("SIGTERM");
-      rejectPromise(new Error(`Timed out waiting for single binary API startup.\nstdout:\n${stdout}\nstderr:\n${stderr}`));
+      rejectPromise(
+        new Error(
+          `Timed out waiting for single binary API startup.\nstdout:\n${stdout}\nstderr:\n${stderr}`
+        )
+      );
     }, 8000);
 
     proc.stdout.on("data", (chunk) => {
       stdout += chunk.toString("utf8");
-      const match = stdout.match(/UMS API listening on http:\/\/([^\s:]+):(\d+)/);
+      const match = stdout.match(
+        /UMS API listening on http:\/\/([^\s:]+):(\d+)/
+      );
       if (!match || resolved) {
         return;
       }
@@ -77,7 +87,11 @@ function startBinaryServer(binaryPath, args, { cwd = ROOT } = {}) {
     proc.on("exit", (code) => {
       if (!resolved) {
         clearTimeout(timeout);
-        rejectPromise(new Error(`Single binary exited before startup (code=${code}).\nstdout:\n${stdout}\nstderr:\n${stderr}`));
+        rejectPromise(
+          new Error(
+            `Single binary exited before startup (code=${code}).\nstdout:\n${stdout}\nstderr:\n${stderr}`
+          )
+        );
       }
     });
   });
@@ -101,19 +115,21 @@ test.before(async () => {
     [
       "build",
       "--compile",
+      "--format",
+      "esm",
       "--minify",
       "--sourcemap",
       "--bytecode",
-      "apps/ums/src/index.mjs",
+      "apps/ums/src/index.ts",
       "--outfile",
       umsBinaryPath,
     ],
-    { cwd: ROOT, encoding: "utf8" },
+    { cwd: ROOT, encoding: "utf8" }
   );
   assert.equal(
     build.status,
     0,
-    `Failed to build compiled single executable.\nstdout:\n${build.stdout}\nstderr:\n${build.stderr}`,
+    `Failed to build compiled single executable.\nstdout:\n${build.stdout}\nstderr:\n${build.stderr}`
   );
   await access(umsBinaryPath, fsConstants.X_OK);
 });
@@ -140,7 +156,9 @@ test(
         "--input",
         JSON.stringify({
           profile: "single-cli",
-          events: [{ type: "note", source: "single", content: "single-binary-cli" }],
+          events: [
+            { type: "note", source: "single", content: "single-binary-cli" },
+          ],
         }),
       ]);
       assert.equal(ingest.code, 0);
@@ -164,7 +182,7 @@ test(
     } finally {
       await rm(tempDir, { recursive: true, force: true });
     }
-  },
+  }
 );
 
 test(
@@ -191,10 +209,15 @@ test(
 
       const ingestRes = await fetch(`${base}/v1/ingest`, {
         method: "POST",
-        headers: { "content-type": "application/json", "x-ums-store": "coding-agent" },
+        headers: {
+          "content-type": "application/json",
+          "x-ums-store": "coding-agent",
+        },
         body: JSON.stringify({
           profile: "single-api",
-          events: [{ type: "note", source: "single", content: "single-binary-api" }],
+          events: [
+            { type: "note", source: "single", content: "single-binary-api" },
+          ],
         }),
       });
       assert.equal(ingestRes.status, 200);
@@ -205,17 +228,23 @@ test(
       await stopBinaryServer(server.proc);
       await rm(tempDir, { recursive: true, force: true });
     }
-  },
+  }
 );
 
 test(
   "compiled single executable shares default .ums-state.json between CLI and serve",
   { skip: !BUN_AVAILABLE },
   async () => {
-    const tempDir = await mkdtemp(resolve(tmpdir(), "ums-single-default-shared-"));
-    const server = await startBinaryServer(umsBinaryPath, ["serve", "--host", "127.0.0.1", "--port", "0"], {
-      cwd: tempDir,
-    });
+    const tempDir = await mkdtemp(
+      resolve(tmpdir(), "ums-single-default-shared-")
+    );
+    const server = await startBinaryServer(
+      umsBinaryPath,
+      ["serve", "--host", "127.0.0.1", "--port", "0"],
+      {
+        cwd: tempDir,
+      }
+    );
     const base = `http://${server.host}:${server.port}`;
     try {
       const cliIngest = await runBinary(
@@ -227,16 +256,25 @@ test(
           "--input",
           JSON.stringify({
             profile: "single-default",
-            events: [{ type: "note", source: "cli", content: "single-default-cli-event" }],
+            events: [
+              {
+                type: "note",
+                source: "cli",
+                content: "single-default-cli-event",
+              },
+            ],
           }),
         ],
-        { cwd: tempDir },
+        { cwd: tempDir }
       );
       assert.equal(cliIngest.code, 0);
 
       const contextRes = await fetch(`${base}/v1/context`, {
         method: "POST",
-        headers: { "content-type": "application/json", "x-ums-store": "coding-agent" },
+        headers: {
+          "content-type": "application/json",
+          "x-ums-store": "coding-agent",
+        },
         body: JSON.stringify({
           profile: "single-default",
           query: "single-default-cli-event",
@@ -250,5 +288,5 @@ test(
       await stopBinaryServer(server.proc);
       await rm(tempDir, { recursive: true, force: true });
     }
-  },
+  }
 );
