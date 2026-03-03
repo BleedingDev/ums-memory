@@ -31,9 +31,9 @@ flowchart LR
   C1["Klienti (CLI call, HTTP call)"]
   C2["UMS wrapper apps/ums/src/index.ts"]
   C3["CLI adapter apps/cli/src/index.ts"]
-  C4["API adapter apps/api/src/server.mjs"]
-  C5["Shared-state facade apps/api/src/persistence.mjs"]
-  C6["Operation engine apps/api/src/core.mjs"]
+  C4["API adapter apps/api/src/server.ts"]
+  C5["Shared-state facade apps/api/src/persistence.ts"]
+  C6["Operation engine apps/api/src/core.ts"]
   C7["In-memory state stores -> profiles -> state buckets"]
   C8["State snapshot file .ums-state.json"]
   C9["Write lock file .ums-state.json.lock"]
@@ -53,7 +53,7 @@ flowchart LR
   C5 <-->|exclusive write lock| C9
 ```
 
-## 3) Backend Component Diagram (C4 L3, core.mjs)
+## 3) Backend Component Diagram (C4 L3, core.ts)
 
 ```mermaid
 flowchart TB
@@ -95,7 +95,7 @@ flowchart LR
   M1["Manual bulk command: npm run ingest:coding-history"]
   M2["Manual direct ingest: CLI or POST /v1/ingest"]
   A1["External scheduler: cron, launchd, systemd, CI"]
-  I1["ingest operation in core.mjs"]
+  I1["ingest operation in core.ts"]
   P1["Shared-state persistence"]
   F1[".ums-state.json"]
 
@@ -151,8 +151,8 @@ curl -sS -X POST http://127.0.0.1:8787/v1/ingest \
 
 ## Co je dobre pro architekt review s Jirkou
 
-1. `core.mjs` je aktualne monolit (dispatcher + domena + serializace stavu). Kandidat na rozdeleni do service modulu po domenach.
-2. `persistence.mjs` resi lock i I/O, ale zatim pouze file snapshot. Otazka: jestli zavest repository vrstvu s vice backendy.
+1. `core.ts` je aktualne monolit (dispatcher + domena + serializace stavu). Kandidat na rozdeleni do service modulu po domenach.
+2. `persistence.ts` resi lock i I/O, ale zatim pouze file snapshot. Otazka: jestli zavest repository vrstvu s vice backendy.
 3. API i CLI jsou tenke adaptery nad stejnym enginem, to je plus. Otazka: kde oddelit stabilni kontrakt od interniho modelu.
-4. Existuje paralelni engine `apps/api/src/ums/engine.mjs` (hlavne test/benchmark cesta). Otazka: sloucit, nebo drzet vedle sebe vedome.
+4. Existuje paralelni engine `apps/api/src/ums/engine.ts` (hlavne test/benchmark cesta). Otazka: sloucit, nebo drzet vedle sebe vedome.
 5. Ingest orchestrace je mimo aplikaci (scheduler outside). Otazka: zustat u external scheduleru, nebo pridat interni ingest worker service.

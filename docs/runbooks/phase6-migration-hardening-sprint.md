@@ -31,7 +31,7 @@ Command:
 npm run validate:legacy-shims
 ```
 
-The validator (`scripts/validate-legacy-runtime-shims.mjs`) fails if any of the following occur:
+The validator (`scripts/validate-legacy-runtime-shims.ts`) fails if any of the following occur:
 
 - new legacy runtime shim file exists but is missing from inventory,
 - inventory references a shim that no longer exists on disk,
@@ -57,6 +57,6 @@ npm run quality:ts
 
 ## Exit Criteria for `ums-memory-n4m.5`
 
-- Inventory exists and is complete for current runtime `.mjs`/`.js` shim surface.
+- Inventory exists and remains accurate as shim count converges to zero.
 - Validation gate is automated and part of quality pipeline.
 - Unit tests cover pass and fail edge cases of validator behavior.

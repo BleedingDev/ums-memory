@@ -1,0 +1,10 @@
+{
+  "schemaVersion": "runtime_ts_suppression_allowlist.v1",
+  "entries": [
+    {
+      "path": "apps/api/src/core.ts",
+      "followUpBeadId": "ums-memory-bnn.2",
+      "notes": "Temporary blanket suppression while core.ts is incrementally typed under strict mode."
+    }
+  ]
+}

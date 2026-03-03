@@ -14,19 +14,6 @@ const SOURCE_EXTENSIONS = new Set([
   ".mjs",
   ".js",
 ]);
-const ALLOWED_IMPORTER_PATTERNS = [
-  /^apps\/[^/]+\/src\/.+\.mjs$/u,
-  /^apps\/[^/]+\/test\/.+\.mjs$/u,
-  /^apps\/[^/]+\/bench\/.+\.mjs$/u,
-  /^libs\/shared\/src\/.+\.js$/u,
-  /^scripts\/.+\.mjs$/u,
-  /^tests\/.+\.mjs$/u,
-  /^benchmarks\/.+\.mjs$/u,
-];
-const ALLOWED_STRICT_TYPESCRIPT_IMPORTERS = new Set([
-  "apps/cli/src/program.ts",
-  "apps/ums/src/index.ts",
-]);
 
 function compareStrings(left, right) {
   return left < right ? -1 : left > right ? 1 : 0;
@@ -261,12 +248,6 @@ async function resolveImportTarget(projectRoot, importerPath, specifier) {
   return null;
 }
 
-function isAllowedImporter(importerPath) {
-  return ALLOWED_IMPORTER_PATTERNS.some((pattern) =>
-    pattern.test(importerPath)
-  );
-}
-
 function isStrictTypeScriptPath(importerPath) {
   const typeScriptExtension =
     importerPath.endsWith(".ts") ||
@@ -325,13 +306,10 @@ export async function validateLegacyRuntimeCutover({
   legacyImportEdges.sort(compareEdges);
 
   const strictTypeScriptViolations = legacyImportEdges.filter((edge) =>
-    isStrictTypeScriptPath(edge.importer) &&
-    !ALLOWED_STRICT_TYPESCRIPT_IMPORTERS.has(edge.importer)
+    isStrictTypeScriptPath(edge.importer)
   );
   const unexpectedLegacyImporters = legacyImportEdges.filter(
-    (edge) =>
-      !isAllowedImporter(edge.importer) &&
-      !ALLOWED_STRICT_TYPESCRIPT_IMPORTERS.has(edge.importer)
+    (edge) => !isStrictTypeScriptPath(edge.importer)
   );
 
   const result = {

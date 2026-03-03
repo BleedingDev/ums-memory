@@ -42,7 +42,7 @@ function makeInventoryEntry(path) {
   };
 }
 
-test("legacy runtime cutover validation passes for allowed mjs importer patterns", async () => {
+test("legacy runtime cutover validation rejects legacy shim imports from script/mjs importers", async () => {
   const projectRoot = await mkdtemp(resolve(tmpdir(), "legacy-cutover-pass-"));
 
   try {
@@ -64,9 +64,14 @@ test("legacy runtime cutover validation passes for allowed mjs importer patterns
       inventoryPath,
     });
 
-    assert.equal(result.ok, true);
+    assert.equal(result.ok, false);
     assert.equal(result.strictTypeScriptViolations.length, 0);
-    assert.equal(result.unexpectedLegacyImporters.length, 0);
+    assert.deepEqual(result.unexpectedLegacyImporters, [
+      {
+        importer: "scripts/tool.mjs",
+        target: SHIM_PATH,
+      },
+    ]);
     assert.equal(result.legacyImportEdgeCount, 1);
   } finally {
     await rm(projectRoot, { recursive: true, force: true });
@@ -218,7 +223,7 @@ test("legacy runtime cutover validation ignores commented import references", as
   }
 });
 
-test("legacy runtime cutover validation captures multiple real imports in one file while ignoring comments", async () => {
+test("legacy runtime cutover validation captures multiple real imports and flags non-TS importers", async () => {
   const projectRoot = await mkdtemp(
     resolve(tmpdir(), "legacy-cutover-multi-import-")
   );
@@ -255,8 +260,18 @@ test("legacy runtime cutover validation captures multiple real imports in one fi
       inventoryPath,
     });
 
-    assert.equal(result.ok, true);
+    assert.equal(result.ok, false);
     assert.equal(result.legacyImportEdgeCount, 2);
+    assert.deepEqual(result.unexpectedLegacyImporters, [
+      {
+        importer: "scripts/multi.mjs",
+        target: SHIM_PATH,
+      },
+      {
+        importer: "scripts/multi.mjs",
+        target: secondShimPath,
+      },
+    ]);
   } finally {
     await rm(projectRoot, { recursive: true, force: true });
   }

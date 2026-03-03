@@ -27,8 +27,8 @@ Current deterministic retrieval behavior is implemented in:
 
 - `libs/shared/src/effect/services/retrieval-service.ts`
 - `libs/shared/src/effect/contracts/services.ts`
-- `tests/unit/multi-scope-retrieval-planner.test.mjs`
-- `tests/unit/determinism.test.mjs`
+- `tests/unit/multi-scope-retrieval-planner.test.ts`
+- `tests/unit/memory-lifecycle-service.test.ts`
 
 Baseline requirements:
 

@@ -181,7 +181,7 @@ All new federation logic must follow `docs/standards/strict-ts-effect-standard.m
 - Define inbound/outbound contracts as Effect `Schema` types (SSO assertion claims, SCIM resources, sync deltas).
 - Implement identity federation capability as explicit Effect services + layers (no ad hoc singleton wiring).
 - Model failure modes with `Schema.TaggedError` (examples: `IdentityCollisionError`, `ScimMappingError`, `StaleScimEventError`).
-- Keep legacy `.mjs` entrypoints as compatibility shims only; new business logic lives in strict TypeScript modules.
+- Keep business logic and runtime entrypoints in strict TypeScript modules.
 - Enforce idempotent processing for SCIM write paths using deterministic request identity keys.
 
 ## 6) Audit and Compliance Expectations

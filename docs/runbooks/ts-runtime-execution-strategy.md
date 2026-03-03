@@ -20,15 +20,10 @@ Runtime strategy by environment:
 - Single runtime: `apps/ums/src/index.ts`
 - Benchmarks and tests should shift to `.ts` entrypoints under their existing folders.
 
-## Compatibility During Cutover
+## Current Runtime State
 
-Until full migration is complete:
+Migration cutover is landed:
 
-1. Existing `.mjs` entrypoints remain temporary shims only.
-2. New domain logic is implemented in `.ts` modules.
-3. Shim removal is tracked by migration beads and validated by CI gate policy.
-
-Current state note (March 3, 2026):
-
-- Runtime scripts still execute `.mjs` entrypoints.
-- This runbook defines the required end-state and migration direction, not the already-landed runtime state.
+1. Runtime scripts execute `.ts` entrypoints through `tsx`.
+2. Build targets compile from `.ts` entrypoints.
+3. Legacy runtime shim usage is validated and tracked by `validate:legacy-shims` and `validate:cutover`.

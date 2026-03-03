@@ -8,27 +8,19 @@ This standard is mandatory for new code and for all touched files in migration b
 ## Scope
 
 - Applies to all new backend implementation code in `apps/**/*.ts` and `libs/**/*.ts`.
-- Applies to touched migration surfaces, including compatibility entrypoints in `.mjs`/`.js`.
-- Legacy runtime `.mjs`/`.js` files are permitted only as temporary shims until migrated.
 - Applies to runtime services, contracts, errors, layer wiring, and adapter boundaries.
 - Applies to local verification and CI verification before merge.
-
-Migration note:
-
-- The repository still contains legacy `.mjs` runtime modules.
-- During migration, those modules are treated as compatibility shims.
-- New business/domain logic MUST be added in strict TypeScript + Effect modules, not expanded in legacy files except for shim wiring.
 
 ### 0) Effect Runtime Version Policy (MUST)
 
 - Runtime policy target is the Effect v4 beta track (`4.0.0-beta.25`).
-- Until `ums-memory-cjd.5` lands with a green cutover, runtime dependency remains on the current stable pin and v4 migration work happens behind explicit beads.
-- New migration work MUST target v4-compatible APIs and avoid introducing new v3-only patterns.
+- Runtime dependency pin MUST remain on the approved v4 beta track and is validated by `validate:effect-beta-pin`.
+- New work MUST target v4-compatible APIs and avoid introducing v3-only patterns.
 
 Pass criteria:
 
 - `docs/runbooks/effect-version-availability.md` and `docs/reports/effect-v4-compatibility-matrix.md` are current.
-- When `ums-memory-cjd.5` lands, `package.json` pin and CI verification must be updated in the same change.
+- `validate:effect-beta-pin` passes in local and CI quality gates.
 
 ## Mandatory Patterns
 
@@ -59,49 +51,31 @@ Pass criteria:
   - A service tag/constructor.
   - At least one layer (`Layer.succeed`, `Layer.sync`, or equivalent) for runtime composition.
 - Application/runtime entrypoints MUST compose dependencies through layers (for example `Layer.mergeAll` in runtime boundaries).
-- Beads that touch legacy service-tag modules MUST either:
-  - migrate touched services to the current target service pattern, or
-  - document a scoped deferral in the bead/PR with follow-up bead ID.
+- Pass criteria:
+  - Every new or modified service file exports a typed service contract and layer.
+  - Runtime assembly files compose services with layers instead of ad-hoc injection.
 
-Pass criteria:
-
-- Every new or modified service file exports a typed service contract and layer.
-- Runtime assembly files compose services with layers instead of ad-hoc injection.
-
-### 2a) Legacy Shim Boundary (MUST)
-
-- Legacy `.mjs`/`.js` entrypoints MAY remain only as compatibility shims while migration is in progress.
-- Shim files MUST keep external contracts stable and delegate to typed internals or adapter boundaries.
-- New domain behavior MUST NOT be implemented only in legacy shim modules unless explicitly approved as a temporary bridge with a follow-up migration bead.
-
-Pass criteria:
-
-- Touched legacy entrypoint files are wiring-focused (routing/adaptation), not a long-term home for new domain logic.
-- Any temporary shim-only logic includes a follow-up bead reference in PR notes.
-
-### 2b) TS-Only Runtime Source Policy (MUST)
+### 2a) TS-Only Runtime Source Policy (MUST)
 
 - Runtime source in `apps/**/src` and `libs/**/src` MUST converge to TypeScript-only modules (`.ts`).
 - New runtime files in `apps/**/src` and `libs/**/src` MUST NOT be introduced as `.js` or `.mjs`.
-- Any remaining runtime `.js`/`.mjs` file in these source trees is migration debt and must be tracked by an explicit bead.
+- Runtime shim inventory MUST remain at zero unless an explicit migration exception is approved.
 
 Pass criteria:
 
 - No new `.js`/`.mjs` runtime source files added under `apps/**/src` or `libs/**/src`.
-- Bead references exist for every remaining legacy runtime source file.
+- `validate:legacy-shims` passes with zero inventory entries.
 
 ### 3) Schema Contracts at Boundaries (MUST)
 
 - All ingress/egress payloads (API/CLI/service boundary inputs and outputs) MUST have Effect `Schema` definitions.
 - Unknown payloads MUST be decoded/validated with `Schema.decodeUnknown*` or `Schema.validate*` helpers before use.
 - Domain identifiers crossing boundaries SHOULD be schema-constrained IDs (for example branded/UUID schema types).
-- Legacy `.mjs` compatibility shims MAY delegate boundary validation to existing legacy core paths during migration, but MUST NOT remove current validation behavior and MUST include a follow-up migration bead reference.
 
 Pass criteria:
 
 - New boundary payload shapes are defined in schema modules.
 - No unvalidated `unknown` payload is cast directly to domain types in new TypeScript modules.
-- Legacy shim deferrals are explicitly documented with follow-up migration bead IDs.
 
 ### 4) Tagged Error Taxonomy (MUST)
 
@@ -162,6 +136,8 @@ All items are required unless explicitly marked `N/A` with reason.
 
 - [ ] No strictness flags were relaxed.
 - [ ] `npm run quality:ts` passed.
+- [ ] `npm run validate:tsconfig-policy` passed.
+- [ ] `npm run validate:effect-beta-pin` passed.
 - [ ] `npm run validate:legacy-shims` passed.
 - [ ] `npm run validate:cutover` passed.
 

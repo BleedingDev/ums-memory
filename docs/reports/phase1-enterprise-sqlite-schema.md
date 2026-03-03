@@ -49,8 +49,8 @@ The module exports deterministic ordered metadata:
 
 Ordering is validated by:
 
-- `tests/unit/enterprise-sqlite-schema-definition.test.mjs`
-- `tests/unit/enterprise-sqlite-migrations.test.mjs`
+- `tests/unit/enterprise-sqlite-schema-definition.test.ts`
+- `tests/unit/enterprise-sqlite-migrations.test.ts`
 
 ## Follow-On Runbook
 

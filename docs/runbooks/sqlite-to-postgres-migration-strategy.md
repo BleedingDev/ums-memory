@@ -23,8 +23,8 @@ Out of scope:
   - `libs/shared/src/effect/storage/sqlite/storage-repository.ts`
   - `libs/shared/src/effect/storage/sqlite/snapshot-codec.ts`
 - Migration ordering and deterministic SQL concatenation are already enforced by tests:
-  - `tests/unit/enterprise-sqlite-schema-definition.test.mjs`
-  - `tests/unit/enterprise-sqlite-migrations.test.mjs`
+  - `tests/unit/enterprise-sqlite-schema-definition.test.ts`
+  - `tests/unit/enterprise-sqlite-migrations.test.ts`
 - FTS behavior currently depends on SQLite FTS5 (`memory_items_fts` + sync triggers).
 - Idempotent write behavior depends on `storage_idempotency_ledger` and request-hash checks.
 - New/touched backend migration code must follow strict TypeScript + Effect rules:
@@ -107,7 +107,7 @@ Postgres addition:
 
 ### 3) TS + Effect Alignment
 
-- Keep `.mjs` entrypoints as compatibility shims only while the adapter boundary moves into strict TS + Effect modules.
+- Keep storage adapter boundaries in strict TypeScript + Effect modules.
 - Introduce storage adapter interfaces as Effect services/layers so runtime can select SQLite or Postgres without domain logic forks.
 - Reuse existing contract schemas and error unions from `libs/shared/src/effect/contracts` and `libs/shared/src/effect/errors.ts`.
 

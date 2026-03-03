@@ -12,8 +12,7 @@ For source-domain partitioning, see [Multi-Store Source Ingestion](./multi-store
 
 ## Engineering Standards
 
-All backend beads in this runbook must comply with the strict TypeScript + Effect standard for new and touched migration code.
-Legacy `.mjs` entrypoints are allowed only as compatibility shims until migrated:
+All backend beads in this runbook must comply with the strict TypeScript + Effect standard for new and touched migration code:
 [Strict TypeScript + Effect Engineering Standard](../standards/strict-ts-effect-standard.md).
 
 ## Mandatory Delivery Boundaries
@@ -56,27 +55,25 @@ Automation mapping:
 1. CI-enforced checks:
 Determinism/idempotency/bounded-recall/guardrail regressions are covered by `npm run test` and `npm run test:sfe`.
 Reference suites:
-- determinism: `tests/unit/determinism.test.mjs`
-- idempotency: `tests/unit/idempotent-ingestion.test.mjs`
-- bounded recall + guardrails: `tests/unit/recall-bounds-guardrails.test.mjs`
-- API/CLI/SFE contract behavior: `apps/api/test/*.test.mjs`, `apps/cli/test/*.test.mjs`, `apps/*/test/*.sfe.test.mjs`
+- determinism + idempotency + bounded recall + guardrails: `tests/unit/*.test.ts`, `tests/integration/*.test.ts`
+- API/CLI/SFE contract behavior: `apps/api/test/*.test.ts`, `apps/cli/test/*.test.ts`, `apps/*/test/*.sfe.test.ts`
 2. Operational benchmark checks:
-Latency SLO validation uses benchmark reports from `node benchmarks/ums-latency-benchmark.mjs` and is reviewed as part of release hardening.
+Latency SLO validation uses benchmark reports from `npm run bench:ums` and is reviewed as part of release hardening.
 Reference baseline and threshold evidence in `docs/performance/phase1-phase2-latency-baseline.md`.
 
-## Test and Benchmark Commands (Node Built-in Tooling)
+## Test and Benchmark Commands (TypeScript Runtime)
 1. Run unit + integration tests:
 ```bash
-node --test tests/unit/*.test.mjs tests/integration/*.test.mjs
+npm run test:ums
 ```
 2. Run benchmark harness and write reports:
 ```bash
-node benchmarks/ums-latency-benchmark.mjs
+npm run bench:ums
 ```
 3. Optional: run tests/benchmarks against an alternate implementation module:
 ```bash
-UMS_IMPL_MODULE=./apps/api/src/ums/engine.mjs UMS_IMPL_EXPORT=createUmsEngine node --test tests/unit/*.test.mjs tests/integration/*.test.mjs
-UMS_IMPL_MODULE=./apps/api/src/ums/engine.mjs UMS_IMPL_EXPORT=createUmsEngine node benchmarks/ums-latency-benchmark.mjs
+UMS_IMPL_MODULE=./apps/api/src/ums/engine.ts UMS_IMPL_EXPORT=createUmsEngine tsx --test tests/unit/*.test.ts tests/integration/*.test.ts
+UMS_IMPL_MODULE=./apps/api/src/ums/engine.ts UMS_IMPL_EXPORT=createUmsEngine node --import tsx benchmarks/ums-latency-benchmark.ts
 ```
 
 ## CI Quality Gates

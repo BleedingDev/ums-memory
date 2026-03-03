@@ -2,8 +2,8 @@
 
 ## Scope
 - Service components in scope:
-  - `apps/api/src/core.mjs` operation layer (`recall_authorization`, `tutor_degraded`, `policy_audit_export`, policy audit trail).
-  - `apps/api/src/ums/engine.mjs` ingest/recall path (space isolation, unsafe filtering, secret redaction).
+  - `apps/api/src/core.ts` operation layer (`recall_authorization`, `tutor_degraded`, `policy_audit_export`, policy audit trail).
+  - `apps/api/src/ums/engine.ts` ingest/recall path (space isolation, unsafe filtering, secret redaction).
   - `libs/shared/src/effect/storage/sqlite/storage-repository.ts` persistence redaction and deterministic idempotency controls.
 - Environment assumptions:
   - Backend-only execution with local-first persistence.
@@ -100,4 +100,3 @@
   - Alert on spikes in `allowlist_denied`, `filteredUnsafe`, and export/signing misconfiguration errors.
 - Incident readiness:
   - Preserve deterministic replay artifacts (request digest, policyAuditEventId, signature metadata digest) for forensic replay.
-
