@@ -17,11 +17,11 @@ function readJsonFile(filePath: string): unknown {
 
 function readPinnedDependency(): string {
   const packageJson = readJsonFile("package.json");
-  if (!isRecord(packageJson) || !isRecord(packageJson.dependencies)) {
+  if (!isRecord(packageJson) || !isRecord(packageJson["dependencies"])) {
     throw new Error("package.json must define dependencies.");
   }
 
-  const dependencyValue = packageJson.dependencies.effect;
+  const dependencyValue = packageJson["dependencies"]["effect"];
   if (typeof dependencyValue !== "string") {
     throw new Error("dependencies.effect must be a string in package.json.");
   }
@@ -43,19 +43,22 @@ function validateLockfile(pinnedVersion: string): void {
   if (!isRecord(lockfile)) {
     throw new Error("package-lock.json must contain an object root.");
   }
-  const packages = lockfile.packages;
+  const packages = lockfile["packages"];
   if (!isRecord(packages)) {
     throw new Error("package-lock.json must contain a packages object.");
   }
   const effectPackage = packages["node_modules/effect"];
-  if (!isRecord(effectPackage) || typeof effectPackage.version !== "string") {
+  if (
+    !isRecord(effectPackage) ||
+    typeof effectPackage["version"] !== "string"
+  ) {
     throw new Error(
       "package-lock.json must contain node_modules/effect with explicit version."
     );
   }
-  if (effectPackage.version !== pinnedVersion) {
+  if (effectPackage["version"] !== pinnedVersion) {
     throw new Error(
-      `package-lock.json effect version (${effectPackage.version}) does not match package.json (${pinnedVersion}).`
+      `package-lock.json effect version (${effectPackage["version"]}) does not match package.json (${pinnedVersion}).`
     );
   }
 }

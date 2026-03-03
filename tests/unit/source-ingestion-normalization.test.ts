@@ -54,12 +54,16 @@ test("source normalization: jira issues/comments ingest deterministically with r
     tokenBudget: 220,
   });
   assert.ok(recall.items.length >= 1);
-  assert.ok(recall.items.every((item) => !item.content.includes("secret123")));
-  assert.ok(recall.items.every((item) => !item.content.includes("abc123")));
+  assert.ok(
+    recall.items.every((item: any) => !item.content.includes("secret123"))
+  );
+  assert.ok(
+    recall.items.every((item: any) => !item.content.includes("abc123"))
+  );
 
   const snapshot = engine.exportState();
   const jiraStore = snapshot.stores.find(
-    (entry) => entry.storeId === "jira-history"
+    (entry: any) => entry.storeId === "jira-history"
   );
   assert.ok(jiraStore);
   assert.equal(jiraStore.totals.eventCount, 2);
@@ -117,7 +121,7 @@ test("source normalization: conversation batches support codex/claude style mess
 
   assert.ok(recall.items.length >= 1);
   assert.ok(
-    recall.items.some((item) =>
+    recall.items.some((item: any) =>
       item.content
         .toLowerCase()
         .includes("separate memory stores to avoid cross-project contamination")

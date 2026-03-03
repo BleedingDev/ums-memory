@@ -18,7 +18,7 @@ const effectModuleDirectory = new URL(
   import.meta.url
 );
 
-const transpileEffectModule = (sourceFilename, tempDirectory) => {
+const transpileEffectModule = (sourceFilename: any, tempDirectory: any) => {
   const sourceFileUrl = new URL(sourceFilename, effectModuleDirectory);
   const source = readFileSync(sourceFileUrl, "utf8");
   const transpiled = ts.transpileModule(source, {
@@ -63,8 +63,8 @@ const transpileManifest = Object.freeze([
   "contracts/services.ts",
 ]);
 
-let contractsModulePromise;
-let transpiledDirectoryPath;
+let contractsModulePromise: any;
+let transpiledDirectoryPath: any;
 
 const loadContractsModule = async () => {
   if (!contractsModulePromise) {
@@ -93,10 +93,10 @@ process.on("exit", () => {
   }
 });
 
-const toErrorMessage = (error) =>
+const toErrorMessage = (error: any) =>
   error instanceof Error ? error.message : String(error);
 
-const decodeActionablePack = (contractsModule, input) =>
+const decodeActionablePack = (contractsModule: any, input: any) =>
   Schema.decodeUnknownSync(contractsModule.ActionableRetrievalPackSchema)(
     input
   );
@@ -134,11 +134,10 @@ test("ums-memory-8as.1: actionable retrieval pack schema decodes valid payload",
 
 test("ums-memory-8as.1: actionable retrieval pack schema rejects missing required category", async () => {
   const contractsModule = await loadContractsModule();
-  const payload = makeValidPackPayload();
-  delete payload.dont;
+  const { dont: _ignoredDont, ...payloadWithoutDont } = makeValidPackPayload();
 
   assert.throws(
-    () => decodeActionablePack(contractsModule, payload),
+    () => decodeActionablePack(contractsModule, payloadWithoutDont),
     (error) => /dont/i.test(toErrorMessage(error))
   );
 });
@@ -146,7 +145,9 @@ test("ums-memory-8as.1: actionable retrieval pack schema rejects missing require
 test("ums-memory-8as.1: actionable retrieval pack schema rejects invalid source metadata", async () => {
   const contractsModule = await loadContractsModule();
   const payload = makeValidPackPayload();
-  payload.sources[0].metadata.score = 1.25;
+  const firstSource = payload.sources.at(0);
+  assert.ok(firstSource);
+  firstSource.metadata.score = 1.25;
 
   assert.throws(
     () => decodeActionablePack(contractsModule, payload),

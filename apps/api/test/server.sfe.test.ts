@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { spawn, spawnSync } from "node:child_process";
+import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { constants as fsConstants } from "node:fs";
 import { access, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -11,11 +11,27 @@ const BUN_AVAILABLE =
 const CURL_AVAILABLE =
   spawnSync("curl", ["--version"], { encoding: "utf8" }).status === 0;
 
-let buildDir = null;
-let apiBinaryPath = null;
+let buildDir: string | null = null;
+let apiBinaryPath: string | null = null;
 
-function startBinaryServer(binaryPath, envOverrides = {}) {
-  return new Promise((resolvePromise, rejectPromise) => {
+interface BinaryServerHandle {
+  readonly proc: ChildProcess;
+  readonly host: string;
+  readonly port: number;
+  readonly getLogs: () => { readonly stdout: string; readonly stderr: string };
+}
+
+interface JsonRequestOptions {
+  readonly method?: string;
+  readonly headers?: Record<string, string>;
+  readonly body?: string | null;
+}
+
+function startBinaryServer(
+  binaryPath: string,
+  envOverrides: NodeJS.ProcessEnv = {}
+): Promise<BinaryServerHandle> {
+  return new Promise<BinaryServerHandle>((resolvePromise, rejectPromise) => {
     const proc = spawn(binaryPath, [], {
       cwd: ROOT,
       env: {
@@ -41,7 +57,7 @@ function startBinaryServer(binaryPath, envOverrides = {}) {
       );
     }, 8000);
 
-    const onData = (chunk) => {
+    const onData = (chunk: any) => {
       stdout += chunk.toString("utf8");
       const match = stdout.match(
         /UMS API listening on http:\/\/([^\s:]+):(\d+)/
@@ -49,12 +65,17 @@ function startBinaryServer(binaryPath, envOverrides = {}) {
       if (!match || resolved) {
         return;
       }
+      const host = match[1];
+      const portRaw = match[2];
+      if (host === undefined || portRaw === undefined) {
+        return;
+      }
       resolved = true;
       clearTimeout(timeout);
       resolvePromise({
         proc,
-        host: match[1],
-        port: Number.parseInt(match[2], 10),
+        host,
+        port: Number.parseInt(portRaw, 10),
         getLogs() {
           return { stdout, stderr };
         },
@@ -83,14 +104,20 @@ function startBinaryServer(binaryPath, envOverrides = {}) {
   });
 }
 
-async function stopBinaryServer(proc) {
-  await new Promise((resolvePromise) => {
+async function stopBinaryServer(proc: ChildProcess | undefined): Promise<void> {
+  if (!proc) {
+    return;
+  }
+  await new Promise<void>((resolvePromise) => {
     proc.once("exit", () => resolvePromise());
     proc.kill("SIGTERM");
   });
 }
 
-function requestJson(url, { method = "GET", headers = {}, body = null } = {}) {
+function requestJson(
+  url: string,
+  { method = "GET", headers = {}, body = null }: JsonRequestOptions = {}
+) {
   const args = ["-sS", "-X", method];
   for (const [key, value] of Object.entries(headers)) {
     args.push("-H", `${key}: ${value}`);
@@ -159,10 +186,12 @@ test(
   async () => {
     const tempDir = await mkdtemp(resolve(tmpdir(), "ums-api-sfe-state-"));
     const stateFile = resolve(tempDir, "state.json");
-    const server = await startBinaryServer(apiBinaryPath, {
+    assert.ok(apiBinaryPath);
+    const binaryPath = apiBinaryPath;
+    const server = await startBinaryServer(binaryPath, {
       UMS_STATE_FILE: stateFile,
     });
-    const base = `http://${server.host}:${server.port}`;
+    const base = `http://${(server as any).host}:${(server as any).port}`;
     try {
       const rootRes = await requestJson(`${base}/`);
       assert.equal(rootRes.status, 200);
@@ -210,7 +239,7 @@ test(
       assert.equal(contextBody.data.operation, "context");
       assert.equal(contextBody.data.matches.length, 1);
     } finally {
-      await stopBinaryServer(server.proc);
+      await stopBinaryServer((server as any).proc);
       await rm(tempDir, { recursive: true, force: true });
     }
   }
@@ -222,10 +251,12 @@ test(
   async () => {
     const tempDir = await mkdtemp(resolve(tmpdir(), "ums-api-sfe-state-"));
     const stateFile = resolve(tempDir, "state.json");
-    const server = await startBinaryServer(apiBinaryPath, {
+    assert.ok(apiBinaryPath);
+    const binaryPath = apiBinaryPath;
+    const server = await startBinaryServer(binaryPath, {
       UMS_STATE_FILE: stateFile,
     });
-    const base = `http://${server.host}:${server.port}`;
+    const base = `http://${(server as any).host}:${(server as any).port}`;
     try {
       const notFound = await requestJson(`${base}/v1/not-real`, {
         method: "POST",
@@ -247,7 +278,7 @@ test(
       assert.equal(badJsonBody.ok, false);
       assert.equal(badJsonBody.error.code, "INVALID_JSON");
     } finally {
-      await stopBinaryServer(server.proc);
+      await stopBinaryServer((server as any).proc);
       await rm(tempDir, { recursive: true, force: true });
     }
   }

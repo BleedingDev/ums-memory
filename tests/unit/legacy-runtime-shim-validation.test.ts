@@ -245,7 +245,7 @@ test("legacy runtime shim validation CLI main supports json output for explicit 
   }
 });
 
-test("legacy runtime shim validation CLI main returns failure on unknown arguments", async () => {
+test("legacy runtime shim validation CLI main returns failure on any arguments", async () => {
   const code = await main(["--does-not-exist"]);
   assert.equal(code, 1);
 });

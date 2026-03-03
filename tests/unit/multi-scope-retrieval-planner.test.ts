@@ -11,15 +11,17 @@ import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import { pathToFileURL } from "node:url";
 
-import { Effect } from "effect";
+import { Effect as EffectOriginal } from "effect";
 import ts from "typescript";
+
+const Effect: any = EffectOriginal;
 
 const effectModuleDirectory = new URL(
   "../../libs/shared/src/effect/",
   import.meta.url
 );
 
-const transpileEffectModule = (sourceFilename, tempDirectory) => {
+const transpileEffectModule = (sourceFilename: any, tempDirectory: any) => {
   const sourceFileUrl = new URL(sourceFilename, effectModuleDirectory);
   const source = readFileSync(sourceFileUrl, "utf8");
   const transpiled = ts.transpileModule(source, {
@@ -77,8 +79,8 @@ const transpileManifest = Object.freeze([
   "services/retrieval-service.ts",
 ]);
 
-let modulesPromise;
-let transpiledDirectoryPath;
+let modulesPromise: any;
+let transpiledDirectoryPath: any;
 
 const loadModules = async () => {
   if (!modulesPromise) {
@@ -117,10 +119,60 @@ process.on("exit", () => {
   }
 });
 
+interface ScopeLatticeAnchorOptions {
+  readonly projectIds?: readonly string[];
+  readonly roleIds?: readonly string[];
+  readonly userIds?: readonly string[];
+}
+
+interface PolicyEvaluationRequest {
+  readonly resourceId: string;
+  readonly [key: string]: unknown;
+}
+
+interface ProvenanceExplainability {
+  readonly tenantId?: string;
+  readonly projectId?: string;
+  readonly roleId?: string;
+  readonly userId?: string;
+  readonly agentId?: string;
+  readonly conversationId?: string;
+  readonly messageId?: string;
+  readonly sourceId?: string;
+  readonly evidencePointerIds?: readonly string[];
+  readonly evidenceSourceRefs?: readonly string[];
+}
+
+interface ProvenanceExplainabilityHit {
+  readonly provenance?: ProvenanceExplainability;
+}
+
+const toErrorMessage = (error: unknown): string => {
+  if (error instanceof Error && error.message.length > 0) {
+    return error.message;
+  }
+  if (
+    error &&
+    typeof error === "object" &&
+    "message" in error &&
+    typeof (error as { message?: unknown }).message === "string"
+  ) {
+    const message = (error as { message: string }).message;
+    if (message.length > 0) {
+      return message;
+    }
+  }
+  return String(error);
+};
+
 const seedScopeLatticeAnchors = (
-  db,
-  tenantId,
-  { projectIds = [], roleIds = [], userIds = [] } = {}
+  db: DatabaseSync,
+  tenantId: string,
+  {
+    projectIds = [],
+    roleIds = [],
+    userIds = [],
+  }: ScopeLatticeAnchorOptions = {}
 ) => {
   const now = 1_700_000_000_000;
   db.prepare(
@@ -162,12 +214,18 @@ const seedScopeLatticeAnchors = (
   }
 };
 
-const upsertMemorySync = (storageService, request) => {
+const upsertMemorySync = (storageService: any, request: any) => {
   Effect.runSync(storageService.upsertMemory(request));
 };
 
-const makePolicyService = ({ denyMemoryIds = new Set(), calls = [] } = {}) => ({
-  evaluate: (request) => {
+const makePolicyService = ({
+  denyMemoryIds = new Set<string>(),
+  calls = [],
+}: {
+  readonly denyMemoryIds?: ReadonlySet<string>;
+  readonly calls?: PolicyEvaluationRequest[];
+} = {}) => ({
+  evaluate: (request: PolicyEvaluationRequest) => {
     calls.push(request);
     const denied = denyMemoryIds.has(request.resourceId);
     return Effect.succeed({
@@ -190,7 +248,7 @@ const actionablePackCategories = Object.freeze([
   "risks",
 ]);
 
-const estimateTokenCount = (value) => {
+const estimateTokenCount = (value: any) => {
   const normalized = String(value).replace(/\s+/g, " ").trim();
   if (normalized.length === 0) {
     return 0;
@@ -198,7 +256,7 @@ const estimateTokenCount = (value) => {
   return normalized.split(" ").length;
 };
 
-const estimateActionablePackTokens = (actionablePack) => {
+const estimateActionablePackTokens = (actionablePack: any) => {
   let tokenCount = 0;
   for (const category of actionablePackCategories) {
     for (const line of actionablePack[category]) {
@@ -217,7 +275,7 @@ const estimateActionablePackTokens = (actionablePack) => {
   return tokenCount;
 };
 
-const roundRetrievalScore = (value) =>
+const roundRetrievalScore = (value: any) =>
   Math.min(1, Math.max(0, Math.round(value * 1_000_000) / 1_000_000));
 
 test("ums-memory-8as.2: retrieval planner merges common/project/job_role/user scopes deterministically", async () => {
@@ -299,13 +357,13 @@ test("ums-memory-8as.2: retrieval planner merges common/project/job_role/user sc
 
     assert.equal(response.totalHits, 4);
     assert.deepEqual(
-      response.hits.map((hit) => hit.memoryId),
+      response.hits.map((hit: any) => hit.memoryId),
       ["memory-user", "memory-role", "memory-project", "memory-common"]
     );
     assert.equal(response.nextCursor, null);
     assert.equal(responseWithoutSelectors.totalHits, 4);
     assert.deepEqual(
-      responseWithoutSelectors.hits.map((hit) => hit.memoryId),
+      responseWithoutSelectors.hits.map((hit: any) => hit.memoryId),
       ["memory-user", "memory-role", "memory-project", "memory-common"]
     );
   } finally {
@@ -339,11 +397,11 @@ test("ums-memory-8as.2: retrieval planner filters denied policy decisions", asyn
       },
     });
 
-    const policyCalls = [];
+    const policyCalls: any[] = [];
     const retrievalService = retrievalServiceModule.makeRetrievalService(
       storageService,
       {
-        evaluate: (request) => {
+        evaluate: (request: any) => {
           policyCalls.push(request);
           return Effect.succeed({
             decision: request.resourceId === "memory-denied" ? "deny" : "allow",
@@ -372,7 +430,7 @@ test("ums-memory-8as.2: retrieval planner filters denied policy decisions", asyn
 
     assert.equal(response.totalHits, 1);
     assert.deepEqual(
-      response.hits.map((hit) => hit.memoryId),
+      response.hits.map((hit: any) => hit.memoryId),
       ["memory-allowed"]
     );
     assert.equal(policyCalls.length, 2);
@@ -424,7 +482,7 @@ test("ums-memory-8as.2: retrieval planner cursor pagination is deterministic", a
     assert.equal(firstPage.nextCursor, firstPageReplay.nextCursor);
     assert.equal(firstPage.totalHits, 5);
     assert.deepEqual(
-      firstPage.hits.map((hit) => hit.memoryId),
+      firstPage.hits.map((hit: any) => hit.memoryId),
       ["memory-1", "memory-2"]
     );
     assert.ok(firstPage.nextCursor);
@@ -436,7 +494,7 @@ test("ums-memory-8as.2: retrieval planner cursor pagination is deterministic", a
       })
     );
     assert.deepEqual(
-      secondPage.hits.map((hit) => hit.memoryId),
+      secondPage.hits.map((hit: any) => hit.memoryId),
       ["memory-3", "memory-4"]
     );
     assert.ok(secondPage.nextCursor);
@@ -448,7 +506,7 @@ test("ums-memory-8as.2: retrieval planner cursor pagination is deterministic", a
       })
     );
     assert.deepEqual(
-      thirdPage.hits.map((hit) => hit.memoryId),
+      thirdPage.hits.map((hit: any) => hit.memoryId),
       ["memory-5"]
     );
     assert.equal(thirdPage.nextCursor, null);
@@ -509,10 +567,7 @@ test("ums-memory-8as.2: cursor is rejected when policy context changes", async (
         })
       ),
       (error) => {
-        const errorMessage =
-          typeof error?.message === "string" && error.message.length > 0
-            ? error.message
-            : String(error);
+        const errorMessage = toErrorMessage(error);
         assert.match(errorMessage, /digest/i);
         return true;
       }
@@ -567,10 +622,7 @@ test("ums-memory-8as.3: cursor is rejected when ranking weights change", async (
         })
       ),
       (error) => {
-        const errorMessage =
-          typeof error?.message === "string" && error.message.length > 0
-            ? error.message
-            : String(error);
+        const errorMessage = toErrorMessage(error);
         assert.match(errorMessage, /digest/i);
         return true;
       }
@@ -661,11 +713,11 @@ test("ums-memory-8as.2: partial scope selectors include descendant scopes", asyn
     );
 
     assert.deepEqual(
-      projectScoped.hits.map((hit) => hit.memoryId),
+      projectScoped.hits.map((hit: any) => hit.memoryId),
       ["memory-project-user-child", "memory-project-parent"]
     );
     assert.deepEqual(
-      roleScoped.hits.map((hit) => hit.memoryId),
+      roleScoped.hits.map((hit: any) => hit.memoryId),
       ["memory-role-user-child", "memory-role-parent"]
     );
   } finally {
@@ -745,10 +797,7 @@ test("ums-memory-a9v.2: retrieval fails closed for unauthorized explicit scope s
           })
         ),
         (error) => {
-          const errorMessage =
-            typeof error?.message === "string" && error.message.length > 0
-              ? error.message
-              : String(error);
+          const errorMessage = toErrorMessage(error);
           assert.equal(errorMessage, deniedRequest.expectedMessage);
           return true;
         }
@@ -768,10 +817,7 @@ test("ums-memory-a9v.2: retrieval fails closed for unauthorized explicit scope s
         })
       ),
       (error) => {
-        const errorMessage =
-          typeof error?.message === "string" && error.message.length > 0
-            ? error.message
-            : String(error);
+        const errorMessage = toErrorMessage(error);
         assert.equal(
           errorMessage,
           `Scope authorization denied retrieval tenant "${tenantId}".`
@@ -879,7 +925,7 @@ test("ums-memory-a9v.2: retrieval scope authorization matrix restricts allowed s
     );
 
     assert.deepEqual(
-      restrictedResponse.hits.map((hit) => hit.memoryId),
+      restrictedResponse.hits.map((hit: any) => hit.memoryId),
       [
         "memory-authz-project-user",
         "memory-authz-project",
@@ -887,7 +933,7 @@ test("ums-memory-a9v.2: retrieval scope authorization matrix restricts allowed s
       ]
     );
     assert.deepEqual(
-      projectScopedResponse.hits.map((hit) => hit.memoryId),
+      projectScopedResponse.hits.map((hit: any) => hit.memoryId),
       [
         "memory-authz-project-user",
         "memory-authz-project",
@@ -950,12 +996,12 @@ test("ums-memory-8as.3: ranking combines evidence, decay, human weight, and util
       })
     );
     assert.deepEqual(
-      defaultWeightedResponse.hits.map((hit) => hit.memoryId),
+      defaultWeightedResponse.hits.map((hit: any) => hit.memoryId),
       ["memory-weighted-signals", "memory-fresh-low-signals"]
     );
     assert.ok(
       defaultWeightedResponse.hits.every(
-        (hit) => hit.score >= 0 && hit.score <= 1
+        (hit: any) => hit.score >= 0 && hit.score <= 1
       )
     );
 
@@ -974,12 +1020,12 @@ test("ums-memory-8as.3: ranking combines evidence, decay, human weight, and util
       })
     );
     assert.deepEqual(
-      decayWeightedResponse.hits.map((hit) => hit.memoryId),
+      decayWeightedResponse.hits.map((hit: any) => hit.memoryId),
       ["memory-fresh-low-signals", "memory-weighted-signals"]
     );
     assert.ok(
       decayWeightedResponse.hits.every(
-        (hit) => hit.score >= 0 && hit.score <= 1
+        (hit: any) => hit.score >= 0 && hit.score <= 1
       )
     );
 
@@ -994,11 +1040,13 @@ test("ums-memory-8as.3: ranking combines evidence, decay, human weight, and util
       })
     );
     assert.deepEqual(
-      decayOnlyResponse.hits.map((hit) => hit.memoryId),
+      decayOnlyResponse.hits.map((hit: any) => hit.memoryId),
       ["memory-fresh-low-signals", "memory-weighted-signals"]
     );
     assert.ok(
-      decayOnlyResponse.hits.every((hit) => hit.score >= 0 && hit.score <= 1)
+      decayOnlyResponse.hits.every(
+        (hit: any) => hit.score >= 0 && hit.score <= 1
+      )
     );
   } finally {
     db.close();
@@ -1058,7 +1106,7 @@ test("ums-memory-8as.4: retrieval reconciles contradictory memories to the newes
 
     assert.equal(response.totalHits, 2);
     assert.deepEqual(
-      response.hits.map((hit) => hit.memoryId),
+      response.hits.map((hit: any) => hit.memoryId),
       ["memory-new-truth", "memory-neutral-fact"]
     );
     assert.deepEqual(
@@ -1126,7 +1174,7 @@ test("ums-memory-8as.4: reconciliation honors contradiction links in metadata li
 
     assert.equal(response.totalHits, 1);
     assert.deepEqual(
-      response.hits.map((hit) => hit.memoryId),
+      response.hits.map((hit: any) => hit.memoryId),
       ["memory-lineage-new"]
     );
     assert.deepEqual(
@@ -1191,7 +1239,7 @@ test("ums-memory-8as.4: contradiction reconciliation tie-breaking is determinist
     assert.deepEqual(firstResponse.hits, secondResponse.hits);
     assert.equal(firstResponse.totalHits, 1);
     assert.deepEqual(
-      firstResponse.hits.map((hit) => hit.memoryId),
+      firstResponse.hits.map((hit: any) => hit.memoryId),
       ["memory-alpha"]
     );
     assert.deepEqual(
@@ -1347,7 +1395,9 @@ test("ums-memory-8as.5: actionable pack compilation is deterministic across repe
     ]);
     assert.deepEqual(firstResponse.actionablePack.warnings, []);
     assert.deepEqual(
-      firstResponse.actionablePack.sources.map((source) => source.memoryId),
+      firstResponse.actionablePack.sources.map(
+        (source: any) => source.memoryId
+      ),
       ["memory-do", "memory-dont", "memory-example", "memory-risk"]
     );
   } finally {
@@ -1412,22 +1462,22 @@ test("ums-memory-8as.5: actionable pack enforces token budget and category/sourc
         actionablePackTestTokenBudget
     );
     assert.ok(
-      response.actionablePack.sources.some((source) =>
+      response.actionablePack.sources.some((source: any) =>
         source.excerpt.endsWith("...")
       )
     );
     assert.ok(
-      response.actionablePack.warnings.some((warning) =>
+      response.actionablePack.warnings.some((warning: any) =>
         /token budget/i.test(warning)
       )
     );
     assert.ok(
-      response.actionablePack.warnings.some((warning) =>
+      response.actionablePack.warnings.some((warning: any) =>
         /category limits/i.test(warning)
       )
     );
     assert.ok(
-      response.actionablePack.warnings.some((warning) =>
+      response.actionablePack.warnings.some((warning: any) =>
         /source limit/i.test(warning)
       )
     );
@@ -1480,12 +1530,12 @@ test("ums-memory-8as.6: actionable pack warns when included sources are stale re
     assert.ok(response.actionablePack);
     assert.equal(response.actionablePack.sources.length, 2);
     assert.ok(
-      response.actionablePack.warnings.some((warning) =>
+      response.actionablePack.warnings.some((warning: any) =>
         /stale guidance/i.test(warning)
       )
     );
     assert.ok(
-      !response.actionablePack.warnings.some((warning) =>
+      !response.actionablePack.warnings.some((warning: any) =>
         /low-confidence/i.test(warning)
       )
     );
@@ -1544,12 +1594,12 @@ test("ums-memory-8as.6: actionable pack warns when included sources have low-con
 
     assert.ok(response.actionablePack);
     assert.ok(
-      response.actionablePack.warnings.some((warning) =>
+      response.actionablePack.warnings.some((warning: any) =>
         /low-confidence guidance/i.test(warning)
       )
     );
     assert.ok(
-      !response.actionablePack.warnings.some((warning) =>
+      !response.actionablePack.warnings.some((warning: any) =>
         /stale guidance/i.test(warning)
       )
     );
@@ -1586,9 +1636,13 @@ test("ums-memory-8as.6: annotation warning helper remains deterministic for stal
     ]);
 
   assert.deepEqual(firstWarnings, secondWarnings);
-  assert.ok(firstWarnings.some((warning) => /stale guidance/i.test(warning)));
   assert.ok(
-    firstWarnings.some((warning) => /low-confidence guidance/i.test(warning))
+    firstWarnings.some((warning: any) => /stale guidance/i.test(warning))
+  );
+  assert.ok(
+    firstWarnings.some((warning: any) =>
+      /low-confidence guidance/i.test(warning)
+    )
   );
 });
 
@@ -1664,8 +1718,8 @@ test("ums-memory-8as.7: explainability returns ranking signals and weighted cont
       retrievalResponse.nextCursor
     );
     assert.deepEqual(
-      explainabilityResponse.hits.map((hit) => hit.memoryId),
-      retrievalResponse.hits.map((hit) => hit.memoryId)
+      explainabilityResponse.hits.map((hit: any) => hit.memoryId),
+      retrievalResponse.hits.map((hit: any) => hit.memoryId)
     );
     assert.equal(explainabilityResponse.hits.length, 2);
 
@@ -1678,7 +1732,7 @@ test("ums-memory-8as.7: explainability returns ranking signals and weighted cont
         "utility",
       ]);
       assert.deepEqual(
-        hit.weightedContributions.map((entry) => entry.signal),
+        hit.weightedContributions.map((entry: any) => entry.signal),
         ["relevance", "evidenceStrength", "decay", "humanWeight", "utility"]
       );
       for (const contribution of hit.weightedContributions) {
@@ -1734,7 +1788,7 @@ test("ums-memory-8as.7: explainability response is deterministic across repeated
     );
     assert.deepEqual(firstResponse, firstReplay);
     assert.deepEqual(
-      firstResponse.hits.map((hit) => hit.rank),
+      firstResponse.hits.map((hit: any) => hit.rank),
       [1, 2]
     );
     assert.ok(firstResponse.nextCursor);
@@ -1751,7 +1805,7 @@ test("ums-memory-8as.7: explainability response is deterministic across repeated
     );
     assert.deepEqual(secondResponse, secondReplay);
     assert.deepEqual(
-      secondResponse.hits.map((hit) => hit.rank),
+      secondResponse.hits.map((hit: any) => hit.rank),
       [3, 4]
     );
   } finally {
@@ -1945,14 +1999,14 @@ test("ums-memory-8as.8: coding-agent release workflow prefers superseding guidan
     assert.deepEqual(firstResponse, secondResponse);
 
     assert.ok(firstResponse.actionablePack);
-    const hitMemoryIds = firstResponse.hits.map((hit) => hit.memoryId);
+    const hitMemoryIds = firstResponse.hits.map((hit: any) => hit.memoryId);
     assert.ok(firstResponse.totalHits >= firstResponse.hits.length);
     assert.ok(firstResponse.hits.length >= 3);
     assert.ok(hitMemoryIds.includes("memory-project-release-new"));
     assert.ok(!hitMemoryIds.includes("memory-project-release-old"));
 
     const reconciledHit = firstResponse.hits.find(
-      (hit) => hit.memoryId === "memory-project-release-new"
+      (hit: any) => hit.memoryId === "memory-project-release-new"
     );
     assert.deepEqual(reconciledHit?.metadata?.chronology?.reconciledMemoryIds, [
       "memory-project-release-old",
@@ -1960,30 +2014,32 @@ test("ums-memory-8as.8: coding-agent release workflow prefers superseding guidan
 
     const actionablePack = firstResponse.actionablePack;
     assert.ok(
-      actionablePack.do.some((line) => /verify bundler output hash/i.test(line))
+      actionablePack.do.some((line: any) =>
+        /verify bundler output hash/i.test(line)
+      )
     );
     assert.ok(
-      actionablePack.dont.some((line) => /without green ci/i.test(line))
+      actionablePack.dont.some((line: any) => /without green ci/i.test(line))
     );
     assert.ok(
-      actionablePack.examples.some((line) =>
+      actionablePack.examples.some((line: any) =>
         /dry-run mode before tagging/i.test(line)
       )
     );
     assert.ok(actionablePack.risks.length >= 1);
     assert.ok(actionablePack.warnings.length >= 1);
     assert.ok(
-      actionablePack.warnings.some((warning) => /stale/i.test(warning))
+      actionablePack.warnings.some((warning: any) => /stale/i.test(warning))
     );
 
     const sourceMemoryIds = actionablePack.sources.map(
-      (source) => source.memoryId
+      (source: any) => source.memoryId
     );
     assert.ok(sourceMemoryIds.includes("memory-project-release-new"));
     assert.ok(sourceMemoryIds.includes("memory-common-release-risk-legacy"));
     assert.ok(!sourceMemoryIds.includes("memory-project-release-old"));
     assert.ok(
-      sourceMemoryIds.every((memoryId) => hitMemoryIds.includes(memoryId))
+      sourceMemoryIds.every((memoryId: any) => hitMemoryIds.includes(memoryId))
     );
     for (const source of actionablePack.sources) {
       assert.ok(source.metadata.score >= 0 && source.metadata.score <= 1);
@@ -2001,26 +2057,26 @@ test("ums-memory-8as.8: coding-agent release workflow prefers superseding guidan
     );
     assert.deepEqual(firstExplainability, secondExplainability);
     assert.deepEqual(
-      firstExplainability.hits.map((hit) => hit.memoryId).sort(),
+      firstExplainability.hits.map((hit: any) => hit.memoryId).sort(),
       [...hitMemoryIds].sort()
     );
 
     const reconciledExplainabilityHit = firstExplainability.hits.find(
-      (hit) => hit.memoryId === "memory-project-release-new"
+      (hit: any) => hit.memoryId === "memory-project-release-new"
     );
     assert.ok(
       reconciledExplainabilityHit?.reasonCodes.includes("CHRONOLOGY_RECONCILED")
     );
 
     const reasonCodeUnion = new Set(
-      firstExplainability.hits.flatMap((hit) => hit.reasonCodes)
+      firstExplainability.hits.flatMap((hit: any) => hit.reasonCodes)
     );
     assert.ok(reasonCodeUnion.has("QUERY_TOKEN_MATCH"));
     assert.ok(reasonCodeUnion.has("SCOPE_FILTER_MATCH"));
     assert.ok(reasonCodeUnion.has("RANKING_WEIGHTED_SIGNALS"));
     assert.ok(
       [...reasonCodeUnion].some((reasonCode) =>
-        reasonCode.startsWith("SCOPE_LEVEL_")
+        (reasonCode as any).startsWith("SCOPE_LEVEL_")
       )
     );
 
@@ -2038,7 +2094,7 @@ test("ums-memory-8as.8: coding-agent release workflow prefers superseding guidan
         assert.ok(rankingSignalKeys.includes(expectedSignalKey));
       }
       const contributionSignals = hit.weightedContributions.map(
-        (entry) => entry.signal
+        (entry: any) => entry.signal
       );
       for (const expectedSignalKey of expectedRankingSignalKeys) {
         assert.ok(contributionSignals.includes(expectedSignalKey));
@@ -2187,14 +2243,14 @@ test("ums-memory-8as.8: coding-agent flaky-test workflow surfaces stale and low-
     assert.deepEqual(firstResponse, secondResponse);
 
     assert.ok(firstResponse.actionablePack);
-    const hitMemoryIds = firstResponse.hits.map((hit) => hit.memoryId);
+    const hitMemoryIds = firstResponse.hits.map((hit: any) => hit.memoryId);
     assert.ok(firstResponse.totalHits >= firstResponse.hits.length);
     assert.ok(firstResponse.hits.length >= 3);
     assert.ok(hitMemoryIds.includes("memory-user-flaky-new"));
     assert.ok(!hitMemoryIds.includes("memory-common-flaky-old"));
 
     const correctedHit = firstResponse.hits.find(
-      (hit) => hit.memoryId === "memory-user-flaky-new"
+      (hit: any) => hit.memoryId === "memory-user-flaky-new"
     );
     assert.deepEqual(correctedHit?.metadata?.chronology?.reconciledMemoryIds, [
       "memory-common-flaky-old",
@@ -2202,33 +2258,39 @@ test("ums-memory-8as.8: coding-agent flaky-test workflow surfaces stale and low-
 
     const actionablePack = firstResponse.actionablePack;
     assert.ok(
-      actionablePack.do.some((line) => /quarantine flaky tests/i.test(line))
+      actionablePack.do.some((line: any) =>
+        /quarantine flaky tests/i.test(line)
+      )
     );
     assert.ok(
-      actionablePack.dont.some((line) => /do not merge flaky fixes/i.test(line))
+      actionablePack.dont.some((line: any) =>
+        /do not merge flaky fixes/i.test(line)
+      )
     );
     assert.ok(
-      actionablePack.examples.some((line) => /--runInBand/i.test(line))
+      actionablePack.examples.some((line: any) => /--runInBand/i.test(line))
     );
     assert.ok(
-      actionablePack.risks.some((line) => /stale ci cache/i.test(line))
+      actionablePack.risks.some((line: any) => /stale ci cache/i.test(line))
     );
     assert.ok(actionablePack.warnings.length >= 1);
     assert.ok(
-      actionablePack.warnings.some((warning) => /stale/i.test(warning))
+      actionablePack.warnings.some((warning: any) => /stale/i.test(warning))
     );
     assert.ok(
-      actionablePack.warnings.some((warning) => /confidence/i.test(warning))
+      actionablePack.warnings.some((warning: any) =>
+        /confidence/i.test(warning)
+      )
     );
 
     const sourceMemoryIds = actionablePack.sources.map(
-      (source) => source.memoryId
+      (source: any) => source.memoryId
     );
     assert.ok(sourceMemoryIds.includes("memory-user-flaky-new"));
     assert.ok(sourceMemoryIds.includes("memory-project-flaky-low-confidence"));
     assert.ok(!sourceMemoryIds.includes("memory-common-flaky-old"));
     assert.ok(
-      sourceMemoryIds.every((memoryId) => hitMemoryIds.includes(memoryId))
+      sourceMemoryIds.every((memoryId: any) => hitMemoryIds.includes(memoryId))
     );
     for (const source of actionablePack.sources) {
       assert.ok(source.metadata.score >= 0 && source.metadata.score <= 1);
@@ -2242,12 +2304,12 @@ test("ums-memory-8as.8: coding-agent flaky-test workflow surfaces stale and low-
     );
     assert.deepEqual(firstExplainability, secondExplainability);
     assert.deepEqual(
-      firstExplainability.hits.map((hit) => hit.memoryId).sort(),
+      firstExplainability.hits.map((hit: any) => hit.memoryId).sort(),
       [...hitMemoryIds].sort()
     );
 
     const correctedExplainabilityHit = firstExplainability.hits.find(
-      (hit) => hit.memoryId === "memory-user-flaky-new"
+      (hit: any) => hit.memoryId === "memory-user-flaky-new"
     );
     assert.ok(
       correctedExplainabilityHit?.reasonCodes.includes("CHRONOLOGY_RECONCILED")
@@ -2257,21 +2319,21 @@ test("ums-memory-8as.8: coding-agent flaky-test workflow surfaces stale and low-
     );
 
     const reasonCodeUnion = new Set(
-      firstExplainability.hits.flatMap((hit) => hit.reasonCodes)
+      firstExplainability.hits.flatMap((hit: any) => hit.reasonCodes)
     );
     assert.ok(reasonCodeUnion.has("QUERY_TOKEN_MATCH"));
     assert.ok(reasonCodeUnion.has("SCOPE_FILTER_MATCH"));
     assert.ok(reasonCodeUnion.has("RANKING_WEIGHTED_SIGNALS"));
     assert.ok(
       [...reasonCodeUnion].some((reasonCode) =>
-        reasonCode.startsWith("SCOPE_LEVEL_")
+        (reasonCode as any).startsWith("SCOPE_LEVEL_")
       )
     );
 
     for (const hit of firstExplainability.hits) {
       assert.ok(hit.reasonCodes.length > 0);
       const contributionSignals = hit.weightedContributions.map(
-        (entry) => entry.signal
+        (entry: any) => entry.signal
       );
       const expectedContributionSignals = [
         "relevance",
@@ -2288,33 +2350,33 @@ test("ums-memory-8as.8: coding-agent flaky-test workflow surfaces stale and low-
         contributionSignals.length
       );
       const contributionBySignal = Object.fromEntries(
-        hit.weightedContributions.map((entry) => [entry.signal, entry])
+        hit.weightedContributions.map((entry: any) => [entry.signal, entry])
       );
       assert.ok(
-        contributionBySignal.relevance.weight >= 0 &&
-          contributionBySignal.relevance.weight <= 1
+        contributionBySignal["relevance"].weight >= 0 &&
+          contributionBySignal["relevance"].weight <= 1
       );
       assert.ok(
-        contributionBySignal.evidenceStrength.weight >= 0 &&
-          contributionBySignal.evidenceStrength.weight <= 1
+        contributionBySignal["evidenceStrength"].weight >= 0 &&
+          contributionBySignal["evidenceStrength"].weight <= 1
       );
       assert.ok(
-        contributionBySignal.decay.weight >= 0 &&
-          contributionBySignal.decay.weight <= 1
+        contributionBySignal["decay"].weight >= 0 &&
+          contributionBySignal["decay"].weight <= 1
       );
       assert.ok(
-        contributionBySignal.humanWeight.weight >= 0 &&
-          contributionBySignal.humanWeight.weight <= 1
+        contributionBySignal["humanWeight"].weight >= 0 &&
+          contributionBySignal["humanWeight"].weight <= 1
       );
       assert.ok(
-        contributionBySignal.utility.weight >= 0 &&
-          contributionBySignal.utility.weight <= 1
+        contributionBySignal["utility"].weight >= 0 &&
+          contributionBySignal["utility"].weight <= 1
       );
-      assert.equal(contributionBySignal.humanWeight.weight, 0);
-      assert.equal(contributionBySignal.utility.weight, 0);
+      assert.equal(contributionBySignal["humanWeight"].weight, 0);
+      assert.equal(contributionBySignal["utility"].weight, 0);
       assert.ok(
-        contributionBySignal.relevance.weight >
-          contributionBySignal.evidenceStrength.weight
+        contributionBySignal["relevance"].weight >
+          contributionBySignal["evidenceStrength"].weight
       );
       for (const contribution of hit.weightedContributions) {
         assert.equal(
@@ -2322,6 +2384,260 @@ test("ums-memory-8as.8: coding-agent flaky-test workflow surfaces stale and low-
           roundRetrievalScore(contribution.weight * contribution.signalScore)
         );
       }
+    }
+  } finally {
+    db.close();
+  }
+});
+
+test("ums-memory-i6m.5: retrieval explainability exposes same-tenant provenance lineage and evidence chain", async () => {
+  const { retrievalServiceModule, storageServiceModule } = await loadModules();
+  const db = new DatabaseSync(":memory:");
+
+  try {
+    const tenantId = "tenant-i6m5-explainability";
+    const storageService = storageServiceModule.makeSqliteStorageService(db);
+    seedScopeLatticeAnchors(db, tenantId, {
+      projectIds: ["project-i6m5"],
+      roleIds: ["role-i6m5"],
+      userIds: ["user-i6m5"],
+    });
+
+    upsertMemorySync(storageService, {
+      spaceId: tenantId,
+      memoryId: "memory-i6m5-provenance",
+      layer: "procedural",
+      payload: {
+        title: "Tenant-scoped provenance explainability memory",
+        content: "Better Auth callback and SCIM idempotency behavior.",
+        scope: {
+          projectId: "project-i6m5",
+          roleId: "role-i6m5",
+          userId: "user-i6m5",
+        },
+        provenance: {
+          tenantId,
+          projectId: "project-i6m5",
+          roleId: "role-i6m5",
+          userId: "user-i6m5",
+          agentId: "agent-i6m5",
+          conversationId: "conversation-i6m5",
+          messageId: "message-i6m5",
+          sourceId: "source-i6m5",
+          batchId: "batch-i6m5",
+        },
+        evidencePointers: [
+          {
+            pointerId: "pointer-i6m5-a",
+            sourceKind: "event",
+            sourceRef: "event://evt-i6m5-a",
+            relationKind: "supports",
+          },
+          {
+            pointerId: "pointer-i6m5-b",
+            sourceKind: "event",
+            sourceRef: "event://evt-i6m5-b",
+            relationKind: "supports",
+          },
+        ],
+      },
+    });
+
+    upsertMemorySync(storageService, {
+      spaceId: tenantId,
+      memoryId: "memory-i6m5-foreign-envelope",
+      layer: "working",
+      payload: {
+        title: "Foreign Better Auth SCIM idempotency behavior envelope",
+        content: "Behavior note for retrieval provenance isolation checks.",
+      },
+    });
+    db.prepare(
+      "UPDATE memory_items SET payload_json = ? WHERE tenant_id = ? AND memory_id = ?;"
+    ).run(
+      JSON.stringify({
+        title: "Foreign Better Auth SCIM idempotency behavior envelope",
+        content: "Behavior note for retrieval provenance isolation checks.",
+        provenance: {
+          tenantId: "tenant-other",
+          sourceId: "source-foreign",
+        },
+      }),
+      tenantId,
+      "memory-i6m5-foreign-envelope"
+    );
+
+    const retrievalService = retrievalServiceModule.makeRetrievalService(
+      storageService,
+      makePolicyService(),
+      {
+        snapshotSignatureSecret: "i6m5-secret",
+      }
+    );
+
+    const explainability = await Effect.runPromise(
+      retrievalService.retrieveExplainability({
+        spaceId: tenantId,
+        query: "Better Auth SCIM idempotency behavior",
+        limit: 10,
+      })
+    );
+
+    const provenanceHit = explainability.hits.find(
+      (hit: any) => hit.memoryId === "memory-i6m5-provenance"
+    );
+    assert.ok(provenanceHit);
+    assert.equal(provenanceHit?.provenance?.tenantId, tenantId);
+    assert.equal(provenanceHit?.provenance?.projectId, "project-i6m5");
+    assert.equal(provenanceHit?.provenance?.roleId, "role-i6m5");
+    assert.equal(provenanceHit?.provenance?.userId, "user-i6m5");
+    assert.deepEqual(provenanceHit?.provenance?.evidencePointerIds, [
+      "pointer-i6m5-a",
+      "pointer-i6m5-b",
+    ]);
+    assert.deepEqual(provenanceHit?.provenance?.evidenceSourceRefs, [
+      "event://evt-i6m5-a",
+      "event://evt-i6m5-b",
+    ]);
+
+    const foreignEnvelopeHit = explainability.hits.find(
+      (hit: any) => hit.memoryId === "memory-i6m5-foreign-envelope"
+    );
+    assert.ok(foreignEnvelopeHit);
+    assert.equal(foreignEnvelopeHit?.provenance, undefined);
+  } finally {
+    db.close();
+  }
+});
+
+test("ums-memory-i6m.7: integration contract covers codex/claude/gemini lineage traceability", async () => {
+  const { retrievalServiceModule, storageServiceModule } = await loadModules();
+  const db = new DatabaseSync(":memory:");
+
+  try {
+    const tenantId = "tenant-i6m7-lineage";
+    const storageService = storageServiceModule.makeSqliteStorageService(db);
+    seedScopeLatticeAnchors(db, tenantId, {
+      projectIds: ["project-i6m7"],
+      roleIds: ["role-i6m7"],
+      userIds: ["user-i6m7-codex", "user-i6m7-claude", "user-i6m7-gemini"],
+    });
+
+    const lineageFixtures = Object.freeze([
+      Object.freeze({
+        memoryId: "memory-i6m7-codex",
+        userId: "user-i6m7-codex",
+        agentId: "codex-5.3-xhigh",
+        conversationId: "conversation-i6m7-codex",
+        messageId: "message-i6m7-codex",
+        sourceId: "source-i6m7-codex",
+        pointerId: "pointer-i6m7-codex",
+        sourceRef: "event://evt-i6m7-codex",
+        updatedAtMillis: 1_700_000_023_000,
+      }),
+      Object.freeze({
+        memoryId: "memory-i6m7-claude",
+        userId: "user-i6m7-claude",
+        agentId: "claude-opus-4.5",
+        conversationId: "conversation-i6m7-claude",
+        messageId: "message-i6m7-claude",
+        sourceId: "source-i6m7-claude",
+        pointerId: "pointer-i6m7-claude",
+        sourceRef: "event://evt-i6m7-claude",
+        updatedAtMillis: 1_700_000_023_010,
+      }),
+      Object.freeze({
+        memoryId: "memory-i6m7-gemini",
+        userId: "user-i6m7-gemini",
+        agentId: "gemini-3.1-pro",
+        conversationId: "conversation-i6m7-gemini",
+        messageId: "message-i6m7-gemini",
+        sourceId: "source-i6m7-gemini",
+        pointerId: "pointer-i6m7-gemini",
+        sourceRef: "event://evt-i6m7-gemini",
+        updatedAtMillis: 1_700_000_023_020,
+      }),
+    ]);
+
+    for (const fixture of lineageFixtures) {
+      upsertMemorySync(storageService, {
+        spaceId: tenantId,
+        memoryId: fixture.memoryId,
+        layer: "procedural",
+        payload: {
+          title: `multi-agent lineage traceability ${fixture.agentId}`,
+          content:
+            "integration ingestion keeps actor and conversation lineage deterministic",
+          scope: {
+            projectId: "project-i6m7",
+            roleId: "role-i6m7",
+            userId: fixture.userId,
+          },
+          provenance: {
+            tenantId,
+            projectId: "project-i6m7",
+            roleId: "role-i6m7",
+            userId: fixture.userId,
+            agentId: fixture.agentId,
+            conversationId: fixture.conversationId,
+            messageId: fixture.messageId,
+            sourceId: fixture.sourceId,
+            batchId: "batch-i6m7",
+          },
+          evidencePointers: [
+            {
+              pointerId: fixture.pointerId,
+              sourceKind: "event",
+              sourceRef: fixture.sourceRef,
+              relationKind: "supports",
+            },
+          ],
+          updatedAtMillis: fixture.updatedAtMillis,
+        },
+      });
+    }
+
+    const retrievalService = retrievalServiceModule.makeRetrievalService(
+      storageService,
+      makePolicyService(),
+      {
+        snapshotSignatureSecret: "i6m7-secret",
+      }
+    );
+
+    const explainability = await Effect.runPromise(
+      retrievalService.retrieveExplainability({
+        spaceId: tenantId,
+        query: "multi-agent lineage traceability integration ingestion",
+        limit: 10,
+      })
+    );
+
+    assert.equal(explainability.totalHits >= 3, true);
+    const hitByMemoryId = new Map<string, ProvenanceExplainabilityHit>(
+      explainability.hits.map((hit: any) => [
+        String(hit.memoryId),
+        hit as ProvenanceExplainabilityHit,
+      ])
+    );
+
+    for (const fixture of lineageFixtures) {
+      const hit = hitByMemoryId.get(fixture.memoryId);
+      assert.ok(hit);
+      assert.equal(hit?.provenance?.tenantId, tenantId);
+      assert.equal(hit?.provenance?.projectId, "project-i6m7");
+      assert.equal(hit?.provenance?.roleId, "role-i6m7");
+      assert.equal(hit?.provenance?.userId, fixture.userId);
+      assert.equal(hit?.provenance?.agentId, fixture.agentId);
+      assert.equal(hit?.provenance?.conversationId, fixture.conversationId);
+      assert.equal(hit?.provenance?.messageId, fixture.messageId);
+      assert.equal(hit?.provenance?.sourceId, fixture.sourceId);
+      assert.deepEqual(hit?.provenance?.evidencePointerIds, [
+        fixture.pointerId,
+      ]);
+      assert.deepEqual(hit?.provenance?.evidenceSourceRefs, [
+        fixture.sourceRef,
+      ]);
     }
   } finally {
     db.close();

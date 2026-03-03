@@ -32,7 +32,7 @@ import {
 } from "./utils.ts";
 
 type Metadata = Record<string, unknown>;
-type ContractCandidate = Record<string, unknown> | null | undefined;
+type ContractCandidate = object | null | undefined;
 interface WithUpdatedAt {
   id: string;
   updatedAt: string;
@@ -234,7 +234,13 @@ function assertContractMethods(
   contractName: string
 ): void {
   for (const method of methods) {
-    if (!candidate || typeof candidate[method] !== "function") {
+    if (!candidate) {
+      throw new ContractViolationError(`${contractName} contract violation`, {
+        missingMethod: method,
+      });
+    }
+    const contractCandidate = candidate as Record<string, unknown>;
+    if (typeof contractCandidate[method] !== "function") {
       throw new ContractViolationError(`${contractName} contract violation`, {
         missingMethod: method,
       });

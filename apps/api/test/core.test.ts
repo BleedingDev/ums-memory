@@ -155,14 +155,16 @@ test("ums-memory-yji.6 memory_console operations return deterministic bounded op
   assert.equal(timeline.events.length >= 2, true);
   assert.equal(
     timeline.events.every(
-      (event) =>
+      (event: any) =>
         event.timestamp >= timelineRequest.since &&
         event.timestamp <= timelineRequest.until
     ),
     true
   );
   assert.equal(
-    timeline.events.some((event) => event.entityType === "policy_decision"),
+    timeline.events.some(
+      (event: any) => event.entityType === "policy_decision"
+    ),
     true
   );
 
@@ -187,18 +189,18 @@ test("ums-memory-yji.6 memory_console operations return deterministic bounded op
     linkedSourceIdCount: provenance.linkedSourceIds.length,
   });
   const decisionRef = provenance.entities.find(
-    (entry) => entry.entityId === decision.decisionId
+    (entry: any) => entry.entityId === decision.decisionId
   );
   assert.ok(decisionRef);
   assert.equal(decisionRef.found, true);
   assert.equal(decisionRef.linkedSourceIds.includes("evt-pol-yji6-1"), true);
   const learnerRef = provenance.entities.find(
-    (entry) => entry.entityId === profileUpdate.profileId
+    (entry: any) => entry.entityId === profileUpdate.profileId
   );
   assert.ok(learnerRef);
   assert.equal(
     learnerRef.provenancePointers.some(
-      (pointer) => pointer.pointerId === "ep-profile-yji6-1"
+      (pointer: any) => pointer.pointerId === "ep-profile-yji6-1"
     ),
     true
   );
@@ -226,7 +228,7 @@ test("ums-memory-yji.6 memory_console operations return deterministic bounded op
   assert.equal(policyAudit.policyDecisions[0].decisionId, decision.decisionId);
   assert.equal(
     policyAudit.auditTrail.some(
-      (entry) => entry.operation === "policy_decision_update"
+      (entry: any) => entry.operation === "policy_decision_update"
     ),
     true
   );
@@ -806,7 +808,7 @@ test("ums-memory-hpl.4 replay_eval auto-demotes on sustained negative net value 
 
   const beforeRoundTrip = snapshotProfile(profile, storeId);
   const storedBeforeRoundTrip = beforeRoundTrip.shadowCandidates.find(
-    (entry) => entry.candidateId === candidateId
+    (entry: any) => entry.candidateId === candidateId
   );
   assert.ok(storedBeforeRoundTrip);
   assert.equal(storedBeforeRoundTrip.status, "demoted");
@@ -815,7 +817,7 @@ test("ums-memory-hpl.4 replay_eval auto-demotes on sustained negative net value 
     "sustained_negative_net_value",
   ]);
   assert.equal(
-    beforeRoundTrip.rules.some((entry) => entry.ruleId === promotedRuleId),
+    beforeRoundTrip.rules.some((entry: any) => entry.ruleId === promotedRuleId),
     false
   );
 
@@ -824,7 +826,7 @@ test("ums-memory-hpl.4 replay_eval auto-demotes on sustained negative net value 
   importStoreSnapshot(snapshot);
   const restored = snapshotProfile(profile, storeId);
   const restoredCandidate = restored.shadowCandidates.find(
-    (entry) => entry.candidateId === candidateId
+    (entry: any) => entry.candidateId === candidateId
   );
   assert.ok(restoredCandidate);
   assert.equal(restoredCandidate.status, "demoted");
@@ -833,7 +835,7 @@ test("ums-memory-hpl.4 replay_eval auto-demotes on sustained negative net value 
     "sustained_negative_net_value",
   ]);
   assert.equal(
-    restored.rules.some((entry) => entry.ruleId === promotedRuleId),
+    restored.rules.some((entry: any) => entry.ruleId === promotedRuleId),
     false
   );
 });
@@ -888,7 +890,7 @@ test("ums-memory-hpl.4 harmful feedback auto-demotes deterministically and noop 
 
   const snapshot = snapshotProfile(profile, storeId);
   const storedCandidate = snapshot.shadowCandidates.find(
-    (entry) => entry.candidateId === candidateId
+    (entry: any) => entry.candidateId === candidateId
   );
   assert.ok(storedCandidate);
   assert.equal(storedCandidate.status, "demoted");
@@ -896,7 +898,7 @@ test("ums-memory-hpl.4 harmful feedback auto-demotes deterministically and noop 
     "explicit_harmful_feedback",
   ]);
   assert.equal(
-    snapshot.rules.some((entry) => entry.ruleId === targetRuleId),
+    snapshot.rules.some((entry: any) => entry.ruleId === targetRuleId),
     false
   );
 });
@@ -945,7 +947,7 @@ test("ums-memory-hpl.4 replay_eval trailing negative streak resets after a posit
 
   const snapshot = snapshotProfile(profile, storeId);
   const storedCandidate = snapshot.shadowCandidates.find(
-    (entry) => entry.candidateId === candidateId
+    (entry: any) => entry.candidateId === candidateId
   );
   assert.ok(storedCandidate);
   assert.equal(storedCandidate.status, "shadow");
@@ -1055,7 +1057,7 @@ test("shadow_write updated action emits canonical merged candidate metadata", ()
 
   const snapshot = snapshotProfile("shadow-update", "tenant-shadow-update");
   const stored = snapshot.shadowCandidates.find(
-    (candidate) => candidate.candidateId === candidateId
+    (candidate: any) => candidate.candidateId === candidateId
   );
   assert.ok(stored);
   assert.equal(stored.updatedAt, updated.applied[0].updatedAt);
@@ -1150,7 +1152,7 @@ test("ums-memory-hpl.5 addweight adjusts candidate influence with audit trace an
 
   const snapshot = snapshotProfile(profile, storeId);
   const storedCandidate = snapshot.shadowCandidates.find(
-    (entry) => entry.candidateId === candidateId
+    (entry: any) => entry.candidateId === candidateId
   );
   assert.ok(storedCandidate);
   assert.equal(storedCandidate.confidence, 0.8);
@@ -1179,13 +1181,13 @@ test("ums-memory-hpl.5 addweight adjusts candidate influence with audit trace an
     ticketId: "OPS-42",
   });
   const storedRule = snapshot.rules.find(
-    (entry) => entry.ruleId === storedCandidate.ruleId
+    (entry: any) => entry.ruleId === storedCandidate.ruleId
   );
   assert.ok(storedRule);
   assert.equal(storedRule.confidence, 0.8);
 
   const auditEntry = snapshot.policyAuditTrail.find(
-    (entry) => entry.auditEventId === adjusted.policyAuditEventId
+    (entry: any) => entry.auditEventId === adjusted.policyAuditEventId
   );
   assert.ok(auditEntry);
   assert.equal(auditEntry.operation, "addweight");
@@ -1264,10 +1266,15 @@ test("ums-memory-hpl.5 addweight replay stays idempotent after policy audit expo
   const first = executeOperation("addweight", request);
 
   const snapshot = exportStoreSnapshot();
-  const profileEntries = snapshot.stores[storeId]?.profiles ?? {};
+  const profileEntries = snapshot.stores[storeId]?.profiles as Record<
+    string,
+    { policyAuditTrail?: unknown[] }
+  >;
   const [profileKey] = Object.keys(profileEntries).sort();
   assert.ok(profileKey);
-  profileEntries[profileKey].policyAuditTrail = [];
+  const profileEntry = profileEntries[profileKey];
+  assert.ok(profileEntry);
+  profileEntry.policyAuditTrail = [];
   importStoreSnapshot(snapshot);
 
   const replay = executeOperation("addweight", request);
@@ -1276,7 +1283,7 @@ test("ums-memory-hpl.5 addweight replay stays idempotent after policy audit expo
 
   const restored = snapshotProfile(profile, storeId);
   const storedCandidate = restored.shadowCandidates.find(
-    (entry) => entry.candidateId === candidateId
+    (entry: any) => entry.candidateId === candidateId
   );
   assert.ok(storedCandidate);
   assert.equal(storedCandidate.confidence, 0.68);
@@ -1407,12 +1414,12 @@ test("ums-memory-hpl.6 feedback ingestion maps helpful and harmful signals into 
 
   const snapshot = snapshotProfile(profile, storeId);
   const storedRule = snapshot.rules.find(
-    (entry) => entry.ruleId === targetRuleId
+    (entry: any) => entry.ruleId === targetRuleId
   );
   assert.equal(storedRule, undefined);
 
   const storedCandidate = snapshot.shadowCandidates.find(
-    (entry) => entry.candidateId === candidateId
+    (entry: any) => entry.candidateId === candidateId
   );
   assert.ok(storedCandidate);
   assert.equal(storedCandidate.status, "demoted");
@@ -1467,13 +1474,13 @@ test("ums-memory-hpl.6 outcome ingestion maps success/failure to utility signals
 
   const snapshot = snapshotProfile(profile, storeId);
   const storedRule = snapshot.rules.find(
-    (entry) => entry.ruleId === targetRuleId
+    (entry: any) => entry.ruleId === targetRuleId
   );
   assert.ok(storedRule);
   assert.equal(storedRule.utilitySignalSource, "outcome_failure");
   assert.equal(storedRule.utilityScore, 0.3);
   const storedCandidate = snapshot.shadowCandidates.find(
-    (entry) => entry.candidateId === candidateId
+    (entry: any) => entry.candidateId === candidateId
   );
   assert.ok(storedCandidate);
   assert.equal(
@@ -1510,7 +1517,7 @@ test("ums-memory-hpl.6 feedback supports candidate-only utility mapping without 
   assert.deepEqual(mapped.mapping.updatedCandidateIds, [candidateId]);
   const snapshot = snapshotProfile(profile, storeId);
   const storedCandidate = snapshot.shadowCandidates.find(
-    (entry) => entry.candidateId === candidateId
+    (entry: any) => entry.candidateId === candidateId
   );
   assert.ok(storedCandidate);
   assert.equal(storedCandidate.metadata.utilitySignal.score, 0.62);
@@ -1607,7 +1614,7 @@ test("ums-memory-hpl.7 incident escalation signals quarantine critical failures 
   const first = executeOperation("incident_escalation_signal", request);
   const firstSnapshot = snapshotProfile(profile, storeId);
   const firstCandidate = firstSnapshot.shadowCandidates.find(
-    (entry) => entry.candidateId === candidateId
+    (entry: any) => entry.candidateId === candidateId
   );
 
   assert.equal(first.action, "created");
@@ -1619,7 +1626,7 @@ test("ums-memory-hpl.7 incident escalation signals quarantine critical failures 
   assert.ok(firstCandidate);
   assert.equal(firstCandidate.status, "demoted");
   assert.equal(
-    firstSnapshot.rules.some((entry) => entry.ruleId === ruleId),
+    firstSnapshot.rules.some((entry: any) => entry.ruleId === ruleId),
     false
   );
 
@@ -1685,7 +1692,7 @@ test("ums-memory-hpl.7 non-severe escalation records signal without immediate qu
   });
   const snapshot = snapshotProfile(profile, storeId);
   const candidate = snapshot.shadowCandidates.find(
-    (entry) => entry.candidateId === candidateId
+    (entry: any) => entry.candidateId === candidateId
   );
 
   assert.equal(escalation.operation, "incident_escalation_signal");
@@ -1699,7 +1706,7 @@ test("ums-memory-hpl.7 non-severe escalation records signal without immediate qu
   assert.ok(candidate);
   assert.equal(candidate.status, "promoted");
   assert.equal(
-    snapshot.rules.some((entry) => entry.ruleId === ruleId),
+    snapshot.rules.some((entry: any) => entry.ruleId === ruleId),
     true
   );
 });
@@ -1769,12 +1776,12 @@ test("ums-memory-hpl.7 incident escalation quarantines orphaned promoted rules d
   assert.deepEqual(first.quarantine.demotedCandidateIds, []);
   assert.deepEqual(first.quarantine.quarantinedRuleIds, [ruleId]);
   assert.equal(
-    first.quarantine.ruleActions.find((entry) => entry.ruleId === ruleId)
+    first.quarantine.ruleActions.find((entry: any) => entry.ruleId === ruleId)
       ?.action,
     "quarantined"
   );
   assert.equal(
-    firstSnapshot.rules.some((entry) => entry.ruleId === ruleId),
+    firstSnapshot.rules.some((entry: any) => entry.ruleId === ruleId),
     false
   );
 
@@ -1859,7 +1866,7 @@ test("ums-memory-hpl.9 manual override controls support emergency promote and su
   );
   const afterPromote = snapshotProfile(profile, storeId);
   const promotedCandidate = afterPromote.shadowCandidates.find(
-    (entry) => entry.candidateId === candidateId
+    (entry: any) => entry.candidateId === candidateId
   );
   assert.equal(promoteFirst.operation, "manual_quarantine_override");
   assert.equal(promoteFirst.action, "created");
@@ -1871,7 +1878,7 @@ test("ums-memory-hpl.9 manual override controls support emergency promote and su
   assert.equal(promotedCandidate.status, "promoted");
   const promotedRuleId = promoteFirst.override.promotedRuleIds[0];
   assert.equal(
-    afterPromote.rules.some((entry) => entry.ruleId === promotedRuleId),
+    afterPromote.rules.some((entry: any) => entry.ruleId === promotedRuleId),
     true
   );
 
@@ -1906,7 +1913,7 @@ test("ums-memory-hpl.9 manual override controls support emergency promote and su
   );
   const afterSuppress = snapshotProfile(profile, storeId);
   const suppressedCandidate = afterSuppress.shadowCandidates.find(
-    (entry) => entry.candidateId === candidateId
+    (entry: any) => entry.candidateId === candidateId
   );
   assert.equal(suppressFirst.operation, "manual_quarantine_override");
   assert.equal(suppressFirst.action, "created");
@@ -1917,7 +1924,7 @@ test("ums-memory-hpl.9 manual override controls support emergency promote and su
   assert.ok(suppressedCandidate);
   assert.equal(suppressedCandidate.status, "demoted");
   assert.equal(
-    afterSuppress.rules.some((entry) => entry.ruleId === promotedRuleId),
+    afterSuppress.rules.some((entry: any) => entry.ruleId === promotedRuleId),
     false
   );
 
@@ -2302,7 +2309,7 @@ test("ums-memory-a9v.5 default policy pack plugin is noop and records audit meta
     "tenant-policy-plugin-noop"
   );
   const auditEntry = snapshot.policyAuditTrail.find(
-    (entry) => entry.auditEventId === result.policyAuditEventId
+    (entry: any) => entry.auditEventId === result.policyAuditEventId
   );
   assert.ok(auditEntry);
   assert.equal(auditEntry.details.pluginInvocation.status, "executed");
@@ -2310,11 +2317,14 @@ test("ums-memory-a9v.5 default policy pack plugin is noop and records audit meta
 });
 
 test("ums-memory-a9v.5 custom policy pack plugin hook can enforce deny outcomes", () => {
-  let seenRequest = null;
+  let seenRequestOperation: string | null = null;
   setPolicyPackPlugin({
     name: "deny-on-plugin-review",
-    evaluatePolicyDecisionUpdate(request) {
-      seenRequest = request;
+    evaluatePolicyDecisionUpdate(request: unknown) {
+      const operation = (request as { operation?: unknown }).operation;
+      if (typeof operation === "string") {
+        seenRequestOperation = operation;
+      }
       return {
         contractVersion: "v1",
         outcome: "deny",
@@ -2336,8 +2346,10 @@ test("ums-memory-a9v.5 custom policy pack plugin hook can enforce deny outcomes"
     timestamp: "2026-03-02T20:05:00.000Z",
   });
 
-  assert.ok(seenRequest);
-  assert.equal(seenRequest.operation, "policy_decision_update");
+  if (seenRequestOperation === null) {
+    assert.fail("expected plugin request payload to be captured");
+  }
+  assert.equal(seenRequestOperation, "policy_decision_update");
   assert.equal(result.decision.outcome, "deny");
   assert.deepEqual(result.decision.reasonCodes, [
     "insufficient-evidence",
@@ -2357,7 +2369,7 @@ test("ums-memory-a9v.5 custom policy pack plugin hook can enforce deny outcomes"
 test("ums-memory-a9v.5 policy pack plugin accepts evaluateDecisionUpdate Effect hooks", () => {
   setPolicyPackPlugin({
     name: "effect-hook-plugin",
-    evaluateDecisionUpdate(request) {
+    evaluateDecisionUpdate(request: any) {
       return Effect.succeed({
         contractVersion: "v1",
         outcome: "deny",
@@ -2431,7 +2443,7 @@ test("ums-memory-a9v.5 policy_decision_update fails closed when policy pack plug
     "tenant-policy-plugin-failclosed"
   );
   const auditEntry = snapshot.policyAuditTrail.find(
-    (entry) => entry.auditEventId === result.policyAuditEventId
+    (entry: any) => entry.auditEventId === result.policyAuditEventId
   );
   assert.ok(auditEntry);
   assert.equal(auditEntry.details.pluginInvocation.status, "fail_closed");
@@ -2479,7 +2491,7 @@ test("ums-memory-a9v.5 policy_decision_update fails closed when plugin returns P
 test("ums-memory-a9v.5 policy_decision_update remains replay-deterministic with policy pack plugins", () => {
   setPolicyPackPlugin({
     name: "deterministic-pass-plugin",
-    evaluatePolicyDecisionUpdate(request) {
+    evaluatePolicyDecisionUpdate(request: any) {
       return {
         contractVersion: "v1",
         outcome: "pass",
@@ -2520,25 +2532,25 @@ test("ums-memory-a9v.5 policy_decision_update remains replay-deterministic with 
   );
 });
 
-function withPolicyAuditSigningEnv(run) {
-  const previousSecret = process.env.UMS_POLICY_AUDIT_EXPORT_SIGNING_SECRET;
-  const previousKeyId = process.env.UMS_POLICY_AUDIT_EXPORT_SIGNING_KEY_ID;
-  process.env.UMS_POLICY_AUDIT_EXPORT_SIGNING_SECRET =
+function withPolicyAuditSigningEnv(run: any) {
+  const previousSecret = process.env["UMS_POLICY_AUDIT_EXPORT_SIGNING_SECRET"];
+  const previousKeyId = process.env["UMS_POLICY_AUDIT_EXPORT_SIGNING_KEY_ID"];
+  process.env["UMS_POLICY_AUDIT_EXPORT_SIGNING_SECRET"] =
     "test-policy-audit-signing-secret-v1";
-  process.env.UMS_POLICY_AUDIT_EXPORT_SIGNING_KEY_ID =
+  process.env["UMS_POLICY_AUDIT_EXPORT_SIGNING_KEY_ID"] =
     "test-policy-audit-signing-key-id-v1";
   try {
     return run();
   } finally {
     if (previousSecret === undefined) {
-      delete process.env.UMS_POLICY_AUDIT_EXPORT_SIGNING_SECRET;
+      delete process.env["UMS_POLICY_AUDIT_EXPORT_SIGNING_SECRET"];
     } else {
-      process.env.UMS_POLICY_AUDIT_EXPORT_SIGNING_SECRET = previousSecret;
+      process.env["UMS_POLICY_AUDIT_EXPORT_SIGNING_SECRET"] = previousSecret;
     }
     if (previousKeyId === undefined) {
-      delete process.env.UMS_POLICY_AUDIT_EXPORT_SIGNING_KEY_ID;
+      delete process.env["UMS_POLICY_AUDIT_EXPORT_SIGNING_KEY_ID"];
     } else {
-      process.env.UMS_POLICY_AUDIT_EXPORT_SIGNING_KEY_ID = previousKeyId;
+      process.env["UMS_POLICY_AUDIT_EXPORT_SIGNING_KEY_ID"] = previousKeyId;
     }
   }
 }
@@ -2604,7 +2616,7 @@ test("ums-memory-a9v.6 policy_audit_export replay-safe json exports include inte
     assert.equal(first.signature.signedAt, "2026-03-02T18:15:00.000Z");
     assert.equal(
       first.payload.auditTrail.some(
-        (entry) => entry.operation === "policy_audit_export"
+        (entry: any) => entry.operation === "policy_audit_export"
       ),
       false
     );
@@ -2653,20 +2665,24 @@ test("ums-memory-a9v.6 policy_audit_export emits deterministic ndjson and csv va
     assert.equal(ndjsonFirst.signature.value, ndjsonReplay.signature.value);
     const ndjsonLines = ndjsonFirst.exportContent.split("\n");
     assert.equal(ndjsonLines.length, ndjsonFirst.integrity.content.lineCount);
-    const ndjsonRecords = ndjsonLines.map((line) => JSON.parse(line));
+    const ndjsonRecords = ndjsonLines.map((line: any) => JSON.parse(line));
     assert.equal(ndjsonRecords[0].recordType, "manifest");
     assert.equal(
-      ndjsonRecords.some((record) => record.recordType === "policy_decision"),
-      true
-    );
-    assert.equal(
       ndjsonRecords.some(
-        (record) => record.recordType === "policy_audit_event"
+        (record: any) => record.recordType === "policy_decision"
       ),
       true
     );
     assert.equal(
-      ndjsonRecords.some((record) => record.recordType === "incident_check"),
+      ndjsonRecords.some(
+        (record: any) => record.recordType === "policy_audit_event"
+      ),
+      true
+    );
+    assert.equal(
+      ndjsonRecords.some(
+        (record: any) => record.recordType === "incident_check"
+      ),
       true
     );
     assert.equal(
@@ -2701,15 +2717,15 @@ test("ums-memory-a9v.6 policy_audit_export emits deterministic ndjson and csv va
       "recordType,recordId,storeId,profile,timestamp,outcome,policyKey,checkId,status,reasonCodes,provenanceEventIds,details,recordDigest"
     );
     assert.equal(
-      csvLines.some((line) => line.includes("policy_decision")),
+      csvLines.some((line: any) => line.includes("policy_decision")),
       true
     );
     assert.equal(
-      csvLines.some((line) => line.includes("policy_audit_event")),
+      csvLines.some((line: any) => line.includes("policy_audit_event")),
       true
     );
     assert.equal(
-      csvLines.some((line) => line.includes("incident_check")),
+      csvLines.some((line: any) => line.includes("incident_check")),
       true
     );
     assert.notEqual(
@@ -2806,10 +2822,10 @@ test("ums-memory-a9v.6 policy_audit_export csv neutralizes spreadsheet formulas"
 });
 
 test("ums-memory-a9v.6 policy_audit_export fails fast when signing secret is missing", () => {
-  const previousSecret = process.env.UMS_POLICY_AUDIT_EXPORT_SIGNING_SECRET;
-  const previousKeyId = process.env.UMS_POLICY_AUDIT_EXPORT_SIGNING_KEY_ID;
-  delete process.env.UMS_POLICY_AUDIT_EXPORT_SIGNING_SECRET;
-  delete process.env.UMS_POLICY_AUDIT_EXPORT_SIGNING_KEY_ID;
+  const previousSecret = process.env["UMS_POLICY_AUDIT_EXPORT_SIGNING_SECRET"];
+  const previousKeyId = process.env["UMS_POLICY_AUDIT_EXPORT_SIGNING_KEY_ID"];
+  delete process.env["UMS_POLICY_AUDIT_EXPORT_SIGNING_SECRET"];
+  delete process.env["UMS_POLICY_AUDIT_EXPORT_SIGNING_KEY_ID"];
   try {
     let message = "";
     try {
@@ -2827,24 +2843,24 @@ test("ums-memory-a9v.6 policy_audit_export fails fast when signing secret is mis
     );
   } finally {
     if (previousSecret === undefined) {
-      delete process.env.UMS_POLICY_AUDIT_EXPORT_SIGNING_SECRET;
+      delete process.env["UMS_POLICY_AUDIT_EXPORT_SIGNING_SECRET"];
     } else {
-      process.env.UMS_POLICY_AUDIT_EXPORT_SIGNING_SECRET = previousSecret;
+      process.env["UMS_POLICY_AUDIT_EXPORT_SIGNING_SECRET"] = previousSecret;
     }
     if (previousKeyId === undefined) {
-      delete process.env.UMS_POLICY_AUDIT_EXPORT_SIGNING_KEY_ID;
+      delete process.env["UMS_POLICY_AUDIT_EXPORT_SIGNING_KEY_ID"];
     } else {
-      process.env.UMS_POLICY_AUDIT_EXPORT_SIGNING_KEY_ID = previousKeyId;
+      process.env["UMS_POLICY_AUDIT_EXPORT_SIGNING_KEY_ID"] = previousKeyId;
     }
   }
 });
 
 test("ums-memory-a9v.6 policy_audit_export fails fast when signing key id is missing", () => {
-  const previousSecret = process.env.UMS_POLICY_AUDIT_EXPORT_SIGNING_SECRET;
-  const previousKeyId = process.env.UMS_POLICY_AUDIT_EXPORT_SIGNING_KEY_ID;
-  process.env.UMS_POLICY_AUDIT_EXPORT_SIGNING_SECRET =
+  const previousSecret = process.env["UMS_POLICY_AUDIT_EXPORT_SIGNING_SECRET"];
+  const previousKeyId = process.env["UMS_POLICY_AUDIT_EXPORT_SIGNING_KEY_ID"];
+  process.env["UMS_POLICY_AUDIT_EXPORT_SIGNING_SECRET"] =
     "test-policy-audit-signing-secret-v1";
-  delete process.env.UMS_POLICY_AUDIT_EXPORT_SIGNING_KEY_ID;
+  delete process.env["UMS_POLICY_AUDIT_EXPORT_SIGNING_KEY_ID"];
   try {
     let message = "";
     try {
@@ -2862,21 +2878,21 @@ test("ums-memory-a9v.6 policy_audit_export fails fast when signing key id is mis
     );
   } finally {
     if (previousSecret === undefined) {
-      delete process.env.UMS_POLICY_AUDIT_EXPORT_SIGNING_SECRET;
+      delete process.env["UMS_POLICY_AUDIT_EXPORT_SIGNING_SECRET"];
     } else {
-      process.env.UMS_POLICY_AUDIT_EXPORT_SIGNING_SECRET = previousSecret;
+      process.env["UMS_POLICY_AUDIT_EXPORT_SIGNING_SECRET"] = previousSecret;
     }
     if (previousKeyId === undefined) {
-      delete process.env.UMS_POLICY_AUDIT_EXPORT_SIGNING_KEY_ID;
+      delete process.env["UMS_POLICY_AUDIT_EXPORT_SIGNING_KEY_ID"];
     } else {
-      process.env.UMS_POLICY_AUDIT_EXPORT_SIGNING_KEY_ID = previousKeyId;
+      process.env["UMS_POLICY_AUDIT_EXPORT_SIGNING_KEY_ID"] = previousKeyId;
     }
   }
 });
 
 test("ums-memory-a9v.6 policy_audit_export keeps audit event replay-safe across signing key rotation", () => {
-  const previousSecret = process.env.UMS_POLICY_AUDIT_EXPORT_SIGNING_SECRET;
-  const previousKeyId = process.env.UMS_POLICY_AUDIT_EXPORT_SIGNING_KEY_ID;
+  const previousSecret = process.env["UMS_POLICY_AUDIT_EXPORT_SIGNING_SECRET"];
+  const previousKeyId = process.env["UMS_POLICY_AUDIT_EXPORT_SIGNING_KEY_ID"];
   const storeId = "tenant-policy-audit-export-key-rotation";
   const profile = "policy-audit-export-key-rotation";
   try {
@@ -2890,9 +2906,9 @@ test("ums-memory-a9v.6 policy_audit_export keeps audit event replay-safe across 
       timestamp: "2026-03-02T20:22:00.000Z",
     });
 
-    process.env.UMS_POLICY_AUDIT_EXPORT_SIGNING_SECRET =
+    process.env["UMS_POLICY_AUDIT_EXPORT_SIGNING_SECRET"] =
       "test-policy-audit-signing-secret-v1";
-    process.env.UMS_POLICY_AUDIT_EXPORT_SIGNING_KEY_ID =
+    process.env["UMS_POLICY_AUDIT_EXPORT_SIGNING_KEY_ID"] =
       "test-policy-audit-signing-key-id-v1";
     const first = executeOperation("policy_audit_export", {
       storeId,
@@ -2901,9 +2917,9 @@ test("ums-memory-a9v.6 policy_audit_export keeps audit event replay-safe across 
       format: "json",
     });
 
-    process.env.UMS_POLICY_AUDIT_EXPORT_SIGNING_SECRET =
+    process.env["UMS_POLICY_AUDIT_EXPORT_SIGNING_SECRET"] =
       "test-policy-audit-signing-secret-v2";
-    process.env.UMS_POLICY_AUDIT_EXPORT_SIGNING_KEY_ID =
+    process.env["UMS_POLICY_AUDIT_EXPORT_SIGNING_KEY_ID"] =
       "test-policy-audit-signing-key-id-v2";
     const rotated = executeOperation("policy_audit_export", {
       storeId,
@@ -2912,9 +2928,9 @@ test("ums-memory-a9v.6 policy_audit_export keeps audit event replay-safe across 
       format: "json",
     });
 
-    process.env.UMS_POLICY_AUDIT_EXPORT_SIGNING_SECRET =
+    process.env["UMS_POLICY_AUDIT_EXPORT_SIGNING_SECRET"] =
       "test-policy-audit-signing-secret-v3";
-    process.env.UMS_POLICY_AUDIT_EXPORT_SIGNING_KEY_ID =
+    process.env["UMS_POLICY_AUDIT_EXPORT_SIGNING_KEY_ID"] =
       "test-policy-audit-signing-key-id-v2";
     const rotatedSecretOnly = executeOperation("policy_audit_export", {
       storeId,
@@ -2939,14 +2955,14 @@ test("ums-memory-a9v.6 policy_audit_export keeps audit event replay-safe across 
     assert.notEqual(rotated.signature.value, rotatedSecretOnly.signature.value);
   } finally {
     if (previousSecret === undefined) {
-      delete process.env.UMS_POLICY_AUDIT_EXPORT_SIGNING_SECRET;
+      delete process.env["UMS_POLICY_AUDIT_EXPORT_SIGNING_SECRET"];
     } else {
-      process.env.UMS_POLICY_AUDIT_EXPORT_SIGNING_SECRET = previousSecret;
+      process.env["UMS_POLICY_AUDIT_EXPORT_SIGNING_SECRET"] = previousSecret;
     }
     if (previousKeyId === undefined) {
-      delete process.env.UMS_POLICY_AUDIT_EXPORT_SIGNING_KEY_ID;
+      delete process.env["UMS_POLICY_AUDIT_EXPORT_SIGNING_KEY_ID"];
     } else {
-      process.env.UMS_POLICY_AUDIT_EXPORT_SIGNING_KEY_ID = previousKeyId;
+      process.env["UMS_POLICY_AUDIT_EXPORT_SIGNING_KEY_ID"] = previousKeyId;
     }
   }
 });
@@ -3204,7 +3220,13 @@ test("ums-memory-d6q.1.6/ums-memory-d6q.1.7 guardrails fail invalid identity rel
         toRef: { namespace: "learner", value: "learner-guardrails" },
         createdAt: "2026-03-01T00:00:00.000Z",
       }),
-    (error) => error?.code === ErrorCode.VALIDATION_FAILED
+    (error: unknown) =>
+      Boolean(
+        error &&
+        typeof error === "object" &&
+        "code" in error &&
+        (error as { code?: string }).code === ErrorCode.VALIDATION_FAILED
+      )
   );
 
   assert.throws(
@@ -3217,7 +3239,13 @@ test("ums-memory-d6q.1.6/ums-memory-d6q.1.7 guardrails fail invalid identity rel
         toRef: { namespace: "learner", value: "learner-guardrails" },
         createdAt: "2026-03-01T00:00:00.000Z",
       }),
-    (error) => error?.code === ErrorCode.EVIDENCE_REQUIRED
+    (error: unknown) =>
+      Boolean(
+        error &&
+        typeof error === "object" &&
+        "code" in error &&
+        (error as { code?: string }).code === ErrorCode.EVIDENCE_REQUIRED
+      )
   );
 
   assert.throws(
@@ -3230,7 +3258,13 @@ test("ums-memory-d6q.1.6/ums-memory-d6q.1.7 guardrails fail invalid identity rel
         toRef: { namespace: "learner", value: "learner-guardrails" },
         createdAt: "2026-03-01T00:00:00.000Z",
       }),
-    (error) => error?.code === ErrorCode.EVIDENCE_REQUIRED
+    (error: unknown) =>
+      Boolean(
+        error &&
+        typeof error === "object" &&
+        "code" in error &&
+        (error as { code?: string }).code === ErrorCode.EVIDENCE_REQUIRED
+      )
   );
 });
 
@@ -3947,7 +3981,9 @@ test("ums-memory-d6q.5.14 policy audit/export path preserves traceability checkl
   assert.equal(decision.action, "created");
   assert.equal(audit.operation, "audit");
   assert.equal(audit.deterministic, true);
-  assert.ok(audit.checks.some((check) => check.name === "duplicate_rules"));
+  assert.ok(
+    audit.checks.some((check: any) => check.name === "duplicate_rules")
+  );
   assert.equal(exported.format, "playbook");
   assert.equal(exported.playbook.storeId, "tenant-d6q5-14");
   assert.equal(
@@ -3986,7 +4022,7 @@ test("ums-memory-d6q.2.13 harmful accumulation inverts unstable guidance with ac
   });
 
   const stageThreeAntiPattern = third.record.antiPatterns.find(
-    (entry) => entry.threshold === 3
+    (entry: any) => entry.threshold === 3
   );
   assert.equal(first.action, "created");
   assert.equal(second.action, "updated");
@@ -4061,7 +4097,7 @@ test("ums-memory-d6q.2.14 context recall exposes bounded deterministic misconcep
   assert.equal(full.misconceptionChronology.notes.length >= 2, true);
   assert.equal(
     full.misconceptionChronology.notes.every(
-      (note) => note.misconceptionKey === "unsafe-pointer-cast"
+      (note: any) => note.misconceptionKey === "unsafe-pointer-cast"
     ),
     true
   );
@@ -4180,11 +4216,11 @@ test("ums-memory-d6q.3.13 curriculum recommendations expose conflict chronology 
 
   assert.equal(notes.length >= 2, true);
   assert.equal(
-    notes.every((note) => note.profileId === created.planItem.profileId),
+    notes.every((note: any) => note.profileId === created.planItem.profileId),
     true
   );
   assert.equal(
-    notes.some((note) => note.objectiveId === "objective-foreign-scope"),
+    notes.some((note: any) => note.objectiveId === "objective-foreign-scope"),
     false
   );
   for (let index = 1; index < notes.length; index += 1) {
@@ -4327,12 +4363,12 @@ test("ums-memory-hpl.8 review_schedule_clock applies deterministic candidate con
   const first = executeOperation("review_schedule_clock", request);
   const firstSnapshot = snapshotProfile(profile, storeId);
   const firstCandidate = firstSnapshot.shadowCandidates.find(
-    (entry) => entry.candidateId === candidateId
+    (entry: any) => entry.candidateId === candidateId
   );
   const second = executeOperation("review_schedule_clock", request);
   const secondSnapshot = snapshotProfile(profile, storeId);
   const secondCandidate = secondSnapshot.shadowCandidates.find(
-    (entry) => entry.candidateId === candidateId
+    (entry: any) => entry.candidateId === candidateId
   );
   const expectedConfidence =
     Math.round(Math.max(0.05, 0.8 * 0.99 ** 10) * 1_000_000) / 1_000_000;
@@ -4389,7 +4425,7 @@ test("ums-memory-hpl.8 review_schedule_clock demotes expired candidates with exp
   const second = executeOperation("review_schedule_clock", request);
   const snapshot = snapshotProfile(profile, storeId);
   const candidate = snapshot.shadowCandidates.find(
-    (entry) => entry.candidateId === candidateId
+    (entry: any) => entry.candidateId === candidateId
   );
 
   assert.equal(first.candidateMaintenance.expiredCount, 1);
@@ -4454,9 +4490,9 @@ test("ums-memory-hpl.8 review_schedule_clock does not expire promoted candidates
   });
   const snapshot = snapshotProfile(profile, storeId);
   const candidate = snapshot.shadowCandidates.find(
-    (entry) => entry.candidateId === candidateId
+    (entry: any) => entry.candidateId === candidateId
   );
-  const rule = snapshot.rules.find((entry) => entry.ruleId === ruleId);
+  const rule = snapshot.rules.find((entry: any) => entry.ruleId === ruleId);
 
   assert.equal(tick.candidateMaintenance.demotedCount, 0);
   assert.equal(tick.candidateMaintenance.decayAppliedCount, 0);

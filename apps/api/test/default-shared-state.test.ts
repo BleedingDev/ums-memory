@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
@@ -9,15 +9,37 @@ const CLI_PATH = resolve(ROOT, "apps/cli/src/index.ts");
 const API_PATH = resolve(ROOT, "apps/api/src/server.ts");
 const TSX_LOADER_PATH = resolve(ROOT, "node_modules/tsx/dist/loader.mjs");
 
+interface CommandResult {
+  readonly code: number | null;
+  readonly stdout: string;
+  readonly stderr: string;
+}
+
+interface NodeCommandOptions {
+  readonly cwd: string;
+  readonly env: NodeJS.ProcessEnv;
+  readonly stdin?: string;
+}
+
+interface ApiServerHandle {
+  readonly proc: ChildProcess;
+  readonly host: string;
+  readonly port: number;
+}
+
 function cleanSharedStateEnv() {
   const env = { ...process.env };
-  delete env.UMS_STATE_FILE;
-  delete env.UMS_CLI_STATE_FILE;
+  delete env["UMS_STATE_FILE"];
+  delete env["UMS_CLI_STATE_FILE"];
   return env;
 }
 
-function runNode(scriptPath, args, { cwd, env, stdin = "" }) {
-  return new Promise((resolvePromise) => {
+function runNode(
+  scriptPath: string,
+  args: readonly string[],
+  { cwd, env, stdin = "" }: NodeCommandOptions
+): Promise<CommandResult> {
+  return new Promise<CommandResult>((resolvePromise) => {
     const commandArgs = scriptPath.endsWith(".ts")
       ? ["--import", TSX_LOADER_PATH, scriptPath, ...args]
       : [scriptPath, ...args];
@@ -44,8 +66,11 @@ function runNode(scriptPath, args, { cwd, env, stdin = "" }) {
   });
 }
 
-function startSourceApiServer({ cwd, env }) {
-  return new Promise((resolvePromise, rejectPromise) => {
+function startSourceApiServer({
+  cwd,
+  env,
+}: Pick<NodeCommandOptions, "cwd" | "env">): Promise<ApiServerHandle> {
+  return new Promise<ApiServerHandle>((resolvePromise, rejectPromise) => {
     const commandArgs = API_PATH.endsWith(".ts")
       ? ["--import", TSX_LOADER_PATH, API_PATH]
       : [API_PATH];
@@ -81,12 +106,17 @@ function startSourceApiServer({ cwd, env }) {
       if (!match || resolved) {
         return;
       }
+      const host = match[1];
+      const portRaw = match[2];
+      if (host === undefined || portRaw === undefined) {
+        return;
+      }
       resolved = true;
       clearTimeout(timeout);
       resolvePromise({
         proc,
-        host: match[1],
-        port: Number.parseInt(match[2], 10),
+        host,
+        port: Number.parseInt(portRaw, 10),
       });
     });
     proc.stderr.on("data", (chunk) => {
@@ -111,8 +141,13 @@ function startSourceApiServer({ cwd, env }) {
   });
 }
 
-async function stopSourceApiServer(proc) {
-  await new Promise((resolvePromise) => {
+async function stopSourceApiServer(
+  proc: ChildProcess | undefined
+): Promise<void> {
+  if (!proc) {
+    return;
+  }
+  await new Promise<void>((resolvePromise) => {
     proc.once("exit", () => resolvePromise());
     proc.kill("SIGTERM");
   });
@@ -144,14 +179,18 @@ test("cli and api default to the same .ums-state.json file without env overrides
       ],
       { cwd: tempDir, env }
     );
-    assert.equal(cliIngest.code, 0, `cli ingest failed: ${cliIngest.stderr}`);
+    assert.equal(
+      (cliIngest as any).code,
+      0,
+      `cli ingest failed: ${(cliIngest as any).stderr}`
+    );
 
     const firstSnapshot = JSON.parse(await readFile(sharedStatePath, "utf8"));
     assert.ok(firstSnapshot && typeof firstSnapshot === "object");
     assert.ok(firstSnapshot.stores);
 
     const server = await startSourceApiServer({ cwd: tempDir, env });
-    const base = `http://${server.host}:${server.port}`;
+    const base = `http://${(server as any).host}:${(server as any).port}`;
 
     try {
       const contextResponse = await fetch(`${base}/v1/context`, {
@@ -192,7 +231,7 @@ test("cli and api default to the same .ums-state.json file without env overrides
       assert.equal(apiIngestBody.ok, true);
       assert.equal(apiIngestBody.data.accepted, 1);
     } finally {
-      await stopSourceApiServer(server.proc);
+      await stopSourceApiServer((server as any).proc);
     }
 
     const cliContext = await runNode(
@@ -210,11 +249,11 @@ test("cli and api default to the same .ums-state.json file without env overrides
       { cwd: tempDir, env }
     );
     assert.equal(
-      cliContext.code,
+      (cliContext as any).code,
       0,
-      `cli context failed: ${cliContext.stderr}`
+      `cli context failed: ${(cliContext as any).stderr}`
     );
-    const cliContextBody = JSON.parse(cliContext.stdout);
+    const cliContextBody = JSON.parse((cliContext as any).stdout);
     assert.equal(cliContextBody.ok, true);
     assert.equal(cliContextBody.data.matches.length, 1);
   } finally {

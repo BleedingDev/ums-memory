@@ -13,7 +13,7 @@ const sqliteModuleDirectory = new URL(
   import.meta.url
 );
 
-const transpileToTempModule = (sourceFilename, tempDirectory) => {
+const transpileToTempModule = (sourceFilename: any, tempDirectory: any) => {
   const sourceFileUrl = new URL(sourceFilename, sqliteModuleDirectory);
   const source = readFileSync(sourceFileUrl, "utf8");
   const transpiled = ts.transpileModule(source, {
@@ -30,8 +30,8 @@ const transpileToTempModule = (sourceFilename, tempDirectory) => {
   );
 };
 
-let sqliteMigrationModulePromise;
-let transpiledDirectoryPath;
+let sqliteMigrationModulePromise: any;
+let transpiledDirectoryPath: any;
 
 const loadSqliteMigrationModule = async () => {
   if (!sqliteMigrationModulePromise) {
@@ -56,10 +56,10 @@ process.on("exit", () => {
   }
 });
 
-const toMigrationVersions = (migrations) =>
-  migrations.map((migration) => migration.version);
+const toMigrationVersions = (migrations: any) =>
+  migrations.map((migration: any) => migration.version);
 
-const readSchemaSignature = (database) =>
+const readSchemaSignature = (database: any) =>
   database
     .prepare(
       [
@@ -868,7 +868,7 @@ test("ums-memory-5cb.2: integrity check preserves case-sensitive SQL drift detec
   }
 });
 
-test("ums-memory-5cb.2: enterprise sqlite migration planning rejects unknown future versions", async () => {
+test("ums-memory-5cb.2: enterprise sqlite migration planning rejects any future versions", async () => {
   const migrationsModule = await loadSqliteMigrationModule();
   const database = new DatabaseSync(":memory:");
 

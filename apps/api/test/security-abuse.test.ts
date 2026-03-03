@@ -5,30 +5,30 @@ import test from "node:test";
 import { executeOperation, resetStore, snapshotProfile } from "../src/core.ts";
 import { createUmsEngine } from "../src/ums/engine.ts";
 
-function withPolicyAuditSigningEnv(secret, keyId, run) {
-  const previousSecret = process.env.UMS_POLICY_AUDIT_EXPORT_SIGNING_SECRET;
-  const previousKeyId = process.env.UMS_POLICY_AUDIT_EXPORT_SIGNING_KEY_ID;
-  process.env.UMS_POLICY_AUDIT_EXPORT_SIGNING_SECRET = secret;
-  process.env.UMS_POLICY_AUDIT_EXPORT_SIGNING_KEY_ID = keyId;
+function withPolicyAuditSigningEnv(secret: any, keyId: any, run: any) {
+  const previousSecret = process.env["UMS_POLICY_AUDIT_EXPORT_SIGNING_SECRET"];
+  const previousKeyId = process.env["UMS_POLICY_AUDIT_EXPORT_SIGNING_KEY_ID"];
+  process.env["UMS_POLICY_AUDIT_EXPORT_SIGNING_SECRET"] = secret;
+  process.env["UMS_POLICY_AUDIT_EXPORT_SIGNING_KEY_ID"] = keyId;
 
   try {
     return run();
   } finally {
     if (previousSecret === undefined) {
-      delete process.env.UMS_POLICY_AUDIT_EXPORT_SIGNING_SECRET;
+      delete process.env["UMS_POLICY_AUDIT_EXPORT_SIGNING_SECRET"];
     } else {
-      process.env.UMS_POLICY_AUDIT_EXPORT_SIGNING_SECRET = previousSecret;
+      process.env["UMS_POLICY_AUDIT_EXPORT_SIGNING_SECRET"] = previousSecret;
     }
 
     if (previousKeyId === undefined) {
-      delete process.env.UMS_POLICY_AUDIT_EXPORT_SIGNING_KEY_ID;
+      delete process.env["UMS_POLICY_AUDIT_EXPORT_SIGNING_KEY_ID"];
     } else {
-      process.env.UMS_POLICY_AUDIT_EXPORT_SIGNING_KEY_ID = previousKeyId;
+      process.env["UMS_POLICY_AUDIT_EXPORT_SIGNING_KEY_ID"] = previousKeyId;
     }
   }
 }
 
-function policyAuditSignatureValue(secret, metadataDigest) {
+function policyAuditSignatureValue(secret: any, metadataDigest: any) {
   return createHmac("sha256", secret)
     .update(
       JSON.stringify({
@@ -155,15 +155,18 @@ test("ums-memory-a9v.7: memory_console_anomaly_alerts detects abuse spikes and d
   assert.equal(first.signals.policyDriftIndicator.observationCount, 2);
 
   const alertTypes = first.alerts
-    .map((alert) => alert.type)
-    .sort((left, right) => left.localeCompare(right));
+    .map((alert: any) => alert.type)
+    .sort((left: any, right: any) => left.localeCompare(right));
   assert.deepEqual(alertTypes, [
     "harmful_signal_spike",
     "policy_drift_indicator",
     "unauthorized_access_spike",
   ]);
-  const alertsByType = new Map(
-    first.alerts.map((alert) => [alert.type, alert])
+  const alertsByType = new Map<string, { readonly severity?: string }>(
+    first.alerts.map((alert: any) => [
+      String(alert.type),
+      alert as { readonly severity?: string },
+    ])
   );
   assert.equal(alertsByType.get("harmful_signal_spike")?.severity, "warn");
   assert.equal(alertsByType.get("unauthorized_access_spike")?.severity, "warn");
@@ -199,7 +202,7 @@ test("ums-memory-a9v.8: recall_authorization fail-closed blocks unauthorized cro
 
   const snapshot = snapshotProfile(profile, storeId);
   const denyAuditEvents = snapshot.policyAuditTrail.filter(
-    (entry) =>
+    (entry: any) =>
       entry.operation === "recall_authorization" &&
       entry.outcome === "deny" &&
       entry.details?.requesterStoreId === requesterStoreId
@@ -239,7 +242,7 @@ test("ums-memory-a9v.8: recall_authorization fail-open still denies unauthorized
 
   const snapshot = snapshotProfile(profile, storeId);
   const denyAuditEvent = snapshot.policyAuditTrail.find(
-    (entry) => entry.auditEventId === first.policyAuditEventId
+    (entry: any) => entry.auditEventId === first.policyAuditEventId
   );
   assert.ok(denyAuditEvent);
   assert.equal(denyAuditEvent.outcome, "deny");
@@ -267,7 +270,7 @@ test("ums-memory-a9v.8: tutor_degraded enforces cross-tenant fail-closed authori
 
   const snapshot = snapshotProfile(profile, storeId);
   const denyAuditEvents = snapshot.policyAuditTrail.filter(
-    (entry) =>
+    (entry: any) =>
       entry.operation === "tutor_degraded" &&
       entry.outcome === "deny" &&
       entry.details?.requesterStoreId === requesterStoreId

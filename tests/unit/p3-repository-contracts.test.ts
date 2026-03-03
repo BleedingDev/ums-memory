@@ -21,6 +21,13 @@ import {
   assertWorkingMemoryRepositoryContract,
 } from "../../libs/shared/src/repositories.ts";
 
+interface ContractErrorShape {
+  readonly code?: string;
+  readonly details?: {
+    readonly missingMethod?: string;
+  };
+}
+
 test("ums-memory-d6q.2.3: misconception identity-edge contracts and upserts are deterministic", () => {
   const repository = new InMemoryIdentityGraphRepository();
 
@@ -33,8 +40,8 @@ test("ums-memory-d6q.2.3: misconception identity-edge contracts and upserts are 
         listEdges() {},
       }),
     (error) =>
-      error?.code === ErrorCode.CONTRACT_VIOLATION &&
-      error?.details?.missingMethod === "countEdges"
+      (error as ContractErrorShape).code === ErrorCode.CONTRACT_VIOLATION &&
+      (error as ContractErrorShape).details?.missingMethod === "countEdges"
   );
 
   const base = {
@@ -68,7 +75,9 @@ test("ums-memory-d6q.2.3: misconception identity-edge contracts and upserts are 
     profileId: "lp-feedback",
   });
   assert.equal(list.length, 1);
-  assert.equal(list[0].id, first.id);
+  const firstListEntry = list.at(0);
+  assert.ok(firstListEntry);
+  assert.equal(firstListEntry.id, first.id);
 });
 
 test("ums-memory-d6q.3.3: curriculum repositories and index ranking remain idempotent", () => {
@@ -130,8 +139,10 @@ test("ums-memory-d6q.3.3: curriculum repositories and index ranking remain idemp
     kinds: ["procedural_rule"],
   });
   assert.ok(search.length >= 1);
-  assert.equal(search[0].id, secondRule.id);
-  assert.match(search[0].reason, /^matched \d+ query tokens$/);
+  const topSearch = search.at(0);
+  assert.ok(topSearch);
+  assert.equal(topSearch.id, secondRule.id);
+  assert.match(topSearch.reason, /^matched \d+ query tokens$/);
 });
 
 test("ums-memory-d6q.4.3: spaced-repetition working-memory repository behavior is replay-safe", () => {

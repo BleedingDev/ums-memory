@@ -13,7 +13,7 @@ import { pathToFileURL } from "node:url";
 import { Effect as EffectOriginal } from "effect";
 import ts from "typescript";
 
-const either = (effect) =>
+const either = (effect: any) =>
   EffectOriginal.result(effect).pipe(
     EffectOriginal.map((result) =>
       result._tag === "Failure"
@@ -22,14 +22,14 @@ const either = (effect) =>
     )
   );
 
-const Effect = { ...EffectOriginal, either };
+const Effect: any = { ...EffectOriginal, either };
 
 const effectModuleDirectory = new URL(
   "../../libs/shared/src/effect/",
   import.meta.url
 );
 
-const transpileEffectModule = (sourceFilename, tempDirectory) => {
+const transpileEffectModule = (sourceFilename: any, tempDirectory: any) => {
   const sourceFileUrl = new URL(sourceFilename, effectModuleDirectory);
   const source = readFileSync(sourceFileUrl, "utf8");
   const transpiled = ts.transpileModule(source, {
@@ -79,8 +79,8 @@ const transpileManifest = Object.freeze([
   "services/lifecycle-service.ts",
 ]);
 
-let modulesPromise;
-let transpiledDirectoryPath;
+let modulesPromise: any;
+let transpiledDirectoryPath: any;
 
 const loadModules = async () => {
   if (!modulesPromise) {
@@ -110,7 +110,7 @@ process.on("exit", () => {
   }
 });
 
-const runEither = (effect) => Effect.runPromise(Effect.either(effect));
+const runEither = (effect: any) => Effect.runPromise(Effect.either(effect));
 
 const defaultShadowWriteRequest = Object.freeze({
   spaceId: "tenant-75m-default",
@@ -122,12 +122,12 @@ const defaultShadowWriteRequest = Object.freeze({
   writtenAtMillis: 1_800_000_000_000,
 });
 
-const runShadowWriteViaLayer = (lifecycleServiceModule, request) =>
+const runShadowWriteViaLayer = (lifecycleServiceModule: any, request: any) =>
   Effect.runPromise(
     Effect.provide(
       Effect.flatMap(
         Effect.service(lifecycleServiceModule.MemoryLifecycleServiceTag),
-        (service) => service.shadowWrite(request)
+        (service: any) => service.shadowWrite(request)
       ),
       lifecycleServiceModule.noopMemoryLifecycleLayer
     )

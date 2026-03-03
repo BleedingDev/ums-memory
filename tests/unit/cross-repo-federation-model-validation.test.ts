@@ -45,6 +45,10 @@ function makeRunbookContent({
   dropHeading = null,
   dropPhrase = null,
   dropContentLine = null,
+}: {
+  readonly dropHeading?: string | null;
+  readonly dropPhrase?: string | null;
+  readonly dropContentLine?: string | null;
 } = {}) {
   const headingLines = REQUIRED_HEADINGS.filter(
     (heading) => heading !== dropHeading
@@ -70,7 +74,7 @@ function makeRunbookContent({
   ].join("\n");
 }
 
-async function writeRunbook(projectRoot, markdown) {
+async function writeRunbook(projectRoot: string, markdown: string) {
   const runbookPath = resolve(
     projectRoot,
     "docs/runbooks/cross-repo-memory-federation-model.md"
@@ -159,7 +163,7 @@ test("cross-repo federation runbook validation fails on missing content guardrai
   }
 });
 
-test("cross-repo federation runbook validation CLI main returns failure on unknown arguments", async () => {
+test("cross-repo federation runbook validation CLI main returns failure on any arguments", async () => {
   const code = await main(["--does-not-exist"]);
   assert.equal(code, 1);
 });

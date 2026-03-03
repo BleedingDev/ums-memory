@@ -22,39 +22,39 @@ const DEFAULT_REPORT_PATH = resolve(
   "docs/reports/coding-agent-persistent-ingestion-summary.json"
 );
 const MAX_CONTENT_LENGTH = Number.parseInt(
-  process.env.UMS_INGEST_MAX_CONTENT || "2200",
+  process.env["UMS_INGEST_MAX_CONTENT"] || "2200",
   10
 );
 const MAX_FILES_PER_SOURCE = Number.parseInt(
-  process.env.UMS_INGEST_MAX_FILES || "0",
+  process.env["UMS_INGEST_MAX_FILES"] || "0",
   10
 );
 const MAX_LINES_PER_FILE = Number.parseInt(
-  process.env.UMS_INGEST_MAX_LINES || "0",
+  process.env["UMS_INGEST_MAX_LINES"] || "0",
   10
 );
 const CHUNK_SIZE = Number.parseInt(
-  process.env.UMS_INGEST_CHUNK_SIZE || "250",
+  process.env["UMS_INGEST_CHUNK_SIZE"] || "250",
   10
 );
 const MAX_LINE_LENGTH = Number.parseInt(
-  process.env.UMS_INGEST_MAX_LINE_LENGTH || "12000",
+  process.env["UMS_INGEST_MAX_LINE_LENGTH"] || "12000",
   10
 );
 const MIN_RULE_FREQUENCY = Number.parseInt(
-  process.env.UMS_INGEST_MIN_RULE_FREQUENCY || "2",
+  process.env["UMS_INGEST_MIN_RULE_FREQUENCY"] || "2",
   10
 );
 const MIN_ANTIPATTERN_FREQUENCY = Number.parseInt(
-  process.env.UMS_INGEST_MIN_ANTIPATTERN_FREQUENCY || "2",
+  process.env["UMS_INGEST_MIN_ANTIPATTERN_FREQUENCY"] || "2",
   10
 );
 const MAX_RULE_CANDIDATES = Number.parseInt(
-  process.env.UMS_INGEST_MAX_RULE_CANDIDATES || "32",
+  process.env["UMS_INGEST_MAX_RULE_CANDIDATES"] || "32",
   10
 );
 const MAX_ANTIPATTERN_NOTES = Number.parseInt(
-  process.env.UMS_INGEST_MAX_ANTIPATTERNS || "12",
+  process.env["UMS_INGEST_MAX_ANTIPATTERNS"] || "12",
   10
 );
 
@@ -79,9 +79,63 @@ const ANTIPATTERN_FAILURE_PATTERN =
 const ANTIPATTERN_WORKFLOW_PATTERN =
   /\b(build|test|tests|lint|typecheck|deploy|pipeline|validate|ingest|replay|ci|e2e|integration|unit|artifact|dist)\b/i;
 
-function parseArgs(argv) {
+type JsonRecord = Record<string, unknown>;
+
+interface IngestionEvent {
+  readonly id: string;
+  readonly type: "note";
+  readonly source: string;
+  readonly content: string;
+  readonly timestamp: string;
+  readonly tags: readonly string[];
+  readonly metadata: {
+    readonly role?: string;
+    readonly file?: string;
+    readonly line?: number;
+    readonly storeId: string;
+    readonly profile: string;
+    readonly title?: string;
+  };
+}
+
+interface ConversationLoadArgs {
+  readonly files: readonly string[];
+  readonly source: string;
+  readonly storeId: string;
+  readonly profile: string;
+}
+
+interface PlanEventLoadArgs {
+  readonly storeId: string;
+  readonly profile: string;
+}
+
+interface ParsedIngestArgs {
+  stateFile: string;
+  storeId: string;
+  profile: string;
+  reportPath: string;
+  help: boolean;
+}
+
+interface CanonicalRuleDefinition {
+  statement: string;
+  test: (text: string) => boolean;
+}
+
+interface RuleCandidate {
+  statement: string;
+  sourceEventId: string;
+  confidence: number;
+  frequency: number;
+}
+
+const isJsonRecord = (value: unknown): value is JsonRecord =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+function parseArgs(argv: readonly string[]): ParsedIngestArgs {
   const args = [...argv];
-  const parsed = {
+  const parsed: ParsedIngestArgs = {
     stateFile: DEFAULT_SHARED_STATE_FILE,
     storeId: DEFAULT_STORE_ID,
     profile: DEFAULT_PROFILE,
@@ -156,7 +210,7 @@ function printUsage() {
   );
 }
 
-function truncate(value, maxLength = MAX_CONTENT_LENGTH) {
+function truncate(value: unknown, maxLength = MAX_CONTENT_LENGTH) {
   const text = String(value ?? "");
   if (text.length <= maxLength) {
     return text;
@@ -164,14 +218,14 @@ function truncate(value, maxLength = MAX_CONTENT_LENGTH) {
   return `${text.slice(0, maxLength)}…`;
 }
 
-function normalizeText(value) {
+function normalizeText(value: unknown) {
   if (value == null) {
     return "";
   }
   return String(value).trim();
 }
 
-function shouldSkipRawLine(line) {
+function shouldSkipRawLine(line: unknown) {
   const text = normalizeText(line);
   if (!text) {
     return true;
@@ -185,7 +239,7 @@ function shouldSkipRawLine(line) {
   return false;
 }
 
-function redactSensitiveContent(value) {
+function redactSensitiveContent(value: unknown) {
   let text = String(value ?? "");
   text = text
     .replace(
@@ -201,7 +255,7 @@ function redactSensitiveContent(value) {
   return text;
 }
 
-function looksLikeNoiseBlob(value) {
+function looksLikeNoiseBlob(value: unknown) {
   const text = normalizeText(value);
   if (!text) {
     return true;
@@ -222,7 +276,7 @@ function looksLikeNoiseBlob(value) {
   return false;
 }
 
-function sanitizeEventContent(value) {
+function sanitizeEventContent(value: unknown) {
   const redacted = normalizeText(redactSensitiveContent(value));
   if (!redacted) {
     return "";
@@ -233,15 +287,18 @@ function sanitizeEventContent(value) {
   return truncate(redacted);
 }
 
-function listJsonlFiles(rootDirectory) {
+function listJsonlFiles(rootDirectory: string) {
   if (!existsSync(rootDirectory)) {
     return [];
   }
 
-  const files = [];
+  const files: string[] = [];
   const stack = [rootDirectory];
   while (stack.length > 0) {
     const current = stack.pop();
+    if (!current) {
+      continue;
+    }
     for (const entry of readdirSync(current, { withFileTypes: true })) {
       const path = join(current, entry.name);
       if (entry.isDirectory()) {
@@ -259,7 +316,7 @@ function listJsonlFiles(rootDirectory) {
     : files;
 }
 
-function tryParseJson(line) {
+function tryParseJson(line: string) {
   try {
     return JSON.parse(line);
   } catch {
@@ -267,8 +324,8 @@ function tryParseJson(line) {
   }
 }
 
-function pickFirstString(value, keys) {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
+function pickFirstString(value: unknown, keys: readonly string[]): string {
+  if (!isJsonRecord(value)) {
     return "";
   }
   for (const key of keys) {
@@ -276,11 +333,7 @@ function pickFirstString(value, keys) {
     if (typeof candidate === "string" && candidate.trim()) {
       return candidate.trim();
     }
-    if (
-      candidate &&
-      typeof candidate === "object" &&
-      !Array.isArray(candidate)
-    ) {
+    if (isJsonRecord(candidate)) {
       const nested = pickFirstString(candidate, keys);
       if (nested) {
         return nested;
@@ -290,18 +343,18 @@ function pickFirstString(value, keys) {
   return "";
 }
 
-function pickText(value) {
+function pickText(value: unknown): string {
   if (typeof value === "string") {
     return value.trim();
   }
   if (Array.isArray(value)) {
     return value
-      .map((entry) => pickText(entry))
-      .filter(Boolean)
+      .map((entry): string => pickText(entry))
+      .filter((entry): entry is string => entry.length > 0)
       .join("\n")
       .trim();
   }
-  if (!value || typeof value !== "object") {
+  if (!isJsonRecord(value)) {
     return "";
   }
 
@@ -319,10 +372,11 @@ function pickText(value) {
     return direct;
   }
 
-  if (Array.isArray(value.messages)) {
-    const fromMessages = value.messages
-      .map((entry) => pickText(entry))
-      .filter(Boolean)
+  const messages = value["messages"];
+  if (Array.isArray(messages)) {
+    const fromMessages = messages
+      .map((entry): string => pickText(entry))
+      .filter((entry): entry is string => entry.length > 0)
       .join("\n");
     if (fromMessages) {
       return fromMessages.trim();
@@ -332,7 +386,7 @@ function pickText(value) {
   return "";
 }
 
-function pickTimestamp(value) {
+function pickTimestamp(value: unknown) {
   const timestamp = pickFirstString(value, [
     "timestamp",
     "createdAt",
@@ -344,19 +398,19 @@ function pickTimestamp(value) {
   return timestamp || new Date(0).toISOString();
 }
 
-function pickRole(value) {
+function pickRole(value: unknown) {
   const role = pickFirstString(value, [
     "role",
     "actor",
     "sender",
     "authorRole",
   ]);
-  return role || "unknown";
+  return role || "any";
 }
 
-function buildTags(content, source, role) {
+function buildTags(content: unknown, source: string, role: string): string[] {
   const normalized = normalizeText(content).toLowerCase();
-  const tags = [source, role];
+  const tags: string[] = [source, role];
   if (
     normalized.includes("cASS".toLowerCase()) ||
     normalized.includes("ace pipeline")
@@ -374,8 +428,13 @@ function buildTags(content, source, role) {
   return [...new Set(tags.filter(Boolean))];
 }
 
-async function loadConversationEvents({ files, source, storeId, profile }) {
-  const events = [];
+async function loadConversationEvents({
+  files,
+  source,
+  storeId,
+  profile,
+}: ConversationLoadArgs): Promise<IngestionEvent[]> {
+  const events: IngestionEvent[] = [];
   for (const filePath of files) {
     const input = createReadStream(filePath, { encoding: "utf8" });
     const reader = createInterface({ input, crlfDelay: Infinity });
@@ -406,7 +465,7 @@ async function loadConversationEvents({ files, source, storeId, profile }) {
       }
       const role = pickRole(parsed).toLowerCase();
       const fileLabel = relative("/Users/satan", filePath) || filePath;
-      const event = {
+      const event: IngestionEvent = {
         id: `${source}-${fileLabel}-${lineIndex - 1}`,
         type: "note",
         source,
@@ -429,7 +488,10 @@ async function loadConversationEvents({ files, source, storeId, profile }) {
   return events;
 }
 
-function loadCassNcmPlanEvents({ storeId, profile }) {
+function loadCassNcmPlanEvents({
+  storeId,
+  profile,
+}: PlanEventLoadArgs): IngestionEvent[] {
   const planPath = resolve(process.cwd(), "PLAN.md");
   if (!existsSync(planPath)) {
     return [];
@@ -440,15 +502,14 @@ function loadCassNcmPlanEvents({ storeId, profile }) {
     .map((entry) => entry.trim())
     .filter(Boolean);
 
-  const events = [];
-  for (let index = 0; index < sections.length; index += 1) {
-    const section = sections[index];
+  const events: IngestionEvent[] = [];
+  for (const [index, section] of sections.entries()) {
     const normalized = section.toLowerCase();
     if (!normalized.includes("cass") && !normalized.includes("ncm")) {
       continue;
     }
     const title = section.split("\n")[0] ?? "plan-section";
-    events.push({
+    const event: IngestionEvent = {
       id: `implementation-plan-${index}`,
       type: "note",
       source: "implementation-plan",
@@ -461,27 +522,28 @@ function loadCassNcmPlanEvents({ storeId, profile }) {
         storeId,
         profile,
       },
-    });
+    };
+    events.push(event);
   }
   return events;
 }
 
-function chunk(items, chunkSize) {
-  const chunks = [];
+function chunk<T>(items: readonly T[], chunkSize: number): T[][] {
+  const chunks: T[][] = [];
   for (let index = 0; index < items.length; index += chunkSize) {
     chunks.push(items.slice(index, index + chunkSize));
   }
   return chunks;
 }
 
-function normalizeLineForLesson(line) {
+function normalizeLineForLesson(line: unknown) {
   return normalizeText(line)
     .replace(/^[-*>\d).\s]+/, "")
     .replace(/\s+/g, " ")
     .trim();
 }
 
-function splitContentLines(content) {
+function splitContentLines(content: unknown) {
   return normalizeText(content)
     .replace(/\r/g, "\n")
     .split(/[\n.!?]+/g)
@@ -489,7 +551,7 @@ function splitContentLines(content) {
     .filter(Boolean);
 }
 
-function normalizeCandidateKey(line) {
+function normalizeCandidateKey(line: unknown) {
   return normalizeText(line)
     .toLowerCase()
     .replace(/[`"'()[\]{}<>]/g, " ")
@@ -498,7 +560,7 @@ function normalizeCandidateKey(line) {
     .trim();
 }
 
-function sanitizeRuleText(line) {
+function sanitizeRuleText(line: unknown) {
   let text = normalizeText(line)
     .replace(/[`*]/g, "")
     .replace(/\s+/g, " ")
@@ -517,7 +579,7 @@ function sanitizeRuleText(line) {
   return text;
 }
 
-function isActionableRuleLine(line) {
+function isActionableRuleLine(line: unknown) {
   const text = normalizeText(line);
   if (!text) {
     return false;
@@ -552,7 +614,7 @@ function isActionableRuleLine(line) {
   return true;
 }
 
-function isActionableAntiPatternLine(line) {
+function isActionableAntiPatternLine(line: unknown) {
   const text = normalizeText(line);
   if (!text) {
     return false;
@@ -578,49 +640,49 @@ function isActionableAntiPatternLine(line) {
   return true;
 }
 
-const CANONICAL_RULE_DEFINITIONS = [
+const CANONICAL_RULE_DEFINITIONS: readonly CanonicalRuleDefinition[] = [
   {
     statement:
       "Run lint, typecheck, and build before closing an implementation task.",
-    test: (text) =>
+    test: (text: string) =>
       /\blint\b/i.test(text) &&
       /\b(typecheck|tsc)\b/i.test(text) &&
       /\bbuild\b/i.test(text),
   },
   {
     statement: "Run E2E tests for critical flows before release or handoff.",
-    test: (text) => /\b(e2e|playwright)\b/i.test(text),
+    test: (text: string) => /\b(e2e|playwright)\b/i.test(text),
   },
   {
     statement:
       "Benchmark after performance-affecting changes and compare against a baseline.",
-    test: (text) =>
+    test: (text: string) =>
       /\b(benchmark|perf|performance|latency|throughput)\b/i.test(text),
   },
   {
     statement: "Validate tests against built artifacts, not only source files.",
-    test: (text) =>
+    test: (text: string) =>
       /\b(artifact|dist|tarball|packed cli|compiled)\b/i.test(text),
   },
   {
     statement:
       "Keep tests deterministic and preserve replay information (such as seeds) on failure.",
-    test: (text) => /\b(seed|deterministic|replay|fuzz)\b/i.test(text),
+    test: (text: string) => /\b(seed|deterministic|replay|fuzz)\b/i.test(text),
   },
   {
     statement:
       "Validate integrations in realistic conditions before marking work complete.",
-    test: (text) =>
+    test: (text: string) =>
       /\b(integration|real-world|real world|smoke test)\b/i.test(text),
   },
   {
     statement: "Track benchmark deltas and enforce regression gates in CI.",
-    test: (text) => /\b(bench|regression|ci)\b/i.test(text),
+    test: (text: string) => /\b(bench|regression|ci)\b/i.test(text),
   },
   {
     statement:
       "Prefer one shared persisted state model across CLI and API surfaces.",
-    test: (text) =>
+    test: (text: string) =>
       /\b(shared state|same state|cli and api|persistence|sqlite)\b/i.test(
         text
       ),
@@ -628,20 +690,20 @@ const CANONICAL_RULE_DEFINITIONS = [
   {
     statement:
       "Add or update automated tests whenever behavior or interfaces change.",
-    test: (text) =>
+    test: (text: string) =>
       /\b(test|tests|coverage|unit|integration)\b/i.test(text) &&
       /\b(change|new|update|behavior|interface)\b/i.test(text),
   },
   {
     statement:
       "Keep failure triage actionable by linking issues to reproducible commands and checks.",
-    test: (text) =>
+    test: (text: string) =>
       /\b(ready|triage|issue|reproduc|command|check)\b/i.test(text),
   },
   {
     statement:
       "Use Effect v4 service APIs (ServiceMap.Service / LayerMap.Service) for service wiring and composition.",
-    test: (text) =>
+    test: (text: string) =>
       /\b(effect v4|servicemap\.service|layermap\.service|effect-ts|effect patterns?)\b/i.test(
         text
       ),
@@ -649,31 +711,32 @@ const CANONICAL_RULE_DEFINITIONS = [
   {
     statement:
       "Use Tailwind v4 conventions and enforce style checks with OxLint + OxFmt (no ESLint).",
-    test: (text) =>
+    test: (text: string) =>
       /\b(tailwind v4|nativewind v5|oxlint|oxfmt|tailwind)\b/i.test(text),
   },
   {
     statement: "Keep TypeScript strict mode enabled across packages.",
-    test: (text) =>
+    test: (text: string) =>
       /\b(strict typescript|strict ts|strict mode|strictnullchecks|noimplicitany)\b/i.test(
         text
       ),
   },
   {
     statement:
-      "Disallow explicit any in production code; model unknown input via schemas/decoders.",
-    test: (text) => /\b(no any|avoid any|ban any|implicit any)\b/i.test(text),
+      "Disallow explicit any in production code; model any input via schemas/decoders.",
+    test: (text: string) =>
+      /\b(no any|avoid any|ban any|implicit any)\b/i.test(text),
   },
   {
-    statement: "Disallow unsafe double assertions like 'as unknown as X'.",
-    test: (text) => /\bas unknown as\b/i.test(text),
+    statement: "Disallow unsafe double assertions like 'as any as X'.",
+    test: (text: string) => /\bas any as\b/i.test(text),
   },
 ];
 
-function buildCanonicalRuleCandidates(events) {
+function buildCanonicalRuleCandidates(events: readonly IngestionEvent[]) {
   const matches = CANONICAL_RULE_DEFINITIONS.map((definition) => ({
     statement: definition.statement,
-    sourceEventId: "unknown",
+    sourceEventId: "any",
     frequency: 0,
   }));
 
@@ -684,12 +747,15 @@ function buildCanonicalRuleCandidates(events) {
     }
     for (let index = 0; index < CANONICAL_RULE_DEFINITIONS.length; index += 1) {
       const definition = CANONICAL_RULE_DEFINITIONS[index];
+      const entry = matches[index];
+      if (definition === undefined || entry === undefined) {
+        continue;
+      }
       if (!definition.test(text)) {
         continue;
       }
-      const entry = matches[index];
       entry.frequency += 1;
-      if (entry.sourceEventId === "unknown" && event.id) {
+      if (entry.sourceEventId === "any" && event.id) {
         entry.sourceEventId = event.id;
       }
     }
@@ -711,9 +777,9 @@ function buildCanonicalRuleCandidates(events) {
 }
 
 function buildHeuristicRuleCandidates(
-  events,
+  events: readonly IngestionEvent[],
   maxCandidates = MAX_RULE_CANDIDATES
-) {
+): RuleCandidate[] {
   const buckets = new Map();
 
   for (const event of events) {
@@ -764,7 +830,7 @@ function buildHeuristicRuleCandidates(
 
   return selected.slice(0, maxCandidates).map((entry) => ({
     statement: entry.statement,
-    sourceEventId: entry.sourceEventId || "unknown",
+    sourceEventId: entry.sourceEventId || "any",
     confidence: Math.min(
       0.97,
       0.62 + Math.log2(entry.count + 1) * 0.08 + entry.sources.size * 0.03
@@ -774,9 +840,9 @@ function buildHeuristicRuleCandidates(
 }
 
 function mergeRuleCandidates(
-  candidateGroups,
+  candidateGroups: readonly (readonly RuleCandidate[])[],
   maxCandidates = MAX_RULE_CANDIDATES
-) {
+): RuleCandidate[] {
   const merged = new Map();
   for (const group of candidateGroups) {
     for (const candidate of Array.isArray(group) ? group : []) {
@@ -791,7 +857,7 @@ function mergeRuleCandidates(
       const existing = merged.get(key);
       const normalizedCandidate = {
         statement,
-        sourceEventId: candidate?.sourceEventId || "unknown",
+        sourceEventId: candidate?.sourceEventId || "any",
         confidence: Number(candidate?.confidence ?? 0.62),
         frequency: Number(candidate?.frequency ?? 1),
       };
@@ -808,8 +874,8 @@ function mergeRuleCandidates(
         normalizedCandidate.confidence
       );
       if (
-        existing.sourceEventId === "unknown" &&
-        normalizedCandidate.sourceEventId !== "unknown"
+        existing.sourceEventId === "any" &&
+        normalizedCandidate.sourceEventId !== "any"
       ) {
         existing.sourceEventId = normalizedCandidate.sourceEventId;
       }
@@ -823,7 +889,7 @@ function mergeRuleCandidates(
     .slice(0, maxCandidates);
 }
 
-function sanitizeAntiPatternText(value) {
+function sanitizeAntiPatternText(value: unknown) {
   return normalizeText(value)
     .replace(/[✖✔⚠️✅•◆]/g, "")
     .replace(/`/g, "")
@@ -836,7 +902,7 @@ function sanitizeAntiPatternText(value) {
 }
 
 function extractActionableAntiPatterns(
-  values,
+  values: readonly unknown[] | unknown,
   maxNotes = MAX_ANTIPATTERN_NOTES
 ) {
   const deduped = [
@@ -851,7 +917,7 @@ function extractActionableAntiPatterns(
 }
 
 function buildHeuristicAntiPatternNotes(
-  events,
+  events: readonly IngestionEvent[],
   maxNotes = MAX_ANTIPATTERN_NOTES
 ) {
   const buckets = new Map();
@@ -884,15 +950,27 @@ function buildHeuristicAntiPatternNotes(
   return extractActionableAntiPatterns(notes, maxNotes);
 }
 
-function toLearningInsights(contextPayload) {
-  if (!contextPayload || !Array.isArray(contextPayload.matches)) {
+function toLearningInsights(contextPayload: unknown) {
+  if (
+    !isJsonRecord(contextPayload) ||
+    !Array.isArray(contextPayload["matches"])
+  ) {
     return [];
   }
-  return contextPayload.matches.slice(0, 5).map((match) => ({
-    eventId: match.eventId,
-    source: match.source,
-    content: truncate(match.content ?? match.excerpt ?? "", 260),
-  }));
+  return contextPayload["matches"].slice(0, 5).map((match) => {
+    if (!isJsonRecord(match)) {
+      return {
+        eventId: "",
+        source: "",
+        content: "",
+      };
+    }
+    return {
+      eventId: normalizeText(match["eventId"]),
+      source: normalizeText(match["source"]),
+      content: truncate(match["content"] ?? match["excerpt"] ?? "", 260),
+    };
+  });
 }
 
 async function main(argv = process.argv.slice(2)) {
@@ -990,7 +1068,7 @@ async function main(argv = process.argv.slice(2)) {
         ingestion.accepted > 0
           ? buildHeuristicAntiPatternNotes(allEvents, MAX_ANTIPATTERN_NOTES)
           : [];
-      const antiPatternSignals = [];
+      const antiPatternSignals: unknown[] = [];
       if (antiPatternNotes.length > 0) {
         const defaultRuleId = curate.applied[0]?.ruleId ?? "history-ingest";
         for (const note of antiPatternNotes) {

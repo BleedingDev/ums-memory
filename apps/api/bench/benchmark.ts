@@ -6,32 +6,34 @@ import { executeOperation, resetStore } from "../src/core.ts";
 const PROFILE = "bench";
 const STORE_ID = "bench-store";
 const ITERATIONS = Number.parseInt(
-  process.env.UMS_BENCH_ITERATIONS ?? "300",
+  process.env["UMS_BENCH_ITERATIONS"] ?? "300",
   10
 );
-const VOLUMES = String(process.env.UMS_BENCH_SCHEDULE_VOLUMES ?? "64,128,256")
+const VOLUMES = String(
+  process.env["UMS_BENCH_SCHEDULE_VOLUMES"] ?? "64,128,256"
+)
   .split(",")
   .map((entry) => Number.parseInt(entry.trim(), 10))
   .filter((entry) => Number.isFinite(entry) && entry > 0)
   .sort((left, right) => left - right);
 const NEAR_CONSTANT_RATIO_THRESHOLD = Number.parseFloat(
-  process.env.UMS_BENCH_NEAR_CONSTANT_RATIO_THRESHOLD ?? "6.0"
+  process.env["UMS_BENCH_NEAR_CONSTANT_RATIO_THRESHOLD"] ?? "6.0"
 );
 const UPDATE_P95_THRESHOLD_MS = Number.parseFloat(
-  process.env.UMS_BENCH_SCHEDULE_UPDATE_P95_THRESHOLD_MS ?? "0.8"
+  process.env["UMS_BENCH_SCHEDULE_UPDATE_P95_THRESHOLD_MS"] ?? "0.8"
 );
 const CLOCK_P95_THRESHOLD_MS = Number.parseFloat(
-  process.env.UMS_BENCH_SCHEDULE_CLOCK_P95_THRESHOLD_MS ?? "3.8"
+  process.env["UMS_BENCH_SCHEDULE_CLOCK_P95_THRESHOLD_MS"] ?? "3.8"
 );
 const REBALANCE_P95_THRESHOLD_MS = Number.parseFloat(
-  process.env.UMS_BENCH_SCHEDULE_REBALANCE_P95_THRESHOLD_MS ?? "4.5"
+  process.env["UMS_BENCH_SCHEDULE_REBALANCE_P95_THRESHOLD_MS"] ?? "4.5"
 );
 
-function round(value, digits = 6) {
+function round(value: any, digits = 6) {
   return Number(value.toFixed(digits));
 }
 
-function benchThroughput(name, fn) {
+function benchThroughput(name: any, fn: any) {
   const start = process.hrtime.bigint();
   for (let i = 0; i < ITERATIONS; i += 1) {
     fn(i);
@@ -47,7 +49,7 @@ function benchThroughput(name, fn) {
   };
 }
 
-function percentile(values, p) {
+function percentile(values: any, p: any) {
   if (!Array.isArray(values) || values.length === 0) {
     return 0;
   }
@@ -59,7 +61,7 @@ function percentile(values, p) {
   return sorted[index];
 }
 
-function summarizeLatency(values) {
+function summarizeLatency(values: any) {
   return {
     p50Ms: round(percentile(values, 50), 4),
     p95Ms: round(percentile(values, 95), 4),
@@ -67,19 +69,19 @@ function summarizeLatency(values) {
   };
 }
 
-function measure(fn) {
+function measure(fn: any) {
   const started = process.hrtime.bigint();
   fn();
   const elapsedNs = process.hrtime.bigint() - started;
   return Number(elapsedNs) / 1e6;
 }
 
-function makeIsoAtOffset(baseIso, offsetMinutes) {
+function makeIsoAtOffset(baseIso: any, offsetMinutes: any) {
   const baseMs = Date.parse(baseIso);
   return new Date(baseMs + offsetMinutes * 60 * 1000).toISOString();
 }
 
-function seedScheduleEntries(volume, baseIso) {
+function seedScheduleEntries(volume: any, baseIso: any) {
   for (let index = 0; index < volume; index += 1) {
     executeOperation("review_schedule_update", {
       storeId: STORE_ID,
@@ -95,7 +97,7 @@ function seedScheduleEntries(volume, baseIso) {
   }
 }
 
-function runSchedulingVolumeBenchmark(volume) {
+function runSchedulingVolumeBenchmark(volume: any) {
   resetStore();
   const baseIso = "2026-03-01T00:00:00.000Z";
   const rebalanceActiveLimit = Math.min(
@@ -109,9 +111,9 @@ function runSchedulingVolumeBenchmark(volume) {
     activeLimit: rebalanceActiveLimit,
     timestamp: baseIso,
   });
-  const updateLatencies = [];
-  const clockLatencies = [];
-  const rebalanceLatencies = [];
+  const updateLatencies: any[] = [];
+  const clockLatencies: any[] = [];
+  const rebalanceLatencies: any[] = [];
   for (let iteration = 0; iteration < ITERATIONS; iteration += 1) {
     const targetIndex = iteration % volume;
     const timestamp = makeIsoAtOffset(baseIso, volume + iteration);
@@ -166,8 +168,8 @@ function runSchedulingVolumeBenchmark(volume) {
   };
 }
 
-function computeNearConstantGate(volumeResults, key) {
-  const p95Values = volumeResults.map((entry) => entry[key].p95Ms);
+function computeNearConstantGate(volumeResults: any, key: any) {
+  const p95Values = volumeResults.map((entry: any) => entry[key].p95Ms);
   const minP95 = Math.min(...p95Values);
   const maxP95 = Math.max(...p95Values);
   if (!Number.isFinite(minP95) || minP95 <= 0) {
@@ -183,17 +185,17 @@ function computeNearConstantGate(volumeResults, key) {
   };
 }
 
-function renderMarkdown(report) {
+function renderMarkdown(report: any) {
   const volumeRows = report.schedulingVolumeResults
     .map(
-      (entry) =>
+      (entry: any) =>
         `| ${entry.volume} | ${entry.updateLatency.p95Ms} | ${entry.clockLatency.p95Ms} | ${entry.rebalanceLatency.p95Ms} |`
     )
     .join("\n");
   const gateRows = Object.entries(report.gates)
     .map(
       ([name, gate]) =>
-        `| ${name} | ${gate.pass ? "pass" : "fail"} | ${gate.details} |`
+        `| ${name} | ${(gate as any).pass ? "pass" : "fail"} | ${(gate as any).details} |`
     )
     .join("\n");
   return [
@@ -235,7 +237,7 @@ executeOperation("ingest", {
 });
 
 const throughputResults = [
-  benchThroughput("context", (index) => {
+  benchThroughput("context", (index: any) => {
     executeOperation("context", {
       storeId: STORE_ID,
       profile: PROFILE,
@@ -272,6 +274,11 @@ const rebalanceNearConstant = computeNearConstantGate(
   "rebalanceLatency"
 );
 const peakVolume = schedulingVolumeResults.at(-1);
+if (peakVolume === undefined) {
+  throw new Error(
+    "Expected schedulingVolumeResults to contain at least one entry."
+  );
+}
 const gates = {
   reviewScheduleUpdateNearConstant: {
     pass: updateNearConstant.pass,

@@ -8,7 +8,60 @@ const ISO_TIMESTAMP_PATTERN =
   /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?(?:Z|[+-]\d{2}:\d{2})$/u;
 const RECALL_KEY_PATTERN = /(recall|retriev|context|memory)/iu;
 
-function compareStrings(left, right) {
+interface GeneratePilotKpiDashboardOptions {
+  readonly allowInvalid?: boolean;
+}
+
+interface ParsedArgs {
+  input: string[];
+  feedback: string[];
+  output: string;
+  compact: boolean;
+  allowInvalid: boolean;
+  help: boolean;
+}
+
+type JsonRecord = Record<string, unknown>;
+
+interface PerOperationMetrics {
+  requestVolume: number;
+  successCount: number;
+  failureCount: number;
+  p95LatencyMs: number | null;
+  latencySampleSize: number;
+  failureCodeHistogram: Map<string, number>;
+}
+
+interface ParsedPilotSummary {
+  requestVolume: number;
+  successCount: number;
+  failureCount: number;
+  p95LatencyMs: number | null;
+  latencySampleSize: number;
+  invalidEventCount: number;
+  operationHistogram: Map<string, number>;
+  failureCodeHistogram: Map<string, number>;
+  policyDecisionHistogram: Map<string, number>;
+  anomalyHistogram: Map<string, number>;
+  teamHistogram: Map<string, number>;
+  projectHistogram: Map<string, number>;
+  perOperation: Map<string, PerOperationMetrics>;
+  telemetryWindow: { start: string | null; end: string | null };
+}
+
+interface FeedbackEvent {
+  timestamp: string;
+  category: string;
+  severity: string;
+  action: string;
+}
+
+interface IoState {
+  stdinConsumed: boolean;
+  stdinCache: string;
+}
+
+function compareStrings(left: string, right: string) {
   if (left < right) {
     return -1;
   }
@@ -18,11 +71,11 @@ function compareStrings(left, right) {
   return 0;
 }
 
-function isRecord(value) {
+function isRecord(value: unknown): value is JsonRecord {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
-function normalizeToken(value) {
+function normalizeToken(value: unknown) {
   return String(value ?? "")
     .trim()
     .toLowerCase()
@@ -30,12 +83,12 @@ function normalizeToken(value) {
     .replace(/-+/g, "_");
 }
 
-function normalizeSliceLabel(value, fallback) {
+function normalizeSliceLabel(value: unknown, fallback: string) {
   const token = normalizeToken(value);
   return token || fallback;
 }
 
-function toIsoTimestamp(value) {
+function toIsoTimestamp(value: unknown) {
   if (typeof value !== "string" || !value.trim()) {
     return null;
   }
@@ -50,24 +103,27 @@ function toIsoTimestamp(value) {
   return new Date(parsed).toISOString();
 }
 
-function attachInvalidCount(records, invalidCount) {
+function attachInvalidCount<T>(
+  records: T[],
+  invalidCount: number
+): T[] & { invalidCount: number } {
   Object.defineProperty(records, "invalidCount", {
     value: invalidCount,
     writable: true,
     configurable: true,
     enumerable: false,
   });
-  return records;
+  return records as T[] & { invalidCount: number };
 }
 
-function readRequiredField(record, key, label) {
+function readRequiredField(record: JsonRecord, key: string, label: string) {
   if (!(key in record)) {
     throw new Error(`Missing required field: ${label}.`);
   }
   return record[key];
 }
 
-function readNonNegativeInteger(value, label) {
+function readNonNegativeInteger(value: unknown, label: string) {
   if (
     typeof value !== "number" ||
     !Number.isFinite(value) ||
@@ -79,7 +135,7 @@ function readNonNegativeInteger(value, label) {
   return value;
 }
 
-function readRate(value, label) {
+function readRate(value: unknown, label: string) {
   if (
     typeof value !== "number" ||
     !Number.isFinite(value) ||
@@ -91,7 +147,7 @@ function readRate(value, label) {
   return Number(value.toFixed(6));
 }
 
-function readLatency(value, label) {
+function readLatency(value: unknown, label: string) {
   if (value === null) {
     return null;
   }
@@ -101,11 +157,11 @@ function readLatency(value, label) {
   return Number(value.toFixed(3));
 }
 
-function readHistogram(value, label) {
+function readHistogram(value: unknown, label: string) {
   if (!isRecord(value)) {
     throw new Error(`Missing required histogram field: ${label}.`);
   }
-  const histogram = new Map();
+  const histogram = new Map<string, number>();
   for (const [key, rawCount] of Object.entries(value)) {
     histogram.set(
       String(key),
@@ -115,7 +171,7 @@ function readHistogram(value, label) {
   return histogram;
 }
 
-function readTimestampOrNull(value, label) {
+function readTimestampOrNull(value: unknown, label: string) {
   if (value === null) {
     return null;
   }
@@ -126,7 +182,11 @@ function readTimestampOrNull(value, label) {
   return timestamp;
 }
 
-function readTelemetryWindow(value, label, requestVolume) {
+function readTelemetryWindow(
+  value: unknown,
+  label: string,
+  requestVolume: number
+) {
   if (!isRecord(value)) {
     throw new Error(`Missing required object field: ${label}.`);
   }
@@ -161,11 +221,11 @@ function readTelemetryWindow(value, label, requestVolume) {
   return { start, end };
 }
 
-function readPerOperation(value, label) {
+function readPerOperation(value: unknown, label: string) {
   if (!isRecord(value)) {
     throw new Error(`Missing required object field: ${label}.`);
   }
-  const perOperation = new Map();
+  const perOperation = new Map<string, PerOperationMetrics>();
   for (const [operation, stats] of Object.entries(value)) {
     const prefix = `${label}.${operation}`;
     if (!isRecord(stats)) {
@@ -230,7 +290,10 @@ function readPerOperation(value, label) {
   return perOperation;
 }
 
-function readPilotSummary(summary, sourceLabel) {
+function readPilotSummary(
+  summary: unknown,
+  sourceLabel: string
+): ParsedPilotSummary {
   if (!isRecord(summary)) {
     throw new Error(`${sourceLabel} must be a JSON object.`);
   }
@@ -368,35 +431,39 @@ function readPilotSummary(summary, sourceLabel) {
   };
 }
 
-function parseFeedbackObject(record, index, sourceLabel) {
+function parseFeedbackObject(
+  record: unknown,
+  index: number,
+  sourceLabel: string
+): FeedbackEvent {
   if (!isRecord(record)) {
     throw new Error(
       `${sourceLabel} feedback entry ${index} must be a JSON object.`
     );
   }
 
-  const timestamp = toIsoTimestamp(record.timestamp);
+  const timestamp = toIsoTimestamp(record["timestamp"]);
   if (!timestamp) {
     throw new Error(
       `${sourceLabel} feedback entry ${index} is missing required RFC3339 timestamp.`
     );
   }
 
-  const category = normalizeSliceLabel(record.category, "");
+  const category = normalizeSliceLabel(record["category"], "");
   if (!category) {
     throw new Error(
       `${sourceLabel} feedback entry ${index} is missing required field: category.`
     );
   }
 
-  const severity = normalizeSliceLabel(record.severity, "");
+  const severity = normalizeSliceLabel(record["severity"], "");
   if (!severity) {
     throw new Error(
       `${sourceLabel} feedback entry ${index} is missing required field: severity.`
     );
   }
 
-  const action = normalizeSliceLabel(record.action, "none");
+  const action = normalizeSliceLabel(record["action"], "none");
 
   return {
     timestamp,
@@ -406,8 +473,12 @@ function parseFeedbackObject(record, index, sourceLabel) {
   };
 }
 
-function parseFeedbackLine(line, lineNumber, sourceLabel) {
-  let parsed;
+function parseFeedbackLine(
+  line: string,
+  lineNumber: number,
+  sourceLabel: string
+) {
+  let parsed: unknown;
   try {
     parsed = JSON.parse(line);
   } catch (error) {
@@ -420,15 +491,18 @@ function parseFeedbackLine(line, lineNumber, sourceLabel) {
 }
 
 export function parseFeedbackEvents(
-  source,
-  { allowInvalid = false, sourceLabel = "feedback" } = {}
+  source: unknown,
+  {
+    allowInvalid = false,
+    sourceLabel = "feedback",
+  }: { allowInvalid?: boolean; sourceLabel?: string } = {}
 ) {
   if (typeof allowInvalid !== "boolean") {
     throw new Error("allowInvalid option must be a boolean.");
   }
 
   if (Array.isArray(source)) {
-    const records = [];
+    const records: FeedbackEvent[] = [];
     let invalidCount = 0;
     for (let index = 0; index < source.length; index += 1) {
       try {
@@ -452,7 +526,7 @@ export function parseFeedbackEvents(
   if (trimmed.startsWith("[")) {
     let parsed;
     try {
-      parsed = JSON.parse(trimmed);
+      parsed = JSON.parse(trimmed) as unknown;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       throw new Error(
@@ -467,11 +541,11 @@ export function parseFeedbackEvents(
     return parseFeedbackEvents(parsed, { allowInvalid, sourceLabel });
   }
 
-  const records = [];
+  const records: FeedbackEvent[] = [];
   let invalidCount = 0;
   const lines = text.split(/\r?\n/u);
   for (let index = 0; index < lines.length; index += 1) {
-    const line = lines[index].trim();
+    const line = (lines[index] ?? "").trim();
     if (!line) {
       continue;
     }
@@ -487,7 +561,11 @@ export function parseFeedbackEvents(
   return attachInvalidCount(records, invalidCount);
 }
 
-function mergeHistogram(target, source, filter) {
+function mergeHistogram(
+  target: Map<string, number>,
+  source: Map<string, number>,
+  filter?: (key: string, count: number) => boolean
+) {
   for (const [key, count] of source.entries()) {
     if (filter && !filter(key, count)) {
       continue;
@@ -496,28 +574,33 @@ function mergeHistogram(target, source, filter) {
   }
 }
 
-function histogramToSortedObject(histogram) {
+function histogramToSortedObject(histogram: Map<string, number>) {
   const entries = [...histogram.entries()].sort((left, right) =>
     compareStrings(left[0], right[0])
   );
   return Object.fromEntries(entries);
 }
 
-function roundRate(count, total) {
+function roundRate(count: number, total: number) {
   if (total <= 0) {
     return 0;
   }
   return Number((count / total).toFixed(6));
 }
 
-function roundPerThousand(count, total) {
+function roundPerThousand(count: number, total: number) {
   if (total <= 0) {
     return 0;
   }
   return Number(((count * 1000) / total).toFixed(6));
 }
 
-function mergeWindow(currentStart, currentEnd, nextStart, nextEnd) {
+function mergeWindow(
+  currentStart: string | null,
+  currentEnd: string | null,
+  nextStart: string | null,
+  nextEnd: string | null
+) {
   let start = currentStart;
   let end = currentEnd;
 
@@ -531,14 +614,14 @@ function mergeWindow(currentStart, currentEnd, nextStart, nextEnd) {
   return { start, end };
 }
 
-function isRecallKey(key) {
+function isRecallKey(key: string) {
   return RECALL_KEY_PATTERN.test(key);
 }
 
 export function generatePilotKpiDashboard(
-  summaries,
-  feedbackRecords = [],
-  { allowInvalid = false } = {}
+  summaries: readonly unknown[],
+  feedbackRecords: readonly unknown[] & { invalidCount?: number } = [],
+  { allowInvalid = false }: GeneratePilotKpiDashboardOptions = {}
 ) {
   if (!Array.isArray(summaries) || summaries.length === 0) {
     throw new Error("Expected at least one pilot summary object.");
@@ -564,15 +647,15 @@ export function generatePilotKpiDashboard(
   let feedbackStart = null;
   let feedbackEnd = null;
 
-  const operationHistogram = new Map();
-  const failureCodeHistogram = new Map();
-  const policyDecisionHistogram = new Map();
-  const anomalyHistogram = new Map();
-  const teamHistogram = new Map();
-  const projectHistogram = new Map();
+  const operationHistogram = new Map<string, number>();
+  const failureCodeHistogram = new Map<string, number>();
+  const policyDecisionHistogram = new Map<string, number>();
+  const anomalyHistogram = new Map<string, number>();
+  const teamHistogram = new Map<string, number>();
+  const projectHistogram = new Map<string, number>();
 
-  const recallFailureCodeHistogram = new Map();
-  const recallAnomalyHistogram = new Map();
+  const recallFailureCodeHistogram = new Map<string, number>();
+  const recallAnomalyHistogram = new Map<string, number>();
   let recallRequestVolume = 0;
   let recallSuccessCount = 0;
   let recallFailureCount = 0;
@@ -601,8 +684,10 @@ export function generatePilotKpiDashboard(
     mergeHistogram(anomalyHistogram, summary.anomalyHistogram);
     mergeHistogram(teamHistogram, summary.teamHistogram);
     mergeHistogram(projectHistogram, summary.projectHistogram);
-    mergeHistogram(recallAnomalyHistogram, summary.anomalyHistogram, (key) =>
-      isRecallKey(key)
+    mergeHistogram(
+      recallAnomalyHistogram,
+      summary.anomalyHistogram,
+      (key: string) => isRecallKey(key)
     );
 
     for (const [operation, stats] of summary.perOperation.entries()) {
@@ -626,10 +711,12 @@ export function generatePilotKpiDashboard(
   }
 
   let feedbackCount = 0;
+  const feedbackInvalidCountRaw = Number(
+    (feedbackRecords as { invalidCount?: number }).invalidCount ?? 0
+  );
   let invalidFeedbackCount =
-    Number.isInteger(feedbackRecords.invalidCount) &&
-    feedbackRecords.invalidCount > 0
-      ? feedbackRecords.invalidCount
+    Number.isInteger(feedbackInvalidCountRaw) && feedbackInvalidCountRaw > 0
+      ? feedbackInvalidCountRaw
       : 0;
   let highSeverityCount = 0;
   let incidentCount = 0;
@@ -637,12 +724,12 @@ export function generatePilotKpiDashboard(
   let rollbackIncidentCount = 0;
   let qualityFeedbackCount = 0;
 
-  const categoryHistogram = new Map();
-  const severityHistogram = new Map();
-  const actionHistogram = new Map();
+  const categoryHistogram = new Map<string, number>();
+  const severityHistogram = new Map<string, number>();
+  const actionHistogram = new Map<string, number>();
 
   for (let index = 0; index < feedbackRecords.length; index += 1) {
-    let parsedFeedback;
+    let parsedFeedback: FeedbackEvent;
     try {
       parsedFeedback = parseFeedbackObject(
         feedbackRecords[index],
@@ -758,8 +845,8 @@ export function generatePilotKpiDashboard(
   };
 }
 
-function parseArgs(argv) {
-  const parsed = {
+function parseArgs(argv: readonly string[]): ParsedArgs {
+  const parsed: ParsedArgs = {
     input: [],
     feedback: [],
     output: "",
@@ -837,8 +924,8 @@ function printUsage() {
   );
 }
 
-async function readStdin() {
-  return new Promise((resolvePromise, reject) => {
+async function readStdin(): Promise<string> {
+  return new Promise<string>((resolvePromise, reject) => {
     let content = "";
     process.stdin.setEncoding("utf8");
     process.stdin.on("data", (chunk) => {
@@ -853,7 +940,7 @@ async function readStdin() {
   });
 }
 
-async function readInput(inputPath, ioState) {
+async function readInput(inputPath: string, ioState: IoState) {
   if (inputPath !== "-") {
     return readFileSync(resolve(process.cwd(), inputPath), "utf8");
   }
@@ -865,8 +952,8 @@ async function readInput(inputPath, ioState) {
   return ioState.stdinCache;
 }
 
-function parseSummaryInput(content, sourceLabel) {
-  let parsed;
+function parseSummaryInput(content: string, sourceLabel: string) {
+  let parsed: unknown;
   try {
     parsed = JSON.parse(content);
   } catch (error) {
@@ -879,21 +966,21 @@ function parseSummaryInput(content, sourceLabel) {
   return parsed;
 }
 
-export async function main(argv = process.argv.slice(2)) {
+export async function main(argv: readonly string[] = process.argv.slice(2)) {
   const parsedArgs = parseArgs(argv);
   if (parsedArgs.help) {
     printUsage();
     return 0;
   }
 
-  const ioState = { stdinConsumed: false, stdinCache: "" };
-  const summaries = [];
+  const ioState: IoState = { stdinConsumed: false, stdinCache: "" };
+  const summaries: JsonRecord[] = [];
   for (const inputPath of parsedArgs.input) {
     const rawSummary = await readInput(inputPath, ioState);
     summaries.push(parseSummaryInput(rawSummary, inputPath));
   }
 
-  const feedbackRecords = [];
+  const feedbackRecords: FeedbackEvent[] = [];
   let feedbackInvalidCount = 0;
   for (const feedbackPath of parsedArgs.feedback) {
     const rawFeedback = await readInput(feedbackPath, ioState);

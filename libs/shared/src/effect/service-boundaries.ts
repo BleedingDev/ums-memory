@@ -5,6 +5,10 @@ import {
   noopAuthorizationLayer,
 } from "./services/authorization-service.js";
 import {
+  deterministicTestEnterpriseIdentityLayer,
+  noopEnterpriseIdentityLayer,
+} from "./services/enterprise-identity-service.js";
+import {
   deterministicTestEvaluationLayer,
   noopEvaluationLayer,
 } from "./services/evaluation-service.js";
@@ -16,6 +20,10 @@ import {
   deterministicTestMemoryLifecycleLayer,
   noopMemoryLifecycleLayer,
 } from "./services/lifecycle-service.js";
+import {
+  deterministicTestNcmHybridLayer,
+  noopNcmHybridLayer,
+} from "./services/ncm-hybrid-service.js";
 import {
   deterministicTestPolicyPackPluginLayer,
   noopPolicyPackPluginLayer,
@@ -46,7 +54,9 @@ export const serviceBoundariesLayer = Layer.mergeAll(
   noopPolicyLayer,
   noopIngestionLayer,
   noopMemoryLifecycleLayer,
-  noopTenantRoutingLayer
+  noopNcmHybridLayer,
+  noopTenantRoutingLayer,
+  noopEnterpriseIdentityLayer
 );
 
 export const deterministicTestServiceBoundariesLayer = Layer.mergeAll(
@@ -58,5 +68,7 @@ export const deterministicTestServiceBoundariesLayer = Layer.mergeAll(
   deterministicTestPolicyLayer,
   deterministicTestIngestionLayer,
   deterministicTestMemoryLifecycleLayer,
-  deterministicTestTenantRoutingLayer
+  deterministicTestNcmHybridLayer,
+  deterministicTestTenantRoutingLayer,
+  deterministicTestEnterpriseIdentityLayer
 );

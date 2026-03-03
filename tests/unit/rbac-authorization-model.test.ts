@@ -13,7 +13,7 @@ import { pathToFileURL } from "node:url";
 import { Effect as EffectOriginal } from "effect";
 import ts from "typescript";
 
-const either = (effect) =>
+const either = (effect: any) =>
   EffectOriginal.result(effect).pipe(
     EffectOriginal.map((result) =>
       result._tag === "Failure"
@@ -22,14 +22,14 @@ const either = (effect) =>
     )
   );
 
-const Effect = { ...EffectOriginal, either };
+const Effect: any = { ...EffectOriginal, either };
 
 const effectModuleDirectory = new URL(
   "../../libs/shared/src/effect/",
   import.meta.url
 );
 
-const transpileEffectModule = (sourceFilename, tempDirectory) => {
+const transpileEffectModule = (sourceFilename: any, tempDirectory: any) => {
   const sourceFileUrl = new URL(sourceFilename, effectModuleDirectory);
   const source = readFileSync(sourceFileUrl, "utf8");
   const transpiled = ts.transpileModule(source, {
@@ -77,8 +77,8 @@ const transpileManifest = Object.freeze([
   "services/authorization-service.ts",
 ]);
 
-let modulesPromise;
-let transpiledDirectoryPath;
+let modulesPromise: any;
+let transpiledDirectoryPath: any;
 
 const loadAuthorizationModules = async () => {
   if (!modulesPromise) {
@@ -117,7 +117,7 @@ process.on("exit", () => {
   }
 });
 
-const evaluate = (service, request) =>
+const evaluate = (service: any, request: any) =>
   Effect.runPromise(service.evaluate(request));
 
 test("ums-memory-a9v.1: admin is allowed to run privileged policy override action", async () => {
@@ -256,7 +256,7 @@ test("ums-memory-a9v.1: deterministicAuthorizationLayer provides zeroed evaluati
     Effect.provide(
       Effect.flatMap(
         Effect.service(authorizationServiceModule.AuthorizationServiceTag),
-        (service) =>
+        (service: any) =>
           service.evaluate({
             role: "admin",
             action: "memory.read",
@@ -269,7 +269,7 @@ test("ums-memory-a9v.1: deterministicAuthorizationLayer provides zeroed evaluati
   assert.equal(decision.evaluatedAtMillis, 0);
 });
 
-test("ums-memory-a9v.1: unknown role/action inputs fail closed without throwing", async () => {
+test("ums-memory-a9v.1: any role/action inputs fail closed without throwing", async () => {
   const { authorizationServiceModule } = await loadAuthorizationModules();
   const service =
     authorizationServiceModule.makeDeterministicAuthorizationService();

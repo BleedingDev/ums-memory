@@ -15,20 +15,20 @@ const UNSAFE_PATTERNS = Object.freeze([
   /\bexfiltrate\b/i,
 ]);
 
-function estimateTokens(content) {
+function estimateTokens(content: any) {
   return Math.max(1, Math.ceil(String(content).length / 4));
 }
 
-function sha256(input) {
+function sha256(input: any) {
   return createHash("sha256").update(String(input)).digest("hex");
 }
 
-function hashToUnit(input) {
+function hashToUnit(input: any) {
   const hex = sha256(input).slice(0, 12);
   return Number.parseInt(hex, 16) / 0xffffffffffff;
 }
 
-function normalizeTimestamp(value) {
+function normalizeTimestamp(value: any) {
   if (!value) {
     return "1970-01-01T00:00:00.000Z";
   }
@@ -39,31 +39,34 @@ function normalizeTimestamp(value) {
   return date.toISOString();
 }
 
-function normalizeText(value) {
+function normalizeText(value: any) {
   if (value == null) {
     return "";
   }
   return String(value).trim();
 }
 
-function stableStringify(value) {
+function stableStringify(value: unknown): string {
   if (value === null || typeof value !== "object") {
-    return JSON.stringify(value);
+    return JSON.stringify(value) ?? "null";
   }
 
   if (Array.isArray(value)) {
-    const serializedItems = value.map((item) => stableStringify(item));
+    const serializedItems: string[] = value.map((item) =>
+      stableStringify(item)
+    );
     return `[${serializedItems.join(",")}]`;
   }
 
-  const keys = Object.keys(value).sort();
-  const serializedPairs = keys.map(
-    (key) => `${JSON.stringify(key)}:${stableStringify(value[key])}`
+  const record = value as Record<string, unknown>;
+  const keys = Object.keys(record).sort();
+  const serializedPairs: string[] = keys.map(
+    (key) => `${JSON.stringify(key)}:${stableStringify(record[key])}`
   );
   return `{${serializedPairs.join(",")}}`;
 }
 
-function tokenize(text) {
+function tokenize(text: any) {
   return new Set(
     normalizeText(text)
       .toLowerCase()
@@ -72,14 +75,14 @@ function tokenize(text) {
   );
 }
 
-function compareEvents(a, b) {
+function compareEvents(a: any, b: any) {
   if (a.timestamp !== b.timestamp) {
     return b.timestamp.localeCompare(a.timestamp);
   }
   return a.id.localeCompare(b.id);
 }
 
-function redactSecrets(content) {
+function redactSecrets(content: any) {
   let output = String(content);
   let count = 0;
 
@@ -104,7 +107,7 @@ function redactSecrets(content) {
   return { text: output, count };
 }
 
-function createSyntheticId(event) {
+function createSyntheticId(event: any) {
   const fingerprint = stableStringify({
     space: event.space,
     source: event.source,
@@ -116,7 +119,7 @@ function createSyntheticId(event) {
   return `evt-${sha256(fingerprint).slice(0, 16)}`;
 }
 
-function normalizeEvent(rawEvent, defaultSpace) {
+function normalizeEvent(rawEvent: any, defaultSpace: any) {
   if (!rawEvent || typeof rawEvent !== "object") {
     return null;
   }
@@ -139,11 +142,11 @@ function normalizeEvent(rawEvent, defaultSpace) {
   const timestamp = normalizeTimestamp(
     rawEvent.timestamp || rawEvent.createdAt || rawEvent.occurredAt
   );
-  const source = normalizeText(rawEvent.source) || "unknown";
+  const source = normalizeText(rawEvent.source) || "any";
   const tags = Array.isArray(rawEvent.tags)
     ? [
         ...new Set(
-          rawEvent.tags.map((tag) => normalizeText(tag)).filter(Boolean)
+          rawEvent.tags.map((tag: any) => normalizeText(tag)).filter(Boolean)
         ),
       ].sort()
     : [];
@@ -170,7 +173,7 @@ function normalizeEvent(rawEvent, defaultSpace) {
   return normalized;
 }
 
-function eventScore(query, event, seed) {
+function eventScore(query: any, event: any, seed: any) {
   const queryTokens = tokenize(query);
   const contentTokens = tokenize(event.content);
   let overlap = 0;
@@ -184,7 +187,7 @@ function eventScore(query, event, seed) {
   return overlap + tieBreaker;
 }
 
-function clampInteger(value, min, max, fallback) {
+function clampInteger(value: any, min: any, max: any, fallback: any) {
   const numeric = Number.parseInt(String(value), 10);
   if (Number.isNaN(numeric)) {
     return fallback;
@@ -192,14 +195,14 @@ function clampInteger(value, min, max, fallback) {
   return Math.max(min, Math.min(max, numeric));
 }
 
-function getBucket(spaces, space) {
+function getBucket(spaces: any, space: any) {
   if (!spaces.has(space)) {
     spaces.set(space, new Map());
   }
   return spaces.get(space);
 }
 
-function exportEvent(record) {
+function exportEvent(record: any) {
   return {
     id: record.id,
     space: record.space,
@@ -212,7 +215,7 @@ function exportEvent(record) {
   };
 }
 
-function importSnapshot(spaces, snapshot, defaultSpace) {
+function importSnapshot(spaces: any, snapshot: any, defaultSpace: any) {
   if (
     !snapshot ||
     typeof snapshot !== "object" ||
@@ -250,7 +253,12 @@ function importSnapshot(spaces, snapshot, defaultSpace) {
   }
 }
 
-export function createUmsEngine(options = {}) {
+type CreateUmsEngineOptions = Partial<typeof DEFAULTS> & {
+  readonly unsafePatterns?: readonly RegExp[];
+  readonly initialState?: unknown;
+};
+
+export function createUmsEngine(options: CreateUmsEngineOptions = {}) {
   const config = { ...DEFAULTS, ...options };
   const unsafePatterns = options.unsafePatterns ?? UNSAFE_PATTERNS;
   const spaces = new Map();
@@ -265,7 +273,7 @@ export function createUmsEngine(options = {}) {
     return total;
   }
 
-  function ingest(input) {
+  function ingest(input: any) {
     const events = Array.isArray(input) ? input : [input];
     let accepted = 0;
     let duplicates = 0;
@@ -287,7 +295,7 @@ export function createUmsEngine(options = {}) {
       }
 
       const redaction = redactSecrets(normalized.content);
-      const unsafeInstruction = unsafePatterns.some((pattern) =>
+      const unsafeInstruction = unsafePatterns.some((pattern: any) =>
         pattern.test(redaction.text)
       );
       if (unsafeInstruction) {
@@ -320,26 +328,27 @@ export function createUmsEngine(options = {}) {
     };
   }
 
-  function recall(request = {}) {
-    const payload = typeof request === "string" ? { query: request } : request;
-    const space = normalizeText(payload.space || config.defaultSpace);
-    const query = normalizeText(payload.query || payload.text);
-    const includeUnsafe = Boolean(payload.includeUnsafe);
+  function recall(request: string | Record<string, unknown> = {}) {
+    const payload: Record<string, unknown> =
+      typeof request === "string" ? { query: request } : request;
+    const space = normalizeText(payload["space"] ?? config.defaultSpace);
+    const query = normalizeText(payload["query"] ?? payload["text"]);
+    const includeUnsafe = Boolean(payload["includeUnsafe"]);
     const maxItems = clampInteger(
-      payload.maxItems,
+      payload["maxItems"],
       1,
       config.maxMaxItems,
       config.defaultMaxItems
     );
     const tokenBudget = clampInteger(
-      payload.tokenBudget,
+      payload["tokenBudget"],
       1,
       config.maxTokenBudget,
       config.defaultTokenBudget
     );
 
     const bucket = spaces.get(space) ?? new Map();
-    const ranked = [];
+    const ranked: any[] = [];
     let filteredUnsafe = 0;
 
     for (const event of bucket.values()) {
@@ -360,7 +369,7 @@ export function createUmsEngine(options = {}) {
       return compareEvents(a.event, b.event);
     });
 
-    const items = [];
+    const items: any[] = [];
     let estimatedTokens = 0;
 
     for (const rankedEvent of ranked) {
@@ -406,7 +415,7 @@ export function createUmsEngine(options = {}) {
     };
   }
 
-  function getEventCount(space) {
+  function getEventCount(space: any) {
     if (space) {
       return (spaces.get(space) ?? new Map()).size;
     }

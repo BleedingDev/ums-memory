@@ -89,18 +89,22 @@ test("integration: multi-store isolation for jira and coding-agent memories", as
 
   assert.ok(jiraRecall.items.length >= 1);
   assert.ok(codingRecall.items.length >= 1);
-  assert.ok(crossLeak.items.every((item) => item.storeId === "coding-agent"));
+  assert.ok(
+    crossLeak.items.every((item: any) => item.storeId === "coding-agent")
+  );
   assert.ok(
     crossLeak.items.every(
-      (item) =>
+      (item: any) =>
         !item.content
           .toLowerCase()
           .includes("customer reports midnight latency spikes")
     )
   );
-  assert.ok(jiraRecall.items.every((item) => item.storeId === "jira-history"));
   assert.ok(
-    codingRecall.items.every((item) => item.storeId === "coding-agent")
+    jiraRecall.items.every((item: any) => item.storeId === "jira-history")
+  );
+  assert.ok(
+    codingRecall.items.every((item: any) => item.storeId === "coding-agent")
   );
 
   assert.equal(engine.getEventCount(undefined, "jira-history"), 2);

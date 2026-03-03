@@ -4,23 +4,42 @@ import { resolve } from "node:path";
 
 const DEFAULT_TARGETS = ["bun-linux-x64", "bun-windows-x64"];
 const DEFAULT_APPS = ["single"];
-const SUPPORTED_APPS = new Map([
+const SUPPORTED_APPS = new Map<
+  string,
+  {
+    readonly entry: string;
+    readonly artifact: string;
+  }
+>([
   ["single", { entry: "apps/ums/src/index.ts", artifact: "ums" }],
   ["cli", { entry: "apps/cli/src/index.ts", artifact: "ums-cli" }],
   ["api", { entry: "apps/api/src/server.ts", artifact: "ums-api" }],
 ]);
 
-function parseCsv(value) {
+interface ParsedArgs {
+  targets: string[];
+  apps: string[];
+  outdir: string;
+  help: boolean;
+}
+
+interface BunBuildRequest {
+  readonly target: string;
+  readonly entry: string;
+  readonly outfile: string;
+}
+
+function parseCsv(value: string): string[] {
   return value
     .split(",")
     .map((entry) => entry.trim())
     .filter(Boolean);
 }
 
-function parseArgs(argv) {
-  const parsed = {
-    targets: DEFAULT_TARGETS,
-    apps: DEFAULT_APPS,
+function parseArgs(argv: readonly string[]): ParsedArgs {
+  const parsed: ParsedArgs = {
+    targets: [...DEFAULT_TARGETS],
+    apps: [...DEFAULT_APPS],
     outdir: "dist",
     help: false,
   };
@@ -91,11 +110,11 @@ function printUsage() {
   );
 }
 
-function extensionForTarget(target) {
+function extensionForTarget(target: string): string {
   return target.includes("windows") ? ".exe" : "";
 }
 
-function runBunBuild({ target, entry, outfile }) {
+function runBunBuild({ target, entry, outfile }: BunBuildRequest): void {
   const args = [
     "build",
     "--compile",
@@ -127,12 +146,15 @@ async function main(argv = process.argv.slice(2)) {
     return 0;
   }
 
-  const outputs = [];
+  const outputs: string[] = [];
   for (const target of parsed.targets) {
     const targetDir = resolve(parsed.outdir, target);
     await mkdir(targetDir, { recursive: true });
     for (const appName of parsed.apps) {
       const app = SUPPORTED_APPS.get(appName);
+      if (app === undefined) {
+        throw new Error(`Unsupported app '${appName}'.`);
+      }
       const outfile = resolve(
         targetDir,
         `${app.artifact}${extensionForTarget(target)}`

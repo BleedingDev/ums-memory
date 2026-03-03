@@ -37,14 +37,14 @@ function validateAllowJsPolicy(): void {
     failures.push("tsconfig.base.json must contain a JSON object root.");
     return;
   }
-  const compilerOptions = parsed.compilerOptions;
+  const compilerOptions = parsed["compilerOptions"];
   if (!isRecord(compilerOptions)) {
     failures.push(
       "tsconfig.base.json must define compilerOptions for strict policy validation."
     );
     return;
   }
-  if (compilerOptions.allowJs !== false) {
+  if (compilerOptions["allowJs"] !== false) {
     failures.push(
       "tsconfig.base.json compilerOptions.allowJs must be false for TS-only runtime policy."
     );
@@ -58,12 +58,12 @@ function validateRuntimeProjectTsconfig(path: string): void {
     return;
   }
 
-  const compilerOptions = parsed.compilerOptions;
-  if (isRecord(compilerOptions) && compilerOptions.allowJs === true) {
+  const compilerOptions = parsed["compilerOptions"];
+  if (isRecord(compilerOptions) && compilerOptions["allowJs"] === true) {
     failures.push(`${path} must not override compilerOptions.allowJs=true.`);
   }
 
-  const include = parsed.include;
+  const include = parsed["include"];
   if (!Array.isArray(include) || include.length === 0) {
     failures.push(`${path} must define a non-empty include array.`);
     return;

@@ -8,23 +8,47 @@ const RESULT_SCHEMA_VERSION = "legacy_runtime_cutover_validation.v1";
 const SOURCE_DIRECTORIES = ["apps", "libs", "scripts", "tests", "benchmarks"];
 const SOURCE_EXTENSIONS = new Set([".ts", ".tsx", ".mts", ".cts"]);
 
-function compareStrings(left, right) {
+interface LegacyImportEdge {
+  readonly importer: string;
+  readonly target: string;
+}
+
+interface ParsedArgs {
+  projectRoot: string;
+  inventoryPath: string;
+  json: boolean;
+  help: boolean;
+}
+
+interface LegacyRuntimeCutoverValidationResult {
+  readonly schemaVersion: string;
+  readonly projectRoot: string;
+  readonly inventoryPath: string;
+  readonly legacyShimCount: number;
+  readonly inventoryMustBeEmpty: boolean;
+  readonly legacyImportEdgeCount: number;
+  readonly strictTypeScriptViolations: readonly LegacyImportEdge[];
+  readonly unexpectedLegacyImporters: readonly LegacyImportEdge[];
+  readonly ok: boolean;
+}
+
+function compareStrings(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0;
 }
 
-function normalizePath(filePath) {
+function normalizePath(filePath: string): string {
   return filePath.split(path.sep).join("/");
 }
 
-function toProjectRelativePath(projectRoot, filePath) {
+function toProjectRelativePath(projectRoot: string, filePath: string): string {
   return normalizePath(path.relative(projectRoot, filePath));
 }
 
-function isRecord(value) {
+function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
-async function pathExists(targetPath) {
+async function pathExists(targetPath: string): Promise<boolean> {
   try {
     await access(targetPath, fsConstants.F_OK);
     return true;
@@ -33,7 +57,7 @@ async function pathExists(targetPath) {
   }
 }
 
-async function readInventoryPaths(inventoryPath) {
+async function readInventoryPaths(inventoryPath: string): Promise<string[]> {
   const raw = await readFile(inventoryPath, "utf8");
 
   let parsed;
@@ -49,22 +73,23 @@ async function readInventoryPaths(inventoryPath) {
   if (!isRecord(parsed)) {
     throw new Error("Inventory root must be an object.");
   }
-  if (parsed.schemaVersion !== INVENTORY_SCHEMA_VERSION) {
+  if (parsed["schemaVersion"] !== INVENTORY_SCHEMA_VERSION) {
     throw new Error(
-      `Inventory schemaVersion must be "${INVENTORY_SCHEMA_VERSION}", received "${String(parsed.schemaVersion)}".`
+      `Inventory schemaVersion must be "${INVENTORY_SCHEMA_VERSION}", received "${String(parsed["schemaVersion"])}".`
     );
   }
-  if (!Array.isArray(parsed.entries)) {
+  if (!Array.isArray(parsed["entries"])) {
     throw new Error("Inventory entries must be an array.");
   }
 
-  const paths = [];
-  for (let index = 0; index < parsed.entries.length; index += 1) {
-    const entry = parsed.entries[index];
+  const paths: string[] = [];
+  for (let index = 0; index < parsed["entries"].length; index += 1) {
+    const entry = parsed["entries"][index];
     if (!isRecord(entry)) {
       throw new Error(`entries[${index}] must be a JSON object.`);
     }
-    const entryPath = typeof entry.path === "string" ? entry.path.trim() : "";
+    const entryPath =
+      typeof entry["path"] === "string" ? entry["path"].trim() : "";
     if (!entryPath) {
       throw new Error(`entries[${index}].path must be a non-empty string.`);
     }
@@ -74,7 +99,10 @@ async function readInventoryPaths(inventoryPath) {
   return [...new Set(paths)].sort(compareStrings);
 }
 
-async function walkDirectory(rootDirectory, fileVisitor) {
+async function walkDirectory(
+  rootDirectory: string,
+  fileVisitor: (filePath: string) => void | Promise<void>
+): Promise<void> {
   const exists = await pathExists(rootDirectory);
   if (!exists) {
     return;
@@ -103,8 +131,8 @@ async function walkDirectory(rootDirectory, fileVisitor) {
   }
 }
 
-async function collectSourceFiles(projectRoot) {
-  const files = [];
+async function collectSourceFiles(projectRoot: string): Promise<string[]> {
+  const files: string[] = [];
 
   for (const directory of SOURCE_DIRECTORIES) {
     await walkDirectory(path.resolve(projectRoot, directory), (entryPath) => {
@@ -120,9 +148,9 @@ async function collectSourceFiles(projectRoot) {
   );
 }
 
-function extractImportSpecifiers(sourceText) {
+function extractImportSpecifiers(sourceText: string): string[] {
   const normalizedSource = stripJavaScriptComments(sourceText);
-  const specifiers = [];
+  const specifiers: string[] = [];
   const patterns = [
     /\bimport\s+(?:[^"'()]*?\s+from\s+)?["']([^"']+)["']/gu,
     /\bexport\s+[^"'()]*?\s+from\s+["']([^"']+)["']/gu,
@@ -143,7 +171,7 @@ function extractImportSpecifiers(sourceText) {
   return specifiers;
 }
 
-function stripJavaScriptComments(sourceText) {
+function stripJavaScriptComments(sourceText: string): string {
   let index = 0;
   let state = "code";
   let output = "";
@@ -212,7 +240,11 @@ function stripJavaScriptComments(sourceText) {
   return output;
 }
 
-async function resolveImportTarget(projectRoot, importerPath, specifier) {
+async function resolveImportTarget(
+  projectRoot: string,
+  importerPath: string,
+  specifier: string
+): Promise<string | null> {
   if (!specifier.startsWith(".") && !specifier.startsWith("/")) {
     return null;
   }
@@ -245,7 +277,7 @@ async function resolveImportTarget(projectRoot, importerPath, specifier) {
   return null;
 }
 
-function isStrictTypeScriptPath(importerPath) {
+function isStrictTypeScriptPath(importerPath: string): boolean {
   const typeScriptExtension =
     importerPath.endsWith(".ts") ||
     importerPath.endsWith(".tsx") ||
@@ -257,7 +289,7 @@ function isStrictTypeScriptPath(importerPath) {
   );
 }
 
-function compareEdges(left, right) {
+function compareEdges(left: LegacyImportEdge, right: LegacyImportEdge): number {
   const importerDiff = compareStrings(left.importer, right.importer);
   if (importerDiff !== 0) {
     return importerDiff;
@@ -271,7 +303,10 @@ export async function validateLegacyRuntimeCutover({
     process.cwd(),
     "docs/migration/legacy-runtime-shim-inventory.v1.json"
   ),
-} = {}) {
+}: {
+  readonly projectRoot?: string;
+  readonly inventoryPath?: string;
+} = {}): Promise<LegacyRuntimeCutoverValidationResult> {
   const absoluteProjectRoot = path.resolve(projectRoot);
   const absoluteInventoryPath = path.resolve(inventoryPath);
   const inventoryPaths = await readInventoryPaths(absoluteInventoryPath);
@@ -279,7 +314,7 @@ export async function validateLegacyRuntimeCutover({
   const legacyPathSet = new Set(inventoryPaths);
   const sourceFiles = await collectSourceFiles(absoluteProjectRoot);
 
-  const legacyImportEdges = [];
+  const legacyImportEdges: LegacyImportEdge[] = [];
   for (const sourceFile of sourceFiles) {
     const sourceText = await readFile(sourceFile, "utf8");
     const specifiers = extractImportSpecifiers(sourceText);
@@ -330,7 +365,9 @@ export async function validateLegacyRuntimeCutover({
   };
 }
 
-function renderFailureSummary(result) {
+function renderFailureSummary(
+  result: LegacyRuntimeCutoverValidationResult
+): string {
   const lines = ["Legacy runtime cutover validation failed."];
   if (!result.inventoryMustBeEmpty) {
     lines.push(
@@ -367,8 +404,8 @@ function printUsage() {
   );
 }
 
-function parseArgs(argv) {
-  const parsed = {
+function parseArgs(argv: readonly string[]): ParsedArgs {
+  const parsed: ParsedArgs = {
     projectRoot: process.cwd(),
     inventoryPath: path.resolve(
       process.cwd(),
@@ -414,7 +451,7 @@ function parseArgs(argv) {
   return parsed;
 }
 
-export async function main(argv = process.argv.slice(2)) {
+export async function main(argv: readonly string[] = process.argv.slice(2)) {
   try {
     const args = parseArgs(argv);
     if (args.help) {

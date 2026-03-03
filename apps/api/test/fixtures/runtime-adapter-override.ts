@@ -1,26 +1,33 @@
 import { createHash } from "node:crypto";
 const SUPPORTED_OPERATIONS = Object.freeze(["context", "ingest"]);
 
-function stableSortObject(value) {
+function stableSortObject(value: unknown): unknown {
   if (Array.isArray(value)) {
     return value.map(stableSortObject);
   }
   if (value && typeof value === "object") {
-    const sorted = {};
+    const sorted: Record<string, any> = {};
     for (const key of Object.keys(value).sort()) {
-      sorted[key] = stableSortObject(value[key]);
+      const record = value as Record<string, unknown>;
+      sorted[key] = stableSortObject(record[key]);
     }
     return sorted;
   }
   return value;
 }
 
-function stableStringify(value) {
+function stableStringify(value: unknown): string {
   return JSON.stringify(stableSortObject(value));
 }
 
-function digest(value) {
+function digest(value: unknown): string {
   return createHash("sha256").update(stableStringify(value)).digest("hex");
+}
+
+interface RuntimeAdapterExecuteRequest {
+  readonly operation?: unknown;
+  readonly requestBody?: unknown;
+  readonly stateFile?: unknown;
 }
 
 export function createDeterministicRuntimeAdapter() {
@@ -28,14 +35,18 @@ export function createDeterministicRuntimeAdapter() {
     listOperations() {
       return [...SUPPORTED_OPERATIONS];
     },
-    async executeOperation({ operation, requestBody, stateFile }) {
+    async executeOperation({
+      operation,
+      requestBody,
+      stateFile,
+    }: RuntimeAdapterExecuteRequest) {
       const normalizedOperation = String(operation ?? "")
         .trim()
         .toLowerCase();
       if (!SUPPORTED_OPERATIONS.includes(normalizedOperation)) {
         const error = new Error(
           `Unsupported operation: ${normalizedOperation}`
-        );
+        ) as Error & { code?: string };
         error.code = "UNSUPPORTED_OPERATION";
         throw error;
       }

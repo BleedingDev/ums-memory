@@ -11,11 +11,11 @@ const TOPICS = Object.freeze([
   "freshness revalidation cadence",
 ]);
 
-function makeTimestamp(baseTimeMs, index, intervalMs) {
+function makeTimestamp(baseTimeMs: any, index: any, intervalMs: any) {
   return new Date(baseTimeMs + index * intervalMs).toISOString();
 }
 
-function deterministicSecret(index) {
+function deterministicSecret(index: any) {
   return `sk-${String(index).padStart(12, "0")}ABCDE`;
 }
 
@@ -28,10 +28,10 @@ export function buildSyntheticEvents({
   baseIso = "2026-01-01T00:00:00.000Z",
 } = {}) {
   const baseTimeMs = new Date(baseIso).valueOf();
-  const events = [];
+  const events: any[] = [];
 
   for (let index = 0; index < count; index += 1) {
-    const topic = TOPICS[index % TOPICS.length];
+    const topic = TOPICS[index % TOPICS.length] ?? "generic-topic";
     let content = `${topic} :: deterministic event ${index} in ${space}`;
 
     if (includeSecrets && index % 11 === 0) {
@@ -59,14 +59,14 @@ export function buildSyntheticEvents({
 }
 
 export function buildSyntheticQueries(count = 60) {
-  const queries = [];
+  const queries: any[] = [];
   for (let index = 0; index < count; index += 1) {
     queries.push(TOPICS[index % TOPICS.length]);
   }
   return queries;
 }
 
-export function percentile(values, percentileValue) {
+export function percentile(values: any, percentileValue: any) {
   if (!Array.isArray(values) || values.length === 0) {
     return 0;
   }

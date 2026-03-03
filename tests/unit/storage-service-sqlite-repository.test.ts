@@ -17,7 +17,9 @@ import { pathToFileURL } from "node:url";
 import { Effect as EffectOriginal } from "effect";
 import ts from "typescript";
 
-const either = (effect) =>
+import { ContractValidationError } from "../../libs/shared/src/effect/errors.ts";
+
+const either = (effect: any) =>
   EffectOriginal.result(effect).pipe(
     EffectOriginal.map((result) =>
       result._tag === "Failure"
@@ -26,14 +28,14 @@ const either = (effect) =>
     )
   );
 
-const Effect = { ...EffectOriginal, either };
+const Effect: any = { ...EffectOriginal, either };
 
 const effectModuleDirectory = new URL(
   "../../libs/shared/src/effect/",
   import.meta.url
 );
 
-const transpileEffectModule = (sourceFilename, tempDirectory) => {
+const transpileEffectModule = (sourceFilename: any, tempDirectory: any) => {
   const sourceFileUrl = new URL(sourceFilename, effectModuleDirectory);
   const source = readFileSync(sourceFileUrl, "utf8");
   const transpiled = ts.transpileModule(source, {
@@ -88,8 +90,9 @@ const transpileManifest = Object.freeze([
   "services/storage-service.ts",
 ]);
 
-let storageServiceModulePromise;
-let transpiledDirectoryPath;
+let storageServiceModulePromise: any;
+let storageRepositoryModulePromise: any;
+let transpiledDirectoryPath: any;
 
 const loadStorageServiceModule = async () => {
   if (!storageServiceModulePromise) {
@@ -112,13 +115,24 @@ const loadStorageServiceModule = async () => {
   return storageServiceModulePromise;
 };
 
+const loadStorageRepositoryModule = async () => {
+  await loadStorageServiceModule();
+  if (!storageRepositoryModulePromise) {
+    const moduleUrl = pathToFileURL(
+      join(transpiledDirectoryPath, "storage/sqlite/storage-repository.js")
+    ).href;
+    storageRepositoryModulePromise = import(moduleUrl);
+  }
+  return storageRepositoryModulePromise;
+};
+
 process.on("exit", () => {
   if (transpiledDirectoryPath) {
     rmSync(transpiledDirectoryPath, { recursive: true, force: true });
   }
 });
 
-const unwrapFailure = (eitherResult) => {
+const unwrapFailure = (eitherResult: any) => {
   assert.equal(eitherResult?._tag, "Left");
   return eitherResult.left;
 };
@@ -129,18 +143,61 @@ const redactedTokenPatternByCategory = Object.freeze({
   PHONE: /^\[REDACTED_PHONE:[0-9a-f]{12,64}\]$/,
 });
 
-const containsRedactedTokenCategory = (text, category) =>
+const containsRedactedTokenCategory = (text: any, category: any) =>
   text.includes(`[REDACTED_${category}:`);
 
-const toSha256Hex = (value) => createHash("sha256").update(value).digest("hex");
+const toSha256Hex = (value: any) =>
+  createHash("sha256").update(value).digest("hex");
 const sqlitePayloadEncryptionEnvelopeFormat =
   "ums-memory/sqlite-memory-payload-encrypted/v1";
 const sqlitePayloadEncryptionEnvelopeAlgorithm = "aes-256-gcm";
 
-const toBase64EncryptionKey = (seedByte) =>
+interface ScopeLatticeAnchorOptions {
+  readonly projectIds?: readonly string[];
+  readonly roleIds?: readonly string[];
+  readonly userIds?: readonly string[];
+}
+
+type CanonicalJsonValue =
+  | null
+  | boolean
+  | number
+  | string
+  | CanonicalJsonValue[]
+  | { readonly [key: string]: CanonicalJsonValue };
+
+interface ContractErrorShape {
+  readonly _tag?: string;
+  readonly contract?: string;
+  readonly details?: string;
+  readonly message?: string;
+}
+
+interface BackupReplicationMetadata {
+  readonly sequence: number;
+  readonly trigger: string;
+  readonly createdAtMillis: number;
+  readonly snapshotFilename: string;
+  readonly snapshotPath: string;
+  readonly retainedSnapshotCount: number;
+  readonly deletedSnapshotFilenames: readonly string[];
+}
+
+interface BackupReplicationController {
+  readonly stop: () => void;
+  readonly isRunning: () => boolean;
+  readonly replicateNow: (
+    trigger?: "manual" | "interval"
+  ) => BackupReplicationMetadata;
+}
+
+const asContractErrorShape = (value: unknown): ContractErrorShape =>
+  value && typeof value === "object" ? (value as ContractErrorShape) : {};
+
+const toBase64EncryptionKey = (seedByte: any) =>
   Buffer.alloc(32, seedByte).toString("base64");
 
-const readEncryptedPayloadEnvelope = (payloadJson) => {
+const readEncryptedPayloadEnvelope = (payloadJson: any) => {
   const parsedEnvelope = JSON.parse(payloadJson);
   assert.equal(parsedEnvelope.format, sqlitePayloadEncryptionEnvelopeFormat);
   assert.equal(parsedEnvelope.version, 1);
@@ -156,27 +213,32 @@ const readEncryptedPayloadEnvelope = (payloadJson) => {
   return parsedEnvelope;
 };
 
-const toCanonicalJsonValue = (value) => {
+const toCanonicalJsonValue = (value: unknown): CanonicalJsonValue => {
   if (Array.isArray(value)) {
     return value.map((entry) => toCanonicalJsonValue(entry));
   }
   if (value !== null && typeof value === "object") {
+    const record = value as Record<string, unknown>;
     return Object.fromEntries(
-      Object.keys(value)
+      Object.keys(record)
         .sort((left, right) => left.localeCompare(right))
-        .map((key) => [key, toCanonicalJsonValue(value[key])])
-    );
+        .map((key) => [key, toCanonicalJsonValue(record[key])])
+    ) as CanonicalJsonValue;
   }
-  return value;
+  return value as CanonicalJsonValue;
 };
 
-const toCanonicalPayloadJson = (payload) =>
+const toCanonicalPayloadJson = (payload: any) =>
   JSON.stringify(toCanonicalJsonValue(payload));
 
 const seedScopeLatticeAnchors = (
-  db,
-  tenantId,
-  { projectIds = [], roleIds = [], userIds = [] } = {}
+  db: any,
+  tenantId: any,
+  {
+    projectIds = [],
+    roleIds = [],
+    userIds = [],
+  }: ScopeLatticeAnchorOptions = {}
 ) => {
   const now = 1_700_000_000_000;
   db.prepare(
@@ -232,12 +294,12 @@ const createDeterministicIntervalScheduler = () => {
   const callbacksByHandle = new Map();
   return {
     scheduler: {
-      setInterval: (task) => {
+      setInterval: (task: any) => {
         nextHandle += 1;
         callbacksByHandle.set(nextHandle, task);
         return nextHandle;
       },
-      clearInterval: (handle) => {
+      clearInterval: (handle: any) => {
         if (typeof handle === "number") {
           callbacksByHandle.delete(handle);
         }
@@ -611,6 +673,377 @@ test("ums-memory-i6m.3: storage upsert rejects provenance envelopes with mismatc
       upsertFailure.details,
       /tenantId .* must match request\.spaceId/i
     );
+  } finally {
+    db.close();
+  }
+});
+
+test("ums-memory-i6m.4: storage upsert enforces provenance-required policy for enterprise writes", async () => {
+  const storageServiceModule = await loadStorageServiceModule();
+  const db = new DatabaseSync(":memory:");
+
+  try {
+    const tenantId = "tenant-i6m4-provenance-policy";
+    const storageService = storageServiceModule.makeSqliteStorageService(db, {
+      provenancePolicy: {
+        requireOnWrite: true,
+        requiredDimensions: ["agentId", "sourceId"],
+      },
+    });
+
+    const missingEnvelope = Effect.runSync(
+      Effect.either(
+        storageService.upsertMemory({
+          spaceId: tenantId,
+          memoryId: "memory-i6m4-missing-envelope",
+          layer: "episodic",
+          payload: {
+            title: "Provenance envelope missing should fail policy",
+            updatedAtMillis: 1_700_000_021_350,
+          },
+        })
+      )
+    );
+    const missingEnvelopeFailure = unwrapFailure(missingEnvelope);
+    assert.equal(missingEnvelopeFailure._tag, "ContractValidationError");
+    assert.match(
+      missingEnvelopeFailure.details,
+      /payload\.provenance is required for enterprise writes/i
+    );
+
+    const missingRequiredDimension = Effect.runSync(
+      Effect.either(
+        storageService.upsertMemory({
+          spaceId: tenantId,
+          memoryId: "memory-i6m4-missing-dimension",
+          layer: "episodic",
+          payload: {
+            title: "Provenance sourceId missing should fail policy",
+            provenance: {
+              tenantId,
+              agentId: "agent-i6m4",
+            },
+            updatedAtMillis: 1_700_000_021_360,
+          },
+        })
+      )
+    );
+    const missingRequiredDimensionFailure = unwrapFailure(
+      missingRequiredDimension
+    );
+    assert.equal(
+      missingRequiredDimensionFailure._tag,
+      "ContractValidationError"
+    );
+    assert.match(
+      missingRequiredDimensionFailure.details,
+      /payload\.provenance\.sourceId is required/i
+    );
+
+    const accepted = Effect.runSync(
+      storageService.upsertMemory({
+        spaceId: tenantId,
+        memoryId: "memory-i6m4-accepted",
+        layer: "episodic",
+        payload: {
+          title: "Provenance policy accepted write",
+          provenance: {
+            tenantId,
+            agentId: "agent-i6m4",
+            sourceId: "source-i6m4",
+          },
+          updatedAtMillis: 1_700_000_021_370,
+        },
+      })
+    );
+    assert.equal(accepted.accepted, true);
+  } finally {
+    db.close();
+  }
+});
+
+test("ums-memory-i6m.8: sqlite repository runOnInit backfills provenance rows deterministically for legacy records", async () => {
+  const storageServiceModule = await loadStorageServiceModule();
+  const db = new DatabaseSync(":memory:");
+
+  try {
+    const tenantId = "tenant-i6m8-backfill";
+    const memoryId = "memory-i6m8-legacy";
+    const storageService = storageServiceModule.makeSqliteStorageService(db);
+    seedScopeLatticeAnchors(db, tenantId, {
+      projectIds: ["project-i6m8"],
+      roleIds: ["role-i6m8"],
+      userIds: ["user-i6m8"],
+    });
+
+    Effect.runSync(
+      storageService.upsertMemory({
+        spaceId: tenantId,
+        memoryId,
+        layer: "procedural",
+        payload: {
+          title: "Legacy procedural memory without provenance envelope",
+          scope: {
+            projectId: "project-i6m8",
+            roleId: "role-i6m8",
+            userId: "user-i6m8",
+          },
+          evidencePointers: [
+            {
+              sourceKind: "event",
+              sourceRef: "event://evt-i6m8-a",
+              relationKind: "supports",
+            },
+          ],
+          updatedAtMillis: 1_700_000_021_380,
+        },
+      })
+    );
+
+    db.prepare(
+      "DELETE FROM memory_provenance_links WHERE tenant_id = ? AND memory_id = ?;"
+    ).run(tenantId, memoryId);
+    db.prepare(
+      [
+        "DELETE FROM evidence_provenance_links",
+        "WHERE tenant_id = ?",
+        "  AND provenance_id NOT IN (SELECT provenance_id FROM memory_provenance_links WHERE tenant_id = ?);",
+      ].join("\n")
+    ).run(tenantId, tenantId);
+    db.prepare(
+      "DELETE FROM provenance_envelopes WHERE tenant_id = ? AND provenance_id NOT IN (SELECT provenance_id FROM memory_provenance_links WHERE tenant_id = ?);"
+    ).run(tenantId, tenantId);
+
+    storageServiceModule.makeSqliteStorageService(db, {
+      applyMigrations: false,
+      provenanceBackfill: {
+        runOnInit: true,
+        defaultSourceIdPrefix: "legacy-backfill",
+        defaultBatchId: "batch-i6m8",
+      },
+    });
+
+    const provenanceRows = db
+      .prepare(
+        [
+          "SELECT p.provenance_id, p.source_id, p.batch_id, p.project_id, p.role_id, p.user_id",
+          "FROM provenance_envelopes p",
+          "INNER JOIN memory_provenance_links mpl ON mpl.tenant_id = p.tenant_id AND mpl.provenance_id = p.provenance_id",
+          "WHERE p.tenant_id = ? AND mpl.memory_id = ?",
+          "ORDER BY p.provenance_id ASC;",
+        ].join("\n")
+      )
+      .all(tenantId, memoryId);
+    assert.equal(provenanceRows.length, 1);
+    assert.equal(provenanceRows[0].source_id, `legacy-backfill:${memoryId}`);
+    assert.equal(provenanceRows[0].batch_id, "batch-i6m8");
+    assert.equal(provenanceRows[0].project_id, "project-i6m8");
+    assert.equal(provenanceRows[0].role_id, "role-i6m8");
+    assert.equal(provenanceRows[0].user_id, "user-i6m8");
+
+    const evidenceLinkRows = db
+      .prepare(
+        [
+          "SELECT e.source_ref, epl.provenance_id",
+          "FROM evidence_provenance_links epl",
+          "INNER JOIN evidence e ON e.tenant_id = epl.tenant_id AND e.evidence_id = epl.evidence_id",
+          "WHERE epl.tenant_id = ?",
+          "ORDER BY e.source_ref ASC;",
+        ].join("\n")
+      )
+      .all(tenantId);
+    assert.equal(evidenceLinkRows.length, 1);
+    assert.equal(evidenceLinkRows[0].source_ref, "event://evt-i6m8-a");
+    assert.equal(
+      evidenceLinkRows[0].provenance_id,
+      provenanceRows[0].provenance_id
+    );
+
+    const auditRows = db
+      .prepare(
+        [
+          "SELECT details",
+          "FROM audit_events",
+          "WHERE tenant_id = ? AND memory_id = ? AND operation = 'upsert'",
+          "ORDER BY recorded_at_ms ASC;",
+        ].join("\n")
+      )
+      .all(tenantId, memoryId);
+    assert.ok(
+      auditRows.some((row) =>
+        String(row.details).startsWith("provenance_backfill:")
+      )
+    );
+  } finally {
+    db.close();
+  }
+});
+
+test("ums-memory-i6m.6: provenance health counters and alerts detect missing links, lineage breaks, and normalization rejects", async () => {
+  const storageServiceModule = await loadStorageServiceModule();
+  const storageRepositoryModule = await loadStorageRepositoryModule();
+  const db = new DatabaseSync(":memory:");
+
+  try {
+    const tenantId = "tenant-i6m6-health";
+    const storageService = storageServiceModule.makeSqliteStorageService(db);
+    seedScopeLatticeAnchors(db, tenantId, {
+      projectIds: ["project-i6m6"],
+      roleIds: ["role-i6m6"],
+      userIds: ["user-i6m6"],
+    });
+
+    Effect.runSync(
+      storageService.upsertMemory({
+        spaceId: tenantId,
+        memoryId: "memory-i6m6-missing-link",
+        layer: "procedural",
+        payload: {
+          title: "Memory that will lose memory_provenance_links row",
+          scope: {
+            projectId: "project-i6m6",
+            roleId: "role-i6m6",
+            userId: "user-i6m6",
+          },
+          provenance: {
+            tenantId,
+            projectId: "project-i6m6",
+            roleId: "role-i6m6",
+            userId: "user-i6m6",
+            agentId: "agent-i6m6-a",
+            sourceId: "source-i6m6-a",
+          },
+          evidencePointers: [
+            {
+              sourceKind: "event",
+              sourceRef: "event://evt-i6m6-a",
+              relationKind: "supports",
+            },
+          ],
+          updatedAtMillis: 1_700_000_022_000,
+        },
+      })
+    );
+
+    Effect.runSync(
+      storageService.upsertMemory({
+        spaceId: tenantId,
+        memoryId: "memory-i6m6-lineage-break",
+        layer: "procedural",
+        payload: {
+          title:
+            "Memory that will keep memory provenance but lose evidence provenance link",
+          scope: {
+            projectId: "project-i6m6",
+            roleId: "role-i6m6",
+            userId: "user-i6m6",
+          },
+          provenance: {
+            tenantId,
+            projectId: "project-i6m6",
+            roleId: "role-i6m6",
+            userId: "user-i6m6",
+            agentId: "agent-i6m6-b",
+            sourceId: "source-i6m6-b",
+          },
+          evidencePointers: [
+            {
+              sourceKind: "event",
+              sourceRef: "event://evt-i6m6-b",
+              relationKind: "supports",
+            },
+          ],
+          updatedAtMillis: 1_700_000_022_100,
+        },
+      })
+    );
+
+    db.prepare(
+      "DELETE FROM memory_provenance_links WHERE tenant_id = ? AND memory_id = ?;"
+    ).run(tenantId, "memory-i6m6-missing-link");
+    db.prepare(
+      [
+        "DELETE FROM evidence_provenance_links",
+        "WHERE tenant_id = ?",
+        "  AND evidence_id IN (",
+        "    SELECT evidence_id",
+        "    FROM memory_evidence_links",
+        "    WHERE tenant_id = ? AND memory_id = ?",
+        "  );",
+      ].join("\n")
+    ).run(tenantId, tenantId, "memory-i6m6-lineage-break");
+
+    const invalidEither = Effect.runSync(
+      Effect.either(
+        storageService.upsertMemory({
+          spaceId: tenantId,
+          memoryId: "memory-i6m6-reject",
+          layer: "working",
+          payload: {
+            title: "Invalid provenance reject sample",
+            provenance: {
+              tenantId: "tenant-other",
+              sourceId: "source-i6m6-reject",
+            },
+            updatedAtMillis: 1_700_000_022_200,
+          },
+        })
+      )
+    );
+    const invalidFailure = unwrapFailure(invalidEither);
+    assert.equal(invalidFailure._tag, "ContractValidationError");
+    assert.match(invalidFailure.details, /payload\.provenance\.tenantId/i);
+    db.prepare(
+      [
+        "INSERT OR IGNORE INTO audit_events (",
+        "  event_id,",
+        "  tenant_id,",
+        "  memory_id,",
+        "  operation,",
+        "  outcome,",
+        "  reason,",
+        "  details,",
+        "  reference_kind,",
+        "  reference_id,",
+        "  owner_tenant_id,",
+        "  recorded_at_ms",
+        ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);",
+      ].join("\n")
+    ).run(
+      "audit:i6m6-normalization-reject",
+      tenantId,
+      "memory-i6m6-normalization-reject",
+      "upsert",
+      "denied",
+      "updated",
+      "payload.provenance.tenantId mismatch in test normalization reject sample.",
+      null,
+      null,
+      null,
+      1_700_000_022_210
+    );
+
+    const healthReport = storageRepositoryModule.evaluateSqliteProvenanceHealth(
+      db,
+      {
+        criticalThresholds: {
+          missingProvenanceLinks: 1,
+          lineageBreaks: 1,
+          normalizationRejects: 1,
+        },
+      }
+    );
+    assert.equal(healthReport.counters.scannedMemoryRows, 2);
+    assert.equal(healthReport.counters.missingProvenanceLinks, 1);
+    assert.equal(healthReport.counters.lineageBreaks, 1);
+    assert.ok(healthReport.counters.normalizationRejects >= 1);
+
+    const alertByCode = Object.fromEntries(
+      healthReport.alerts.map((alert: any) => [alert.code, alert])
+    );
+    assert.equal(alertByCode["missing_provenance_links"]?.severity, "critical");
+    assert.equal(alertByCode["lineage_breaks"]?.severity, "critical");
+    assert.equal(alertByCode["normalization_rejects"]?.severity, "critical");
   } finally {
     db.close();
   }
@@ -1822,7 +2255,7 @@ test("ums-memory-5cb.4: rejects invalid payload.scope shapes and mixed legacy co
   }
 });
 
-test("ums-memory-5cb.4: rejects unknown project/role/user scope anchors with contract validation errors", async () => {
+test("ums-memory-5cb.4: rejects any project/role/user scope anchors with contract validation errors", async () => {
   const storageServiceModule = await loadStorageServiceModule();
   const db = new DatabaseSync(":memory:");
 
@@ -1882,7 +2315,7 @@ test("ums-memory-5cb.4: rejects unknown project/role/user scope anchors with con
       assert.match(
         upsertFailure.details,
         new RegExp(
-          `unknown tenant ${requestUnderTest.expectedAnchor} anchor`,
+          `(unknown|any) tenant ${requestUnderTest.expectedAnchor} anchor`,
           "i"
         )
       );
@@ -2141,9 +2574,9 @@ test("ums-memory-5cb.5: upsert denies cross-tenant references and emits audit ev
   const db = new DatabaseSync(":memory:");
 
   try {
-    const tenantIsolationEvents = [];
+    const tenantIsolationEvents: any[] = [];
     const storageService = storageServiceModule.makeSqliteStorageService(db, {
-      onTenantIsolationViolation: (event) => {
+      onTenantIsolationViolation: (event: any) => {
         tenantIsolationEvents.push(event);
       },
     });
@@ -2327,9 +2760,9 @@ test("ums-memory-5cb.5: delete keeps not-found semantics and audits cross-tenant
   const db = new DatabaseSync(":memory:");
 
   try {
-    const tenantIsolationEvents = [];
+    const tenantIsolationEvents: any[] = [];
     const storageService = storageServiceModule.makeSqliteStorageService(db, {
-      onTenantIsolationViolation: (event) => {
+      onTenantIsolationViolation: (event: any) => {
         tenantIsolationEvents.push(event);
       },
     });
@@ -2644,7 +3077,7 @@ test("ums-memory-5cb.3: sqlite storage service maps missing deletes to StorageNo
       Effect.either(
         storageService.deleteMemory({
           spaceId: "tenant-storage",
-          memoryId: "unknown-memory",
+          memoryId: "any-memory",
         })
       )
     );
@@ -2652,20 +3085,20 @@ test("ums-memory-5cb.3: sqlite storage service maps missing deletes to StorageNo
 
     assert.equal(deleteFailure._tag, "StorageNotFoundError");
     assert.equal(deleteFailure.spaceId, "tenant-storage");
-    assert.equal(deleteFailure.memoryId, "unknown-memory");
+    assert.equal(deleteFailure.memoryId, "any-memory");
 
     const replayDeleteEither = Effect.runSync(
       Effect.either(
         storageService.deleteMemory({
           spaceId: "tenant-storage",
-          memoryId: "unknown-memory",
+          memoryId: "any-memory",
         })
       )
     );
     const replayDeleteFailure = unwrapFailure(replayDeleteEither);
     assert.equal(replayDeleteFailure._tag, "StorageNotFoundError");
     assert.equal(replayDeleteFailure.spaceId, "tenant-storage");
-    assert.equal(replayDeleteFailure.memoryId, "unknown-memory");
+    assert.equal(replayDeleteFailure.memoryId, "any-memory");
 
     const persistedAuditRows = db
       .prepare(
@@ -2675,7 +3108,7 @@ test("ums-memory-5cb.3: sqlite storage service maps missing deletes to StorageNo
           "WHERE tenant_id = ? AND memory_id = ?;",
         ].join("\n")
       )
-      .all("tenant-storage", "unknown-memory");
+      .all("tenant-storage", "any-memory");
     assert.equal(persistedAuditRows.length, 2);
     assert.ok(persistedAuditRows.every((row) => row.operation === "delete"));
     assert.ok(persistedAuditRows.every((row) => row.outcome === "not_found"));
@@ -3623,9 +4056,9 @@ test("ums-memory-a9v.4: sqlite storage encryption config misconfiguration fails 
   const storageServiceModule = await loadStorageServiceModule();
 
   const assertMisconfiguration = (
-    encryptionAtRestOptions,
-    expectedContract,
-    expectedMessagePattern
+    encryptionAtRestOptions: any,
+    expectedContract: any,
+    expectedMessagePattern: any
   ) => {
     const misconfiguredDb = new DatabaseSync(":memory:");
     try {
@@ -3635,9 +4068,10 @@ test("ums-memory-a9v.4: sqlite storage encryption config misconfiguration fails 
             encryptionAtRest: encryptionAtRestOptions,
           }),
         (error) => {
-          assert.equal(error?._tag, "ContractValidationError");
-          assert.equal(error?.contract, expectedContract);
-          assert.match(error?.message ?? "", expectedMessagePattern);
+          const contractError = asContractErrorShape(error);
+          assert.equal(contractError._tag, "ContractValidationError");
+          assert.equal(contractError.contract, expectedContract);
+          assert.match(contractError.message ?? "", expectedMessagePattern);
           return true;
         }
       );
@@ -4806,8 +5240,8 @@ test("ums-memory-yji.4: sqlite backup replication creates deterministic snapshot
   const sqlitePath = join(fixtureDirectory, "storage.sqlite");
   const backupDirectory = join(fixtureDirectory, "backups");
   const db = new DatabaseSync(sqlitePath);
-  const observedMetadata = [];
-  let replicationController;
+  const observedMetadata: BackupReplicationMetadata[] = [];
+  const replicationControllers: BackupReplicationController[] = [];
 
   try {
     const storageService = storageServiceModule.makeSqliteStorageService(db, {
@@ -4817,13 +5251,16 @@ test("ums-memory-yji.4: sqlite backup replication creates deterministic snapshot
         retentionMaxSnapshots: 2,
         autoStart: false,
         clock: createDeterministicBackupClock(1_700_001_000_000),
-        onReplicated: (metadata) => observedMetadata.push(metadata),
-        onControllerReady: (controller) => {
-          replicationController = controller;
+        onReplicated: (metadata: any) => observedMetadata.push(metadata),
+        onControllerReady: (controller: any) => {
+          replicationControllers.push(
+            controller as BackupReplicationController
+          );
         },
       },
     });
-    assert.ok(replicationController);
+    const controller = replicationControllers[0];
+    assert.ok(controller);
 
     Effect.runSync(
       storageService.upsertMemory({
@@ -4837,9 +5274,9 @@ test("ums-memory-yji.4: sqlite backup replication creates deterministic snapshot
       })
     );
 
-    const firstSnapshot = replicationController.replicateNow();
-    const secondSnapshot = replicationController.replicateNow();
-    const thirdSnapshot = replicationController.replicateNow();
+    const firstSnapshot = controller.replicateNow();
+    const secondSnapshot = controller.replicateNow();
+    const thirdSnapshot = controller.replicateNow();
 
     const snapshotFiles = readdirSync(backupDirectory)
       .filter((filename) => filename.endsWith(".sqlite"))
@@ -4859,7 +5296,7 @@ test("ums-memory-yji.4: sqlite backup replication creates deterministic snapshot
       [1, 2, 3]
     );
   } finally {
-    replicationController?.stop();
+    replicationControllers[0]?.stop();
     db.close();
     rmSync(fixtureDirectory, { recursive: true, force: true });
   }
@@ -4876,8 +5313,8 @@ test("ums-memory-yji.4: sqlite backup replication interval invokes callback meta
   const backupDirectory = join(fixtureDirectory, "backups");
   const db = new DatabaseSync(sqlitePath);
   const schedulerHarness = createDeterministicIntervalScheduler();
-  const observedMetadata = [];
-  let replicationController;
+  const observedMetadata: BackupReplicationMetadata[] = [];
+  const replicationControllers: BackupReplicationController[] = [];
 
   try {
     storageServiceModule.makeSqliteStorageService(db, {
@@ -4888,14 +5325,17 @@ test("ums-memory-yji.4: sqlite backup replication interval invokes callback meta
         retentionMaxSnapshots: 5,
         clock: createDeterministicBackupClock(1_700_002_000_000),
         scheduler: schedulerHarness.scheduler,
-        onReplicated: (metadata) => observedMetadata.push(metadata),
-        onControllerReady: (controller) => {
-          replicationController = controller;
+        onReplicated: (metadata: any) => observedMetadata.push(metadata),
+        onControllerReady: (controller: any) => {
+          replicationControllers.push(
+            controller as BackupReplicationController
+          );
         },
       },
     });
-    assert.ok(replicationController);
-    assert.equal(replicationController.isRunning(), true);
+    const controller = replicationControllers[0];
+    assert.ok(controller);
+    assert.equal(controller.isRunning(), true);
     assert.equal(schedulerHarness.activeCount(), 1);
 
     schedulerHarness.tick();
@@ -4905,22 +5345,24 @@ test("ums-memory-yji.4: sqlite backup replication interval invokes callback meta
     assert.ok(
       observedMetadata.every((metadata) => metadata.trigger === "interval")
     );
-    assert.equal(observedMetadata[0].sequence, 1);
-    assert.equal(observedMetadata[0].retainedSnapshotCount, 1);
-    assert.deepEqual(observedMetadata[0].deletedSnapshotFilenames, []);
+    const firstMetadata = observedMetadata[0];
+    assert.ok(firstMetadata);
+    assert.equal(firstMetadata.sequence, 1);
+    assert.equal(firstMetadata.retainedSnapshotCount, 1);
+    assert.deepEqual(firstMetadata.deletedSnapshotFilenames, []);
     assert.match(
-      observedMetadata[0].snapshotFilename,
+      firstMetadata.snapshotFilename,
       /^interval-\d{13}-\d{6}\.sqlite$/
     );
 
-    replicationController.stop();
-    assert.equal(replicationController.isRunning(), false);
+    controller.stop();
+    assert.equal(controller.isRunning(), false);
     assert.equal(schedulerHarness.activeCount(), 0);
 
     schedulerHarness.tick();
     assert.equal(observedMetadata.length, 2);
   } finally {
-    replicationController?.stop();
+    replicationControllers[0]?.stop();
     db.close();
     rmSync(fixtureDirectory, { recursive: true, force: true });
   }
@@ -4937,8 +5379,8 @@ test("ums-memory-yji.4: interval backup reports errors and stops scheduler on cl
   const backupDirectory = join(fixtureDirectory, "backups");
   const db = new DatabaseSync(sqlitePath);
   const schedulerHarness = createDeterministicIntervalScheduler();
-  const observedErrors = [];
-  let replicationController;
+  const observedErrors: any[] = [];
+  const replicationControllers: BackupReplicationController[] = [];
 
   try {
     storageServiceModule.makeSqliteStorageService(db, {
@@ -4947,7 +5389,10 @@ test("ums-memory-yji.4: interval backup reports errors and stops scheduler on cl
         filePrefix: "interval-error",
         intervalMillis: 5,
         scheduler: schedulerHarness.scheduler,
-        onReplicationError: (error, context) => {
+        onReplicationError: (
+          error: ContractValidationError,
+          context: { readonly trigger: string }
+        ) => {
           observedErrors.push({
             tag: error._tag,
             contract: error.contract,
@@ -4955,13 +5400,16 @@ test("ums-memory-yji.4: interval backup reports errors and stops scheduler on cl
             trigger: context.trigger,
           });
         },
-        onControllerReady: (controller) => {
-          replicationController = controller;
+        onControllerReady: (controller: any) => {
+          replicationControllers.push(
+            controller as BackupReplicationController
+          );
         },
       },
     });
-    assert.ok(replicationController);
-    assert.equal(replicationController.isRunning(), true);
+    const controller = replicationControllers[0];
+    assert.ok(controller);
+    assert.equal(controller.isRunning(), true);
     assert.equal(schedulerHarness.activeCount(), 1);
 
     db.close();
@@ -4975,10 +5423,10 @@ test("ums-memory-yji.4: interval backup reports errors and stops scheduler on cl
     );
     assert.equal(observedErrors[0].trigger, "interval");
     assert.match(observedErrors[0].details, /SQLITE_MISUSE|closed|not open/i);
-    assert.equal(replicationController.isRunning(), false);
+    assert.equal(controller.isRunning(), false);
     assert.equal(schedulerHarness.activeCount(), 0);
   } finally {
-    replicationController?.stop();
+    replicationControllers[0]?.stop();
     try {
       db.close();
     } catch {}
@@ -5028,9 +5476,9 @@ test("ums-memory-yji.4: sqlite backup replication restores sequence state and re
   const sqlitePath = join(fixtureDirectory, "storage.sqlite");
   const backupDirectory = join(fixtureDirectory, "backups");
   const firstDb = new DatabaseSync(sqlitePath);
-  let secondDb;
-  let firstController;
-  let secondController;
+  let secondDb: DatabaseSync | null = null;
+  const firstControllers: BackupReplicationController[] = [];
+  const secondControllers: BackupReplicationController[] = [];
 
   try {
     storageServiceModule.makeSqliteStorageService(firstDb, {
@@ -5040,18 +5488,19 @@ test("ums-memory-yji.4: sqlite backup replication restores sequence state and re
         retentionMaxSnapshots: 2,
         autoStart: false,
         clock: createDeterministicBackupClock(1_700_004_000_000),
-        onControllerReady: (controller) => {
-          firstController = controller;
+        onControllerReady: (controller: any) => {
+          firstControllers.push(controller as BackupReplicationController);
         },
       },
     });
-    assert.ok(firstController);
+    const initialController = firstControllers[0];
+    assert.ok(initialController);
 
-    const firstSnapshot = firstController.replicateNow();
-    const secondSnapshot = firstController.replicateNow();
+    const firstSnapshot = initialController.replicateNow();
+    const secondSnapshot = initialController.replicateNow();
     assert.equal(firstSnapshot.sequence, 1);
     assert.equal(secondSnapshot.sequence, 2);
-    firstController.stop();
+    initialController.stop();
     firstDb.close();
 
     secondDb = new DatabaseSync(sqlitePath);
@@ -5062,14 +5511,15 @@ test("ums-memory-yji.4: sqlite backup replication restores sequence state and re
         retentionMaxSnapshots: 2,
         autoStart: false,
         clock: createDeterministicBackupClock(1_700_004_000_100),
-        onControllerReady: (controller) => {
-          secondController = controller;
+        onControllerReady: (controller: any) => {
+          secondControllers.push(controller as BackupReplicationController);
         },
       },
     });
-    assert.ok(secondController);
+    const resumedController = secondControllers[0];
+    assert.ok(resumedController);
 
-    const thirdSnapshot = secondController.replicateNow();
+    const thirdSnapshot = resumedController.replicateNow();
     assert.equal(thirdSnapshot.sequence, 3);
     assert.deepEqual(thirdSnapshot.deletedSnapshotFilenames, [
       firstSnapshot.snapshotFilename,
@@ -5083,11 +5533,11 @@ test("ums-memory-yji.4: sqlite backup replication restores sequence state and re
       thirdSnapshot.snapshotFilename,
     ]);
 
-    secondController.stop();
+    resumedController.stop();
     secondDb.close();
   } finally {
-    firstController?.stop();
-    secondController?.stop();
+    firstControllers[0]?.stop();
+    secondControllers[0]?.stop();
     try {
       firstDb.close();
     } catch {}
@@ -5120,12 +5570,16 @@ test("ums-memory-yji.4: sqlite backup replication rejects unsafe filePrefix path
           },
         }),
       (error) => {
-        assert.equal(error?._tag, "ContractValidationError");
+        const contractError = asContractErrorShape(error);
+        assert.equal(contractError._tag, "ContractValidationError");
         assert.equal(
-          error?.contract,
+          contractError.contract,
           "SqliteStorageRepositoryOptions.backupReplication.filePrefix"
         );
-        assert.match(error?.details ?? "", /must not contain path separators/i);
+        assert.match(
+          contractError.details ?? "",
+          /must not contain path separators/i
+        );
         return true;
       }
     );

@@ -35,7 +35,7 @@ test("ums-memory-d6q.4.2: diary creation is deterministic for spaced-repetition 
 
   assert.equal(diaryA.kind, WorkingMemoryKind.DIARY);
   assert.deepEqual(diaryA.evidenceEpisodeIds, ["ep-a", "ep-b"]);
-  assert.equal(diaryA.metadata.episodeCount, episodes.length);
+  assert.equal(diaryA.metadata["episodeCount"], episodes.length);
   assert.match(diaryA.content, /\[error\]/i);
   assert.match(diaryA.content, /\[note\]/i);
   assert.equal(
@@ -60,8 +60,8 @@ test("ums-memory-d6q.4.2: digest creation captures sorted type metadata for revi
   });
 
   assert.equal(digest.kind, WorkingMemoryKind.DIGEST);
-  assert.equal(digest.metadata.episodeCount, episodes.length);
-  assert.deepEqual(digest.metadata.types, ["analysis", "note"]);
+  assert.equal(digest.metadata["episodeCount"], episodes.length);
+  assert.deepEqual(digest.metadata["types"], ["analysis", "note"]);
   assert.equal(digest.content, "Digest: 3 episodes, types=analysis, note");
 });
 
@@ -102,8 +102,8 @@ test("ums-memory-d6q.5.2: tombstone metadata records policy reason and timestamp
   });
 
   assert.equal(tombstoned.status, ProceduralEntryStatus.TOMBSTONED);
-  assert.equal(tombstoned.metadata.tombstoneReason, "policy review");
-  assert.equal(tombstoned.metadata.tombstonedAt, now);
+  assert.equal(tombstoned.metadata["tombstoneReason"], "policy review");
+  assert.equal(tombstoned.metadata["tombstonedAt"], now);
 });
 
 test("ums-memory-d6q.3.2: curriculum planner inverts harmful rules into anti-patterns", () => {
@@ -126,6 +126,6 @@ test("ums-memory-d6q.3.2: curriculum planner inverts harmful rules into anti-pat
   assert.equal(antiPattern.sourceRuleId, baseRule.id);
   assert.deepEqual(antiPattern.evidenceEpisodeIds, baseRule.evidenceEpisodeIds);
   assert.match(antiPattern.statement, /^Avoid:/);
-  assert.equal(antiPattern.metadata.reason, "harmful");
+  assert.equal(antiPattern.metadata["reason"], "harmful");
   assert.ok(antiPattern.confidence >= 0.2);
 });

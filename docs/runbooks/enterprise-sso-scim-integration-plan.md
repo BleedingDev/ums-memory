@@ -6,6 +6,8 @@ Define a backend contract for enterprise identity federation so UMS can accept S
 
 Hard requirement: UMS login and SSO integration must use **Better Auth** as the authentication/control-plane layer.
 
+Operational companion runbook: [Enterprise Identity Rollout Runbook](./enterprise-identity-rollout-runbook.md).
+
 ## Scope
 
 In scope:

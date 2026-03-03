@@ -11,7 +11,7 @@ import { createInMemoryApiTelemetry } from "../src/telemetry.ts";
 
 const CLI_PATH = resolve(process.cwd(), "apps/cli/src/index.ts");
 
-function runCli(args, stdin = "") {
+function runCli(args: any, stdin = "") {
   return new Promise((resolvePromise) => {
     const proc = spawn(
       process.execPath,
@@ -38,7 +38,7 @@ function runCli(args, stdin = "") {
   });
 }
 
-function assertConsoleSecurityHeaders(response) {
+function assertConsoleSecurityHeaders(response: any) {
   const csp = response.headers.get("content-security-policy") ?? "";
   assert.match(csp, /default-src 'none'/);
   assert.match(csp, /frame-ancestors 'none'/);
@@ -48,7 +48,7 @@ function assertConsoleSecurityHeaders(response) {
 
 test("http server exposes prometheus metrics and deterministic structured telemetry events", async () => {
   resetStore();
-  const events = [];
+  const events: any[] = [];
   const telemetry = createInMemoryApiTelemetry({
     logger(event) {
       events.push(event);
@@ -191,7 +191,7 @@ test("http server exposes prometheus metrics and deterministic structured teleme
     assert.equal(failureEvent.latencyMs >= 0, true);
     assert.equal(failureEvent.deterministic, true);
   } finally {
-    await new Promise((resolvePromise, rejectPromise) => {
+    await new Promise<void>((resolvePromise, rejectPromise) => {
       server.close((error) =>
         error ? rejectPromise(error) : resolvePromise()
       );
@@ -359,7 +359,7 @@ test("http server exposes deterministic JSON operation routes", async () => {
     assert.equal(manualReplayBody.data.action, "noop");
     assert.equal(manualReplayBody.data.override.changed, false);
   } finally {
-    await new Promise((resolve, reject) => {
+    await new Promise<void>((resolve, reject) => {
       server.close((error) => (error ? reject(error) : resolve()));
     });
   }
@@ -389,7 +389,7 @@ test("ums-memory-yji.7 keeps console UI routes disabled by default", async () =>
       assert.equal(postBody.error.code, "NOT_FOUND");
     }
   } finally {
-    await new Promise((resolvePromise, rejectPromise) => {
+    await new Promise<void>((resolvePromise, rejectPromise) => {
       server.close((error) =>
         error ? rejectPromise(error) : resolvePromise()
       );
@@ -463,7 +463,7 @@ test("ums-memory-yji.7 serves deterministic memory console UI and static assets 
       assert.equal(wrongMethodBody.error.code, "METHOD_NOT_ALLOWED");
     }
   } finally {
-    await new Promise((resolvePromise, rejectPromise) => {
+    await new Promise<void>((resolvePromise, rejectPromise) => {
       server.close((error) =>
         error ? rejectPromise(error) : resolvePromise()
       );
@@ -472,7 +472,7 @@ test("ums-memory-yji.7 serves deterministic memory console UI and static assets 
 });
 
 test("ums-memory-yji.7 console UI toggle parses string config values safely", async () => {
-  const runCase = async (toggle, expectedStatus) => {
+  const runCase = async (toggle: any, expectedStatus: any) => {
     resetStore();
     const { server, host, port } = await startApiServer({
       host: "127.0.0.1",
@@ -489,7 +489,7 @@ test("ums-memory-yji.7 console UI toggle parses string config values safely", as
       const rootBody = await rootRes.json();
       assert.equal(rootBody.consoleUi.enabled, expectedStatus === 200);
     } finally {
-      await new Promise((resolvePromise, rejectPromise) => {
+      await new Promise<void>((resolvePromise, rejectPromise) => {
         server.close((error) =>
           error ? rejectPromise(error) : resolvePromise()
         );
@@ -629,7 +629,7 @@ test("ums-memory-yji.6 memory_console HTTP routes expose deterministic operator 
     assert.equal(timelineBody.data.operation, "memory_console_timeline");
     assert.equal(
       timelineBody.data.events.every(
-        (event) =>
+        (event: any) =>
           event.timestamp >= timelineRequest.since &&
           event.timestamp <= timelineRequest.until
       ),
@@ -637,7 +637,7 @@ test("ums-memory-yji.6 memory_console HTTP routes expose deterministic operator 
     );
     assert.equal(
       timelineBody.data.events.some(
-        (event) => event.entityType === "policy_decision"
+        (event: any) => event.entityType === "policy_decision"
       ),
       true
     );
@@ -665,7 +665,7 @@ test("ums-memory-yji.6 memory_console HTTP routes expose deterministic operator 
     assert.equal(provenanceBody.data.resolution.resolved, 3);
     assert.equal(
       provenanceBody.data.entities.some(
-        (entity) =>
+        (entity: any) =>
           entity.entityType === "policy_decision" &&
           entity.entityId === decisionId &&
           entity.linkedSourceIds.includes("evt-pol-http-yji6-1")
@@ -753,7 +753,7 @@ test("ums-memory-yji.6 memory_console HTTP routes expose deterministic operator 
     assert.deepEqual(anomalyBody.data, anomalyReplayBody.data);
     assert.equal(Array.isArray(anomalyBody.data.alerts), true);
   } finally {
-    await new Promise((resolvePromise, rejectPromise) => {
+    await new Promise<void>((resolvePromise, rejectPromise) => {
       server.close((error) =>
         error ? rejectPromise(error) : resolvePromise()
       );
@@ -763,10 +763,10 @@ test("ums-memory-yji.6 memory_console HTTP routes expose deterministic operator 
 
 test("policy_audit_export returns SERVICE_MISCONFIGURATION when signing env is missing", async () => {
   resetStore();
-  const previousSecret = process.env.UMS_POLICY_AUDIT_EXPORT_SIGNING_SECRET;
-  const previousKeyId = process.env.UMS_POLICY_AUDIT_EXPORT_SIGNING_KEY_ID;
-  delete process.env.UMS_POLICY_AUDIT_EXPORT_SIGNING_SECRET;
-  delete process.env.UMS_POLICY_AUDIT_EXPORT_SIGNING_KEY_ID;
+  const previousSecret = process.env["UMS_POLICY_AUDIT_EXPORT_SIGNING_SECRET"];
+  const previousKeyId = process.env["UMS_POLICY_AUDIT_EXPORT_SIGNING_KEY_ID"];
+  delete process.env["UMS_POLICY_AUDIT_EXPORT_SIGNING_SECRET"];
+  delete process.env["UMS_POLICY_AUDIT_EXPORT_SIGNING_KEY_ID"];
 
   const { server, host, port } = await startApiServer({
     host: "127.0.0.1",
@@ -796,20 +796,20 @@ test("policy_audit_export returns SERVICE_MISCONFIGURATION when signing env is m
       "SERVICE_MISCONFIGURATION: policy_audit_export signing secret is not configured."
     );
   } finally {
-    await new Promise((resolvePromise, rejectPromise) => {
+    await new Promise<void>((resolvePromise, rejectPromise) => {
       server.close((error) =>
         error ? rejectPromise(error) : resolvePromise()
       );
     });
     if (previousSecret === undefined) {
-      delete process.env.UMS_POLICY_AUDIT_EXPORT_SIGNING_SECRET;
+      delete process.env["UMS_POLICY_AUDIT_EXPORT_SIGNING_SECRET"];
     } else {
-      process.env.UMS_POLICY_AUDIT_EXPORT_SIGNING_SECRET = previousSecret;
+      process.env["UMS_POLICY_AUDIT_EXPORT_SIGNING_SECRET"] = previousSecret;
     }
     if (previousKeyId === undefined) {
-      delete process.env.UMS_POLICY_AUDIT_EXPORT_SIGNING_KEY_ID;
+      delete process.env["UMS_POLICY_AUDIT_EXPORT_SIGNING_KEY_ID"];
     } else {
-      process.env.UMS_POLICY_AUDIT_EXPORT_SIGNING_KEY_ID = previousKeyId;
+      process.env["UMS_POLICY_AUDIT_EXPORT_SIGNING_KEY_ID"] = previousKeyId;
     }
   }
 });
@@ -905,7 +905,7 @@ test("ums-memory-d6q.2.4/3.4/4.4/5.4 http routes expose deterministic P3 contrac
     assert.equal(policyBody.data.action, "created");
     assert.equal(policyBody.data.observability.denied, true);
   } finally {
-    await new Promise((resolve, reject) => {
+    await new Promise<void>((resolve, reject) => {
       server.close((error) => (error ? reject(error) : resolve()));
     });
   }
@@ -1019,7 +1019,7 @@ test("ums-memory-d6q.1.4 http routes learner profile + identity graph updates vi
     assert.equal(edgeReplayBody.data.action, "noop");
     assert.equal(edgeReplayBody.data.edgeId, edgeBody.data.edgeId);
   } finally {
-    await new Promise((resolve, reject) => {
+    await new Promise<void>((resolve, reject) => {
       server.close((error) => (error ? reject(error) : resolve()));
     });
   }
@@ -1047,7 +1047,7 @@ test("http server rejects non-object JSON payloads", async () => {
     assert.equal(body.ok, false);
     assert.equal(body.error.code, "BAD_REQUEST");
   } finally {
-    await new Promise((resolve, reject) => {
+    await new Promise<void>((resolve, reject) => {
       server.close((error) => (error ? reject(error) : resolve()));
     });
   }
@@ -1110,7 +1110,7 @@ test("ums-memory-d6q.1.11/ums-memory-d6q.1.9 http routes reject missing evidence
     assert.equal(policyBody.data.observability.reasonCodeCount, 1);
     assert.equal(policyBody.data.observability.provenanceCount, 1);
   } finally {
-    await new Promise((resolve, reject) => {
+    await new Promise<void>((resolve, reject) => {
       server.close((error) => (error ? reject(error) : resolve()));
     });
   }
@@ -1184,7 +1184,7 @@ test("ums-memory-d6q.2.6/ums-memory-d6q.3.6/ums-memory-d6q.4.6/ums-memory-d6q.5.
       assert.match(body.error.message, entry.messagePattern);
     }
   } finally {
-    await new Promise((resolve, reject) => {
+    await new Promise<void>((resolve, reject) => {
       server.close((error) => (error ? reject(error) : resolve()));
     });
   }
@@ -1302,7 +1302,7 @@ test("ums-memory-d6q.2.7/ums-memory-d6q.2.9/ums-memory-d6q.3.7/ums-memory-d6q.3.
     assert.equal(policyBody.data.deterministic, true);
     assert.ok(policyBody.data.requestDigest.length > 10);
   } finally {
-    await new Promise((resolve, reject) => {
+    await new Promise<void>((resolve, reject) => {
       server.close((error) => (error ? reject(error) : resolve()));
     });
   }
@@ -1542,10 +1542,12 @@ test("ums-memory-d6q.3.11/ums-memory-d6q.4.11/ums-memory-d6q.4.12/ums-memory-d6q
     assert.equal(auditBody.ok, true);
     assert.equal(auditBody.data.operation, "audit");
     assert.ok(
-      auditBody.data.checks.some((check) => check.name === "duplicate_rules")
+      auditBody.data.checks.some(
+        (check: any) => check.name === "duplicate_rules"
+      )
     );
   } finally {
-    await new Promise((resolve, reject) => {
+    await new Promise<void>((resolve, reject) => {
       server.close((error) => (error ? reject(error) : resolve()));
     });
   }
@@ -1569,7 +1571,7 @@ test("api and cli share persisted state file across restart boundaries", async (
         events: [{ type: "note", source: "cli", content: "event-from-cli" }],
       }),
     ]);
-    assert.equal(cliIngest.code, 0);
+    assert.equal((cliIngest as any).code, 0);
 
     const firstServer = await startApiServer({
       host: "127.0.0.1",
@@ -1613,7 +1615,7 @@ test("api and cli share persisted state file across restart boundaries", async (
       assert.equal(apiIngestBody.ok, true);
       assert.equal(apiIngestBody.data.accepted, 1);
     } finally {
-      await new Promise((resolvePromise, rejectPromise) => {
+      await new Promise<void>((resolvePromise, rejectPromise) => {
         firstServer.server.close((error) =>
           error ? rejectPromise(error) : resolvePromise()
         );
@@ -1645,7 +1647,7 @@ test("api and cli share persisted state file across restart boundaries", async (
       assert.equal(restartBody.ok, true);
       assert.equal(restartBody.data.matches.length, 1);
     } finally {
-      await new Promise((resolvePromise, rejectPromise) => {
+      await new Promise<void>((resolvePromise, rejectPromise) => {
         secondServer.server.close((error) =>
           error ? rejectPromise(error) : resolvePromise()
         );
@@ -1664,8 +1666,8 @@ test("api and cli share persisted state file across restart boundaries", async (
         query: "event-from-api",
       }),
     ]);
-    assert.equal(cliContext.code, 0);
-    const cliContextBody = JSON.parse(cliContext.stdout);
+    assert.equal((cliContext as any).code, 0);
+    const cliContextBody = JSON.parse((cliContext as any).stdout);
     assert.equal(cliContextBody.ok, true);
     assert.equal(cliContextBody.data.matches.length, 1);
   } finally {

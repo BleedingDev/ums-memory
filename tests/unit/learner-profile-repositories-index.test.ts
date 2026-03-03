@@ -14,6 +14,13 @@ import {
   assertMemoryIndexContract,
 } from "../../libs/shared/src/repositories.ts";
 
+interface ContractErrorShape {
+  readonly message?: string;
+  readonly details?: {
+    readonly missingMethod?: string;
+  };
+}
+
 test("memory index contract enforces upsert and search methods", () => {
   const fixture = new InMemoryKeywordIndex();
 
@@ -22,8 +29,8 @@ test("memory index contract enforces upsert and search methods", () => {
   assert.throws(
     () => assertMemoryIndexContract({ upsert() {} }),
     (error) =>
-      /contract violation/i.test(error?.message ?? "") &&
-      error?.details?.missingMethod === "search"
+      /contract violation/i.test((error as ContractErrorShape).message ?? "") &&
+      (error as ContractErrorShape).details?.missingMethod === "search"
   );
 });
 
@@ -37,8 +44,8 @@ test("learner profile repository contract enforces required methods", () => {
         getProfileById() {},
       }),
     (error) =>
-      error?.details?.missingMethod === "listProfiles" &&
-      /contract violation/i.test(error.message)
+      (error as ContractErrorShape).details?.missingMethod === "listProfiles" &&
+      /contract violation/i.test((error as ContractErrorShape).message ?? "")
   );
 });
 
@@ -117,7 +124,9 @@ test("InMemoryKeywordIndex upsert is idempotent when given the same payload", ()
 
   const results = index.search({ spaceId: "tenant-a" });
   assert.equal(results.length, 1);
-  assert.equal(results[0].id, payload.id);
+  const firstResult = results.at(0);
+  assert.ok(firstResult);
+  assert.equal(firstResult.id, payload.id);
 });
 
 test("InMemoryKeywordIndex searches respect space isolation", () => {
@@ -145,7 +154,11 @@ test("InMemoryKeywordIndex searches respect space isolation", () => {
   const tenantB = index.search({ spaceId: "tenant-b", query: "learners" });
 
   assert.equal(tenantA.length, 1);
-  assert.equal(tenantA[0].id, "lp-a");
+  const tenantAFirst = tenantA.at(0);
+  assert.ok(tenantAFirst);
+  assert.equal(tenantAFirst.id, "lp-a");
   assert.equal(tenantB.length, 1);
-  assert.equal(tenantB[0].id, "lp-b");
+  const tenantBFirst = tenantB.at(0);
+  assert.ok(tenantBFirst);
+  assert.equal(tenantBFirst.id, "lp-b");
 });

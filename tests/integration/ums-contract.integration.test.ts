@@ -59,13 +59,13 @@ test("ums-memory-d6q.1.4: integration contract stays JSON-first, replay-safe, an
     tokenBudget: 140,
   });
 
-  assert.ok(recallA.items.every((item) => item.space === "tenant-a"));
-  assert.ok(recallB.items.every((item) => item.space === "tenant-b"));
+  assert.ok(recallA.items.every((item: any) => item.space === "tenant-a"));
+  assert.ok(recallB.items.every((item: any) => item.space === "tenant-b"));
   assert.ok(
-    recallA.items.every((item) => item.evidence?.episodeId === item.id)
+    recallA.items.every((item: any) => item.evidence?.episodeId === item.id)
   );
   assert.ok(
-    recallB.items.every((item) => item.evidence?.episodeId === item.id)
+    recallB.items.every((item: any) => item.evidence?.episodeId === item.id)
   );
   assert.equal(recallA.storeId, "default");
   assert.equal(recallB.storeId, "default");
@@ -175,7 +175,9 @@ test("ums-memory-d6q.1.13/ums-memory-d6q.1.9: codex+claude normalization paths s
   });
 
   assert.ok(recall.items.length > 0);
-  assert.ok(recall.items.every((item) => item.evidence?.episodeId === item.id));
+  assert.ok(
+    recall.items.every((item: any) => item.evidence?.episodeId === item.id)
+  );
   assert.ok(recall.estimatedTokens <= recall.tokenBudget);
   assert.ok(recall.payloadBytes > 0);
   assert.equal(typeof recall.truncated, "boolean");
@@ -188,22 +190,22 @@ test("ums-memory-d6q.1.13/ums-memory-d6q.1.9: codex+claude normalization paths s
 
   const snapshot = engine.exportState();
   const transferStore = snapshot.stores.find(
-    (entry) => entry.storeId === "agent-transfer"
+    (entry: any) => entry.storeId === "agent-transfer"
   );
   assert.ok(transferStore);
   assert.equal(transferStore.totals.eventCount, 4);
   const handoffSpace = transferStore.spaces.find(
-    (entry) => entry.space === "handoff"
+    (entry: any) => entry.space === "handoff"
   );
   assert.ok(handoffSpace);
   assert.ok(
     handoffSpace.events.some(
-      (event) => event.metadata?.platform === "codex-cli"
+      (event: any) => event.metadata?.platform === "codex-cli"
     )
   );
   assert.ok(
     handoffSpace.events.some(
-      (event) => event.metadata?.platform === "claude-code"
+      (event: any) => event.metadata?.platform === "claude-code"
     )
   );
 });
@@ -715,8 +717,10 @@ test("ums-memory-d6q.5.8: integration/replay policy lane enforces deterministic 
   });
   assert.equal(audit.operation, "audit");
   assert.equal(audit.deterministic, true);
-  assert.ok(audit.checks.some((check) => check.name === "events_present"));
-  assert.ok(audit.checks.some((check) => check.name === "duplicate_rules"));
+  assert.ok(audit.checks.some((check: any) => check.name === "events_present"));
+  assert.ok(
+    audit.checks.some((check: any) => check.name === "duplicate_rules")
+  );
 
   const exported = exportStoreSnapshot();
   resetStore();
@@ -847,7 +851,7 @@ test("ums-memory-hpl.10: integration lifecycle replay-safety stays idempotent ac
 
   const snapshot = snapshotProfile(profile, storeId);
   const storedCandidate = snapshot.shadowCandidates.find(
-    (entry) => entry.candidateId === candidateId
+    (entry: any) => entry.candidateId === candidateId
   );
   assert.ok(storedCandidate);
   assert.equal(storedCandidate.status, "demoted");
@@ -858,7 +862,7 @@ test("ums-memory-hpl.10: integration lifecycle replay-safety stays idempotent ac
     "stability_check",
   ]);
   assert.equal(
-    snapshot.rules.some((entry) => entry.ruleId === ruleId),
+    snapshot.rules.some((entry: any) => entry.ruleId === ruleId),
     false
   );
   assert.equal(snapshot.replayEvaluations.length, 1);
@@ -910,16 +914,18 @@ test("ums-memory-hpl.10: integration lifecycle reordered requests converge with 
     reasonCodes: ["stability_check", "manual_override"],
     demotedAt: "2026-03-02T11:30:00.000Z",
   };
-  const selectLifecycleProjection = (profileSnapshot) => ({
+  const selectLifecycleProjection = (profileSnapshot: any) => ({
     candidate: profileSnapshot.shadowCandidates.find(
-      (entry) => entry.candidateId === candidateId
+      (entry: any) => entry.candidateId === candidateId
     ),
     replayEvaluations: profileSnapshot.replayEvaluations.filter(
-      (entry) => entry.candidateId === candidateId
+      (entry: any) => entry.candidateId === candidateId
     ),
-    rules: profileSnapshot.rules.filter((entry) => entry.ruleId === ruleId),
+    rules: profileSnapshot.rules.filter(
+      (entry: any) => entry.ruleId === ruleId
+    ),
   });
-  const captureThrownMessage = (operation) => {
+  const captureThrownMessage = (operation: any) => {
     try {
       operation();
       return null;

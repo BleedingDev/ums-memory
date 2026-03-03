@@ -15,19 +15,46 @@ const OUTPUT_PATH = resolve(
   "docs/reports/multi-store-ingestion-validation-summary.json"
 );
 const MAX_CONTENT_LENGTH = Number.parseInt(
-  process.env.UMS_VALIDATE_MAX_CONTENT || "2000",
+  process.env["UMS_VALIDATE_MAX_CONTENT"] || "2000",
   10
 );
 const MAX_FILES_PER_SOURCE = Number.parseInt(
-  process.env.UMS_VALIDATE_MAX_FILES || "0",
+  process.env["UMS_VALIDATE_MAX_FILES"] || "0",
   10
 );
 const MAX_LINES_PER_FILE = Number.parseInt(
-  process.env.UMS_VALIDATE_MAX_LINES || "0",
+  process.env["UMS_VALIDATE_MAX_LINES"] || "0",
   10
 );
 
-function truncate(value, maxLength = MAX_CONTENT_LENGTH) {
+type JsonRecord = Record<string, unknown>;
+
+interface ValidationEvent {
+  readonly id: string;
+  readonly storeId: string;
+  readonly space: string;
+  readonly source: string;
+  readonly timestamp: string;
+  readonly content: string;
+  readonly tags: readonly string[];
+  readonly metadata: {
+    readonly role: string;
+    readonly file: string;
+    readonly line: number;
+  };
+}
+
+interface ConversationLoadArgs {
+  readonly files: readonly string[];
+  readonly storeId: string;
+  readonly space: string;
+  readonly source: string;
+}
+
+const isJsonRecord = (value: unknown): value is JsonRecord =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+function truncate(value: unknown, maxLength = MAX_CONTENT_LENGTH): string {
   const text = String(value ?? "");
   if (text.length <= maxLength) {
     return text;
@@ -35,22 +62,25 @@ function truncate(value, maxLength = MAX_CONTENT_LENGTH) {
   return `${text.slice(0, maxLength)}…`;
 }
 
-function normalizeText(value) {
+function normalizeText(value: unknown): string {
   if (value == null) {
     return "";
   }
   return String(value).trim();
 }
 
-function listJsonlFiles(rootDirectory) {
+function listJsonlFiles(rootDirectory: string): string[] {
   if (!existsSync(rootDirectory)) {
     return [];
   }
 
-  const files = [];
-  const stack = [rootDirectory];
+  const files: string[] = [];
+  const stack: string[] = [rootDirectory];
   while (stack.length > 0) {
     const current = stack.pop();
+    if (current === undefined) {
+      continue;
+    }
     for (const entry of readdirSync(current, { withFileTypes: true })) {
       const path = join(current, entry.name);
       if (entry.isDirectory()) {
@@ -68,7 +98,7 @@ function listJsonlFiles(rootDirectory) {
     : files;
 }
 
-function tryParseJson(line) {
+function tryParseJson(line: string): unknown | null {
   try {
     return JSON.parse(line);
   } catch {
@@ -76,8 +106,8 @@ function tryParseJson(line) {
   }
 }
 
-function pickFirstString(value, keys) {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
+function pickFirstString(value: unknown, keys: readonly string[]): string {
+  if (!isJsonRecord(value)) {
     return "";
   }
   for (const key of keys) {
@@ -85,11 +115,7 @@ function pickFirstString(value, keys) {
     if (typeof candidate === "string" && candidate.trim()) {
       return candidate.trim();
     }
-    if (
-      candidate &&
-      typeof candidate === "object" &&
-      !Array.isArray(candidate)
-    ) {
+    if (isJsonRecord(candidate)) {
       const nested = pickFirstString(candidate, keys);
       if (nested) {
         return nested;
@@ -99,23 +125,22 @@ function pickFirstString(value, keys) {
   return "";
 }
 
-function pickText(value) {
+function pickText(value: unknown): string {
   if (typeof value === "string") {
     return value.trim();
   }
   if (Array.isArray(value)) {
     return value
-      .map((entry) => pickText(entry))
-      .filter(Boolean)
+      .map((entry): string => pickText(entry))
+      .filter((entry): entry is string => entry.length > 0)
       .join("\n")
       .trim();
   }
-  if (!value || typeof value !== "object") {
+  if (!isJsonRecord(value)) {
     return "";
   }
 
-  const object = value;
-  const direct = pickFirstString(object, [
+  const direct = pickFirstString(value, [
     "content",
     "text",
     "message",
@@ -129,10 +154,11 @@ function pickText(value) {
     return direct;
   }
 
-  if (object.messages && Array.isArray(object.messages)) {
-    const fromMessages = object.messages
-      .map((entry) => pickText(entry))
-      .filter(Boolean)
+  const messages = value["messages"];
+  if (Array.isArray(messages)) {
+    const fromMessages = messages
+      .map((entry): string => pickText(entry))
+      .filter((entry): entry is string => entry.length > 0)
       .join("\n");
     if (fromMessages) {
       return fromMessages.trim();
@@ -142,7 +168,7 @@ function pickText(value) {
   return "";
 }
 
-function pickTimestamp(value) {
+function pickTimestamp(value: unknown): string {
   const timestamp = pickFirstString(value, [
     "timestamp",
     "createdAt",
@@ -154,18 +180,23 @@ function pickTimestamp(value) {
   return timestamp || new Date(0).toISOString();
 }
 
-function pickRole(value) {
+function pickRole(value: unknown): string {
   const role = pickFirstString(value, [
     "role",
     "actor",
     "sender",
     "authorRole",
   ]);
-  return role || "unknown";
+  return role || "any";
 }
 
-async function loadConversationEvents({ files, storeId, space, source }) {
-  const events = [];
+async function loadConversationEvents({
+  files,
+  storeId,
+  space,
+  source,
+}: ConversationLoadArgs): Promise<ValidationEvent[]> {
+  const events: ValidationEvent[] = [];
 
   for (const filePath of files) {
     const input = createReadStream(filePath, { encoding: "utf8" });
@@ -218,14 +249,19 @@ async function loadConversationEvents({ files, storeId, space, source }) {
   return events;
 }
 
-function tokenize(content) {
+function tokenize(content: unknown): string[] {
   return normalizeText(content)
     .toLowerCase()
     .split(/[^a-z0-9]+/g)
     .filter((token) => token.length > 2);
 }
 
-function topTerms(events, limit = 12) {
+function topTerms(
+  events: readonly {
+    readonly content: unknown;
+  }[],
+  limit = 12
+): Array<{ term: string; count: number }> {
   const stopwords = new Set([
     "the",
     "and",
@@ -265,8 +301,19 @@ function topTerms(events, limit = 12) {
     .map(([term, count]) => ({ term, count }));
 }
 
-function summarizeStore(storeEntry) {
-  const events = [];
+function summarizeStore(storeEntry: {
+  readonly storeId: string;
+  readonly totals: unknown;
+  readonly spaces: readonly {
+    readonly space: string;
+    readonly events: readonly {
+      readonly source: string;
+      readonly content: unknown;
+    }[];
+  }[];
+}) {
+  const events: Array<{ readonly source: string; readonly content: unknown }> =
+    [];
   const sourceCounts = new Map();
   const spaceCounts = new Map();
 

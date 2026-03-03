@@ -85,7 +85,7 @@ const expectedTriggerOrder = Object.freeze([
   "trg_audit_events_append_only_delete",
 ]);
 
-let schemaModulePromise;
+let schemaModulePromise: any;
 
 const loadSchemaModule = async () => {
   if (!schemaModulePromise) {
@@ -104,21 +104,21 @@ const loadSchemaModule = async () => {
   return schemaModulePromise;
 };
 
-const expectConstraintFailure = (callback) => {
+const expectConstraintFailure = (callback: any) => {
   assert.throws(
     callback,
     /constraint|check|foreign key|scope_parent_level_invalid|scope_cycle_detected|scope_level_immutable|scope_anchor_immutable|memory_supersedes_cycle_detected|audit_events_append_only/i
   );
 };
 
-const countRows = (db, tableName) => {
+const countRows = (db: any, tableName: any) => {
   const result = db
     .prepare(`SELECT COUNT(*) AS row_count FROM ${tableName}`)
     .get();
   return Number(result?.row_count ?? 0);
 };
 
-const countRowsByTenant = (db, tableName, tenantId) => {
+const countRowsByTenant = (db: any, tableName: any, tenantId: any) => {
   const result = db
     .prepare(
       `SELECT COUNT(*) AS row_count FROM ${tableName} WHERE tenant_id = ?`
@@ -143,15 +143,15 @@ test("ums-memory-5cb.1: enterprise sqlite schema ordering is deterministic", asy
     [...expectedTriggerOrder]
   );
   assert.deepEqual(
-    schema.enterpriseSqliteTables.map((table) => table.name),
+    schema.enterpriseSqliteTables.map((table: any) => table.name),
     [...expectedTableOrder]
   );
   assert.deepEqual(
-    schema.enterpriseSqliteIndexes.map((index) => index.name),
+    schema.enterpriseSqliteIndexes.map((index: any) => index.name),
     [...expectedIndexOrder]
   );
   assert.deepEqual(
-    schema.enterpriseSqliteTriggers.map((trigger) => trigger.name),
+    schema.enterpriseSqliteTriggers.map((trigger: any) => trigger.name),
     [...expectedTriggerOrder]
   );
   assert.equal(schema.enterpriseSqliteTables.length, expectedTableOrder.length);
@@ -165,9 +165,9 @@ test("ums-memory-5cb.1: enterprise sqlite schema ordering is deterministic", asy
   );
 
   const expectedStatements = [
-    ...schema.enterpriseSqliteTables.map((table) => table.ddl),
-    ...schema.enterpriseSqliteTriggers.map((trigger) => trigger.ddl),
-    ...schema.enterpriseSqliteIndexes.map((index) => index.ddl),
+    ...schema.enterpriseSqliteTables.map((table: any) => table.ddl),
+    ...schema.enterpriseSqliteTriggers.map((trigger: any) => trigger.ddl),
+    ...schema.enterpriseSqliteIndexes.map((index: any) => index.ddl),
   ];
   assert.deepEqual(schema.enterpriseSqliteSchemaStatements, expectedStatements);
   assert.equal(

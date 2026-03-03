@@ -2,9 +2,28 @@ import { isAbsolute, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
 const DEFAULT_EXPORT_NAME = "createUmsEngine";
-let cached;
 
-function toModuleSpecifier(modulePath) {
+type EngineFactory = (
+  options?: Record<string, unknown>
+) => unknown | Promise<unknown>;
+
+interface LoadedEngineFactory {
+  readonly factory: EngineFactory;
+  readonly source: string;
+  readonly exportName: string;
+}
+
+interface EngineLike {
+  readonly ingest: (input: unknown) => Promise<any>;
+  readonly recall: (input: unknown) => Promise<any>;
+  readonly getEventCount: (...args: any[]) => number;
+  readonly exportState: () => any;
+  readonly stateDigest: () => string;
+}
+
+let cached: LoadedEngineFactory | undefined;
+
+function toModuleSpecifier(modulePath: string): string {
   if (
     modulePath.startsWith(".") ||
     modulePath.startsWith("/") ||
@@ -18,15 +37,15 @@ function toModuleSpecifier(modulePath) {
   return modulePath;
 }
 
-async function loadEngineFactory() {
-  const modulePath = process.env.UMS_IMPL_MODULE;
-  const exportName = process.env.UMS_IMPL_EXPORT || DEFAULT_EXPORT_NAME;
+async function loadEngineFactory(): Promise<LoadedEngineFactory> {
+  const modulePath = process.env["UMS_IMPL_MODULE"];
+  const exportName = process.env["UMS_IMPL_EXPORT"] || DEFAULT_EXPORT_NAME;
 
   if (!modulePath) {
     try {
-      const mod = await import(
+      const mod = (await import(
         toModuleSpecifier("./apps/api/src/ums/engine.ts")
-      );
+      )) as { createUmsEngine?: EngineFactory };
       if (typeof mod.createUmsEngine === "function") {
         return {
           factory: mod.createUmsEngine,
@@ -37,7 +56,9 @@ async function loadEngineFactory() {
     } catch {
       // Fall back to the local reference engine in test-only contexts.
     }
-    const fallback = await import("./reference-ums-engine.ts");
+    const fallback = (await import("./reference-ums-engine.ts")) as {
+      createUmsEngine: EngineFactory;
+    };
     return {
       factory: fallback.createUmsEngine,
       source: "tests/support/reference-ums-engine.ts",
@@ -45,7 +66,10 @@ async function loadEngineFactory() {
     };
   }
 
-  const mod = await import(toModuleSpecifier(modulePath));
+  const mod = (await import(toModuleSpecifier(modulePath))) as Record<
+    string,
+    unknown
+  >;
   const factory = mod[exportName];
   if (typeof factory !== "function") {
     throw new TypeError(
@@ -53,7 +77,8 @@ async function loadEngineFactory() {
     );
   }
 
-  return { factory, source: modulePath, exportName };
+  const typedFactory = factory as EngineFactory;
+  return { factory: typedFactory, source: modulePath, exportName };
 }
 
 export async function getEngineFactory() {
@@ -79,12 +104,22 @@ export async function createEngine(options = {}) {
   if (!engine || typeof engine !== "object") {
     throw new TypeError("Engine factory must return an object.");
   }
-  if (typeof engine.ingest !== "function") {
+  const candidate = engine as Partial<EngineLike>;
+  if (typeof candidate.ingest !== "function") {
     throw new TypeError("Engine must expose an ingest() function.");
   }
-  if (typeof engine.recall !== "function") {
+  if (typeof candidate.recall !== "function") {
     throw new TypeError("Engine must expose a recall() function.");
   }
+  if (typeof candidate.getEventCount !== "function") {
+    throw new TypeError("Engine must expose a getEventCount() function.");
+  }
+  if (typeof candidate.exportState !== "function") {
+    throw new TypeError("Engine must expose an exportState() function.");
+  }
+  if (typeof candidate.stateDigest !== "function") {
+    throw new TypeError("Engine must expose a stateDigest() function.");
+  }
 
-  return engine;
+  return candidate as EngineLike;
 }

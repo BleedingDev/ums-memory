@@ -7,7 +7,7 @@ import {
   startSupervisedApiService,
 } from "../src/service-runtime.ts";
 
-function waitForPhase(service, expectedPhase, timeoutMs = 5000) {
+function waitForPhase(service: any, expectedPhase: any, timeoutMs = 5000) {
   return new Promise((resolvePromise, rejectPromise) => {
     const start = Date.now();
     const interval = setInterval(() => {
@@ -47,9 +47,9 @@ function listenOnEphemeralPort() {
   });
 }
 
-function closeNetServer(server) {
-  return new Promise((resolvePromise, rejectPromise) => {
-    server.close((error) => {
+function closeNetServer(server: any) {
+  return new Promise<void>((resolvePromise, rejectPromise) => {
+    server.close((error: any) => {
       if (error) {
         rejectPromise(error);
         return;
@@ -59,13 +59,15 @@ function closeNetServer(server) {
   });
 }
 
-function createMockServer({ failAfterMs } = {}) {
+function createMockServer({
+  failAfterMs,
+}: { readonly failAfterMs?: number } = {}) {
   const server = {
     listening: true,
     closeIdleConnections() {},
     closeAllConnections() {},
     unref() {},
-    close(callback) {
+    close(callback: any) {
       this.listening = false;
       if (typeof callback === "function") {
         callback(null);
@@ -119,7 +121,7 @@ test("supervised runtime fails fast before first bind when port is unavailable",
   const occupied = await listenOnEphemeralPort();
   const service = createSupervisedApiService({
     host: "127.0.0.1",
-    port: occupied.port,
+    port: (occupied as any).port,
     stateFile: null,
     monitorIntervalMs: 20,
     restartDelayMs: 20,
@@ -131,11 +133,11 @@ test("supervised runtime fails fast before first bind when port is unavailable",
     await service.start();
     await assert.rejects(service.ready(), /Failed to start API server/);
     const failed = await waitForPhase(service, "failed");
-    assert.equal(failed.phase, "failed");
-    assert.match(failed.lastError ?? "", /Failed to start API server/);
+    assert.equal((failed as any).phase, "failed");
+    assert.match((failed as any).lastError ?? "", /Failed to start API server/);
   } finally {
     await service.stop();
-    await closeNetServer(occupied.server);
+    await closeNetServer((occupied as any).server);
   }
 });
 
@@ -197,12 +199,15 @@ test("supervised runtime reports monitor failure after readiness without deferre
     await service.ready();
     const failed = await waitForPhase(service, "failed");
     assert.equal(startCallCount, 1);
-    assert.equal(failed.restartCount, 1);
+    assert.equal((failed as any).restartCount, 1);
     assert.match(
-      failed.lastError ?? "",
+      (failed as any).lastError ?? "",
       /API server listener stopped unexpectedly/
     );
-    assert.doesNotMatch(failed.lastError ?? "", /Deferred already completed/);
+    assert.doesNotMatch(
+      (failed as any).lastError ?? "",
+      /Deferred already completed/
+    );
   } finally {
     await service.stop();
   }

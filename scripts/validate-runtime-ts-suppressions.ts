@@ -74,28 +74,30 @@ function readAllowlist(projectRoot: string): AllowlistEntry[] {
   if (!isRecord(parsed)) {
     throw new Error("Allowlist root must be an object.");
   }
-  if (parsed.schemaVersion !== ALLOWLIST_SCHEMA_VERSION) {
+  if (parsed["schemaVersion"] !== ALLOWLIST_SCHEMA_VERSION) {
     throw new Error(
       `Allowlist schemaVersion must be "${ALLOWLIST_SCHEMA_VERSION}".`
     );
   }
-  if (!Array.isArray(parsed.entries)) {
+  if (!Array.isArray(parsed["entries"])) {
     throw new Error("Allowlist entries must be an array.");
   }
 
   const entries: AllowlistEntry[] = [];
-  for (let index = 0; index < parsed.entries.length; index += 1) {
-    const value = parsed.entries[index];
+  for (let index = 0; index < parsed["entries"].length; index += 1) {
+    const value = parsed["entries"][index];
     if (!isRecord(value)) {
       throw new Error(`entries[${index}] must be an object.`);
     }
 
-    const entryPath = typeof value.path === "string" ? value.path.trim() : "";
+    const entryPath =
+      typeof value["path"] === "string" ? value["path"].trim() : "";
     const followUpBeadId =
-      typeof value.followUpBeadId === "string"
-        ? value.followUpBeadId.trim()
+      typeof value["followUpBeadId"] === "string"
+        ? value["followUpBeadId"].trim()
         : "";
-    const notes = typeof value.notes === "string" ? value.notes.trim() : "";
+    const notes =
+      typeof value["notes"] === "string" ? value["notes"].trim() : "";
 
     if (!entryPath) {
       throw new Error(`entries[${index}].path must be a non-empty string.`);

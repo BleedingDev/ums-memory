@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { spawn, spawnSync } from "node:child_process";
+import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { constants as fsConstants } from "node:fs";
 import { access, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -9,21 +9,37 @@ const ROOT = process.cwd();
 const BUN_AVAILABLE =
   spawnSync("bun", ["--version"], { encoding: "utf8" }).status === 0;
 
-let buildDir = null;
-let umsBinaryPath = null;
+let buildDir: string | null = null;
+let umsBinaryPath: string | null = null;
 
-function runBinary(binaryPath, args, { stdin = "", cwd = ROOT } = {}) {
-  return new Promise((resolvePromise) => {
+interface BinaryCommandResult {
+  readonly code: number | null;
+  readonly stdout: string;
+  readonly stderr: string;
+}
+
+interface StartedBinaryServer {
+  readonly proc: ChildProcess;
+  readonly host: string;
+  readonly port: number;
+}
+
+function runBinary(
+  binaryPath: string,
+  args: readonly string[],
+  { stdin = "", cwd = ROOT } = {}
+): Promise<BinaryCommandResult> {
+  return new Promise<BinaryCommandResult>((resolvePromise) => {
     const proc = spawn(binaryPath, args, {
       cwd,
       stdio: ["pipe", "pipe", "pipe"],
     });
     let stdout = "";
     let stderr = "";
-    proc.stdout.on("data", (chunk) => {
+    proc.stdout.on("data", (chunk: Buffer) => {
       stdout += chunk.toString("utf8");
     });
-    proc.stderr.on("data", (chunk) => {
+    proc.stderr.on("data", (chunk: Buffer) => {
       stderr += chunk.toString("utf8");
     });
     proc.on("close", (code) => {
@@ -36,8 +52,12 @@ function runBinary(binaryPath, args, { stdin = "", cwd = ROOT } = {}) {
   });
 }
 
-function startBinaryServer(binaryPath, args, { cwd = ROOT } = {}) {
-  return new Promise((resolvePromise, rejectPromise) => {
+function startBinaryServer(
+  binaryPath: string,
+  args: readonly string[],
+  { cwd = ROOT }: { readonly cwd?: string } = {}
+): Promise<StartedBinaryServer> {
+  return new Promise<StartedBinaryServer>((resolvePromise, rejectPromise) => {
     const proc = spawn(binaryPath, args, {
       cwd,
       env: { ...process.env },
@@ -58,7 +78,7 @@ function startBinaryServer(binaryPath, args, { cwd = ROOT } = {}) {
       );
     }, 8000);
 
-    proc.stdout.on("data", (chunk) => {
+    proc.stdout.on("data", (chunk: Buffer) => {
       stdout += chunk.toString("utf8");
       const match = stdout.match(
         /UMS API listening on http:\/\/([^\s:]+):(\d+)/
@@ -66,15 +86,20 @@ function startBinaryServer(binaryPath, args, { cwd = ROOT } = {}) {
       if (!match || resolved) {
         return;
       }
+      const host = match[1];
+      const portRaw = match[2];
+      if (host === undefined || portRaw === undefined) {
+        return;
+      }
       resolved = true;
       clearTimeout(timeout);
       resolvePromise({
         proc,
-        host: match[1],
-        port: Number.parseInt(match[2], 10),
+        host,
+        port: Number.parseInt(portRaw, 10),
       });
     });
-    proc.stderr.on("data", (chunk) => {
+    proc.stderr.on("data", (chunk: Buffer) => {
       stderr += chunk.toString("utf8");
     });
     proc.on("error", (error) => {
@@ -96,8 +121,11 @@ function startBinaryServer(binaryPath, args, { cwd = ROOT } = {}) {
   });
 }
 
-async function stopBinaryServer(proc) {
-  await new Promise((resolvePromise) => {
+async function stopBinaryServer(proc: ChildProcess | undefined): Promise<void> {
+  if (!proc) {
+    return;
+  }
+  await new Promise<void>((resolvePromise) => {
     proc.once("exit", () => resolvePromise());
     proc.kill("SIGTERM");
   });
@@ -146,7 +174,9 @@ test(
     const tempDir = await mkdtemp(resolve(tmpdir(), "ums-single-cli-"));
     const stateFile = resolve(tempDir, "state.json");
     try {
-      const ingest = await runBinary(umsBinaryPath, [
+      assert.ok(umsBinaryPath);
+      const binaryPath = umsBinaryPath;
+      const ingest = await runBinary(binaryPath, [
         "ingest",
         "--state-file",
         stateFile,
@@ -160,12 +190,12 @@ test(
           ],
         }),
       ]);
-      assert.equal(ingest.code, 0);
-      const ingestBody = JSON.parse(ingest.stdout);
+      assert.equal((ingest as any).code, 0);
+      const ingestBody = JSON.parse((ingest as any).stdout);
       assert.equal(ingestBody.ok, true);
       assert.equal(ingestBody.data.accepted, 1);
 
-      const context = await runBinary(umsBinaryPath, [
+      const context = await runBinary(binaryPath, [
         "context",
         "--state-file",
         stateFile,
@@ -174,8 +204,8 @@ test(
         "--input",
         JSON.stringify({ profile: "single-cli", query: "single-binary-cli" }),
       ]);
-      assert.equal(context.code, 0);
-      const contextBody = JSON.parse(context.stdout);
+      assert.equal((context as any).code, 0);
+      const contextBody = JSON.parse((context as any).stdout);
       assert.equal(contextBody.ok, true);
       assert.equal(contextBody.data.matches.length, 1);
     } finally {
@@ -190,7 +220,9 @@ test(
   async () => {
     const tempDir = await mkdtemp(resolve(tmpdir(), "ums-single-serve-"));
     const stateFile = resolve(tempDir, "state.json");
-    const server = await startBinaryServer(umsBinaryPath, [
+    assert.ok(umsBinaryPath);
+    const binaryPath = umsBinaryPath;
+    const server = await startBinaryServer(binaryPath, [
       "serve",
       "--host",
       "127.0.0.1",
@@ -199,7 +231,7 @@ test(
       "--state-file",
       stateFile,
     ]);
-    const base = `http://${server.host}:${server.port}`;
+    const base = `http://${(server as any).host}:${(server as any).port}`;
     try {
       const rootRes = await fetch(`${base}/`);
       assert.equal(rootRes.status, 200);
@@ -224,7 +256,7 @@ test(
       assert.equal(ingestBody.ok, true);
       assert.equal(ingestBody.data.accepted, 1);
     } finally {
-      await stopBinaryServer(server.proc);
+      await stopBinaryServer((server as any).proc);
       await rm(tempDir, { recursive: true, force: true });
     }
   }
@@ -237,17 +269,19 @@ test(
     const tempDir = await mkdtemp(
       resolve(tmpdir(), "ums-single-default-shared-")
     );
+    assert.ok(umsBinaryPath);
+    const binaryPath = umsBinaryPath;
     const server = await startBinaryServer(
-      umsBinaryPath,
+      binaryPath,
       ["serve", "--host", "127.0.0.1", "--port", "0"],
       {
         cwd: tempDir,
       }
     );
-    const base = `http://${server.host}:${server.port}`;
+    const base = `http://${(server as any).host}:${(server as any).port}`;
     try {
       const cliIngest = await runBinary(
-        umsBinaryPath,
+        binaryPath,
         [
           "ingest",
           "--store-id",
@@ -266,7 +300,7 @@ test(
         ],
         { cwd: tempDir }
       );
-      assert.equal(cliIngest.code, 0);
+      assert.equal((cliIngest as any).code, 0);
 
       const contextRes = await fetch(`${base}/v1/context`, {
         method: "POST",
@@ -284,7 +318,7 @@ test(
       assert.equal(contextBody.ok, true);
       assert.equal(contextBody.data.matches.length, 1);
     } finally {
-      await stopBinaryServer(server.proc);
+      await stopBinaryServer((server as any).proc);
       await rm(tempDir, { recursive: true, force: true });
     }
   }

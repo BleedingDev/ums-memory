@@ -47,17 +47,36 @@ const REQUIRED_CONTENT_RULES = Object.freeze([
   }),
 ]);
 
-function normalizePath(filePath) {
+interface ValidateOptions {
+  readonly runbookPath?: string;
+}
+
+interface ValidationResult {
+  readonly schemaVersion: string;
+  readonly runbookPath: string;
+  readonly missingHeadings: readonly string[];
+  readonly missingPhrases: readonly string[];
+  readonly missingContentRules: readonly string[];
+  readonly ok: boolean;
+}
+
+interface ParsedArgs {
+  runbookPath: string;
+  json: boolean;
+  help: boolean;
+}
+
+function normalizePath(filePath: string): string {
   return filePath.split(path.sep).join("/");
 }
 
-function escapeRegExp(value) {
+function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
 }
 
 export async function validateVectorRetrievalEvaluation({
   runbookPath = DEFAULT_RUNBOOK_PATH,
-} = {}) {
+}: ValidateOptions = {}): Promise<ValidationResult> {
   const absoluteRunbookPath = path.resolve(runbookPath);
   const markdown = await readFile(absoluteRunbookPath, "utf8");
 
@@ -98,8 +117,8 @@ function printUsage() {
   );
 }
 
-function parseArgs(argv) {
-  const parsed = {
+function parseArgs(argv: readonly string[]): ParsedArgs {
+  const parsed: ParsedArgs = {
     runbookPath: DEFAULT_RUNBOOK_PATH,
     json: false,
     help: false,
@@ -135,7 +154,7 @@ function parseArgs(argv) {
   return parsed;
 }
 
-function printResult(result, asJson) {
+function printResult(result: ValidationResult, asJson: boolean): void {
   if (asJson) {
     process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
     return;
@@ -157,7 +176,7 @@ function printResult(result, asJson) {
 }
 
 export async function main(argv = process.argv.slice(2)) {
-  let parsed;
+  let parsed: ParsedArgs;
   try {
     parsed = parseArgs(argv);
   } catch (error) {

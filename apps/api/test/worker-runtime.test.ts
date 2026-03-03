@@ -12,7 +12,12 @@ import {
   startSupervisedWorkerService,
 } from "../src/worker-runtime.ts";
 
-async function withTempStateFile(fn) {
+async function withTempStateFile<T>(
+  fn: (params: {
+    readonly tempDir: string;
+    readonly stateFile: string;
+  }) => Promise<T>
+): Promise<T> {
   const tempDir = await mkdtemp(resolve(tmpdir(), "ums-worker-runtime-"));
   const stateFile = resolve(tempDir, "worker-state.json");
   try {
@@ -22,7 +27,7 @@ async function withTempStateFile(fn) {
   }
 }
 
-function waitForPhase(service, expectedPhase, timeoutMs = 5000) {
+function waitForPhase(service: any, expectedPhase: any, timeoutMs = 5000) {
   return new Promise((resolvePromise, rejectPromise) => {
     const startedAt = Date.now();
     const interval = setInterval(() => {
@@ -47,8 +52,8 @@ function waitForPhase(service, expectedPhase, timeoutMs = 5000) {
   });
 }
 
-function delay(ms) {
-  return new Promise((resolvePromise) => {
+function delay(ms: any) {
+  return new Promise<void>((resolvePromise) => {
     const timer = setTimeout(resolvePromise, ms);
     if (typeof timer.unref === "function") {
       timer.unref();
@@ -146,7 +151,9 @@ test("worker cycle executes review/replay/doctor with real shared state and retu
     const storeProfiles = snapshot?.stores?.[storeId]?.profiles ?? {};
     const profileKeys = Object.keys(storeProfiles);
     assert.equal(profileKeys.length, 1);
-    const profileState = storeProfiles[profileKeys[0]];
+    const profileKey = profileKeys[0];
+    assert.ok(profileKey);
+    const profileState = storeProfiles[profileKey];
     assert.equal(Array.isArray(profileState.replayEvaluations), true);
     assert.equal(profileState.replayEvaluations.length, 1);
   });
@@ -195,9 +202,12 @@ test("supervised worker fails fast before first successful cycle when startup cy
       await service.start();
       await assert.rejects(service.ready(), /State file is not valid JSON/);
       const failed = await waitForPhase(service, "failed");
-      assert.equal(failed.phase, "failed");
-      assert.equal(failed.cycleCount, 0);
-      assert.match(failed.lastError ?? "", /State file is not valid JSON/);
+      assert.equal((failed as any).phase, "failed");
+      assert.equal((failed as any).cycleCount, 0);
+      assert.match(
+        (failed as any).lastError ?? "",
+        /State file is not valid JSON/
+      );
     } finally {
       await service.stop();
     }
@@ -225,9 +235,15 @@ test("worker failure after readiness transitions to failed with restartLimit=0 w
     await service.ready();
     const failed = await waitForPhase(service, "failed");
     assert.equal(invocationCount, 2);
-    assert.equal(failed.phase, "failed");
-    assert.match(failed.lastError ?? "", /cycle failure after readiness/);
-    assert.doesNotMatch(failed.lastError ?? "", /Deferred already completed/);
+    assert.equal((failed as any).phase, "failed");
+    assert.match(
+      (failed as any).lastError ?? "",
+      /cycle failure after readiness/
+    );
+    assert.doesNotMatch(
+      (failed as any).lastError ?? "",
+      /Deferred already completed/
+    );
   } finally {
     await service.stop();
   }

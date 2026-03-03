@@ -62,5 +62,7 @@ test("guardrails redact secrets and filter unsafe instructions by default", asyn
     maxItems: 25,
     tokenBudget: 600,
   });
-  assert.ok(auditRecall.items.some((item) => item.flags.unsafeInstruction));
+  assert.ok(
+    auditRecall.items.some((item: any) => item.flags.unsafeInstruction)
+  );
 });

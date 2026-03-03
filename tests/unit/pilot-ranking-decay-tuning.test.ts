@@ -349,13 +349,13 @@ test("pilot ranking/decay tuning heuristics shift from baseline under recall fai
   });
 
   assert.equal(
-    stressed.recommendedRankingWeights.reliability >
-      stressed.baseline.rankingWeights.reliability,
+    stressed.recommendedRankingWeights["reliability"] >
+      stressed.baseline.rankingWeights["reliability"],
     true
   );
   assert.equal(
-    stressed.recommendedRankingWeights.policySafety >
-      stressed.baseline.rankingWeights.policySafety,
+    stressed.recommendedRankingWeights["policySafety"] >
+      stressed.baseline.rankingWeights["policySafety"],
     true
   );
   assert.equal(
@@ -364,8 +364,8 @@ test("pilot ranking/decay tuning heuristics shift from baseline under recall fai
     true
   );
   assert.equal(
-    stressed.recommendedRankingWeights.reliability >
-      healthy.recommendedRankingWeights.reliability,
+    stressed.recommendedRankingWeights["reliability"] >
+      healthy.recommendedRankingWeights["reliability"],
     true
   );
   assert.equal(stressed.guardrails.abortOnRollbackSignal, true);

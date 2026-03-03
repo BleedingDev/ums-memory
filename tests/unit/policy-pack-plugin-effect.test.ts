@@ -18,7 +18,7 @@ const effectModuleDirectory = new URL(
   import.meta.url
 );
 
-const transpileEffectModule = (sourceFilename, tempDirectory) => {
+const transpileEffectModule = (sourceFilename: any, tempDirectory: any) => {
   const sourceFileUrl = new URL(sourceFilename, effectModuleDirectory);
   const source = readFileSync(sourceFileUrl, "utf8");
   const transpiled = ts.transpileModule(source, {
@@ -65,8 +65,8 @@ const transpileManifest = Object.freeze([
   "services/policy-pack-plugin-service.ts",
 ]);
 
-let modulesPromise;
-let transpiledDirectoryPath;
+let modulesPromise: any;
+let transpiledDirectoryPath: any;
 
 const loadPolicyPackPluginModules = async () => {
   if (!modulesPromise) {
@@ -137,7 +137,7 @@ test("ums-memory-a9v.5 custom policy pack plugin service hook is invoked", async
   const { policyPackPluginServiceModule } = await loadPolicyPackPluginModules();
   let called = 0;
   const service = policyPackPluginServiceModule.makePolicyPackPluginService(
-    (request) => {
+    (request: any) => {
       called += 1;
       return Effect.succeed({
         contractVersion: "v1",
@@ -169,9 +169,16 @@ test("ums-memory-a9v.5 custom policy pack plugin service hook is invoked", async
       updatedAt: "2026-03-02T20:05:00.000Z",
     })
   );
+  const typedResponse = response as {
+    readonly outcome: string;
+    readonly reasonCodes: readonly string[];
+    readonly metadata: {
+      readonly seenPolicyKey?: string;
+    };
+  };
 
   assert.equal(called, 1);
-  assert.equal(response.outcome, "deny");
-  assert.deepEqual(response.reasonCodes, ["plugin-risk"]);
-  assert.equal(response.metadata.seenPolicyKey, "plugin-deny");
+  assert.equal(typedResponse.outcome, "deny");
+  assert.deepEqual(typedResponse.reasonCodes, ["plugin-risk"]);
+  assert.equal(typedResponse.metadata.seenPolicyKey, "plugin-deny");
 });

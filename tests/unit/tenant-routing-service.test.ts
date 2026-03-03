@@ -13,7 +13,7 @@ import { pathToFileURL } from "node:url";
 import { Effect as EffectOriginal } from "effect";
 import ts from "typescript";
 
-const either = (effect) =>
+const either = (effect: any) =>
   EffectOriginal.result(effect).pipe(
     EffectOriginal.map((result) =>
       result._tag === "Failure"
@@ -22,14 +22,14 @@ const either = (effect) =>
     )
   );
 
-const Effect = { ...EffectOriginal, either };
+const Effect: any = { ...EffectOriginal, either };
 
 const effectModuleDirectory = new URL(
   "../../libs/shared/src/effect/",
   import.meta.url
 );
 
-const transpileEffectModule = (sourceFilename, tempDirectory) => {
+const transpileEffectModule = (sourceFilename: any, tempDirectory: any) => {
   const sourceFileUrl = new URL(sourceFilename, effectModuleDirectory);
   const source = readFileSync(sourceFileUrl, "utf8");
   const transpiled = ts.transpileModule(source, {
@@ -79,8 +79,8 @@ const transpileManifest = Object.freeze([
   "services/tenant-routing-service.ts",
 ]);
 
-let modulesPromise;
-let transpiledDirectoryPath;
+let modulesPromise: any;
+let transpiledDirectoryPath: any;
 
 const loadTenantRoutingModules = async () => {
   if (!modulesPromise) {
@@ -262,7 +262,7 @@ test("ums-memory-wt0.2: denies with TENANT_ISSUER_MISMATCH when issuer binding d
   assert.deepEqual(decision.candidateTenantIds, ["tenant_a", "tenant_b"]);
 });
 
-test("ums-memory-wt0.2: denies with TENANT_ISSUER_MISMATCH on issuer bindings that reference unknown tenants", async () => {
+test("ums-memory-wt0.2: denies with TENANT_ISSUER_MISMATCH on issuer bindings that reference any tenants", async () => {
   const { tenantRoutingServiceModule } = await loadTenantRoutingModules();
   const service =
     tenantRoutingServiceModule.makeDeterministicTenantRoutingService();
@@ -270,11 +270,11 @@ test("ums-memory-wt0.2: denies with TENANT_ISSUER_MISMATCH on issuer bindings th
   const decision = await Effect.runPromise(
     service.resolve({
       ...baseRequest,
-      issuer: "https://idp-unknown.example.com",
+      issuer: "https://idp-any.example.com",
       issuerBindings: [
         ...baseRequest.issuerBindings,
         {
-          issuer: "https://idp-unknown.example.com",
+          issuer: "https://idp-any.example.com",
           tenantId: "tenant_missing",
         },
       ],
@@ -363,7 +363,7 @@ test("ums-memory-wt0.2: deterministic layer keeps evaluatedAtMillis stable at ze
     Effect.provide(
       Effect.flatMap(
         Effect.service(tenantRoutingServiceModule.TenantRoutingServiceTag),
-        (service) =>
+        (service: any) =>
           service.resolve({
             ...baseRequest,
             tenantIdClaim: "tenant_b",

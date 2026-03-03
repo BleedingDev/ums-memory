@@ -44,7 +44,7 @@ test("provenance envelope schema rejects payload without tenantId", () => {
 });
 
 test("ingestion request schema accepts request-level and record-level provenance envelope", () => {
-  const decode = Schema.decodeUnknownSync(IngestionRequestSchema);
+  const decode = Schema.decodeUnknownSync(IngestionRequestSchema as any);
 
   const decoded = decode({
     source: "codex-cli",
@@ -73,7 +73,6 @@ test("ingestion request schema accepts request-level and record-level provenance
       },
     ],
   });
-
   assert.equal(decoded.records.length, 1);
   assert.equal(decoded.records[0]?.provenance?.tenantId, "tenant-alpha");
   assert.equal(decoded.provenance?.agentId, "agent-codex");

@@ -21,14 +21,16 @@ const POLICY_PACK_PLUGIN_FIXTURE = resolve(
   process.cwd(),
   "apps/api/test/fixtures/policy-pack-plugin-override.ts"
 );
-const ORIGINAL_RUNTIME_ADAPTER_MODULE = process.env.UMS_RUNTIME_ADAPTER_MODULE;
-const ORIGINAL_RUNTIME_ADAPTER_EXPORT = process.env.UMS_RUNTIME_ADAPTER_EXPORT;
+const ORIGINAL_RUNTIME_ADAPTER_MODULE =
+  process.env["UMS_RUNTIME_ADAPTER_MODULE"];
+const ORIGINAL_RUNTIME_ADAPTER_EXPORT =
+  process.env["UMS_RUNTIME_ADAPTER_EXPORT"];
 const ORIGINAL_POLICY_PACK_PLUGIN_MODULE =
-  process.env.UMS_POLICY_PACK_PLUGIN_MODULE;
+  process.env["UMS_POLICY_PACK_PLUGIN_MODULE"];
 const ORIGINAL_POLICY_PACK_PLUGIN_EXPORT =
-  process.env.UMS_POLICY_PACK_PLUGIN_EXPORT;
+  process.env["UMS_POLICY_PACK_PLUGIN_EXPORT"];
 
-function runCli(args, stdin = "", { env = process.env } = {}) {
+function runCli(args: any, stdin = "", { env = process.env } = {}) {
   return new Promise((resolvePromise) => {
     const proc = spawn(
       process.execPath,
@@ -57,16 +59,17 @@ function runCli(args, stdin = "", { env = process.env } = {}) {
 }
 
 function useLegacyRuntimeAdapter() {
-  delete process.env.UMS_RUNTIME_ADAPTER_MODULE;
-  delete process.env.UMS_RUNTIME_ADAPTER_EXPORT;
-  delete process.env.UMS_POLICY_PACK_PLUGIN_MODULE;
-  delete process.env.UMS_POLICY_PACK_PLUGIN_EXPORT;
+  delete process.env["UMS_RUNTIME_ADAPTER_MODULE"];
+  delete process.env["UMS_RUNTIME_ADAPTER_EXPORT"];
+  delete process.env["UMS_POLICY_PACK_PLUGIN_MODULE"];
+  delete process.env["UMS_POLICY_PACK_PLUGIN_EXPORT"];
   clearRuntimeAdapterCache();
 }
 
 function useFixtureRuntimeAdapter() {
-  process.env.UMS_RUNTIME_ADAPTER_MODULE = RUNTIME_ADAPTER_FIXTURE;
-  process.env.UMS_RUNTIME_ADAPTER_EXPORT = "createDeterministicRuntimeAdapter";
+  process.env["UMS_RUNTIME_ADAPTER_MODULE"] = RUNTIME_ADAPTER_FIXTURE;
+  process.env["UMS_RUNTIME_ADAPTER_EXPORT"] =
+    "createDeterministicRuntimeAdapter";
   clearRuntimeAdapterCache();
 }
 
@@ -77,26 +80,26 @@ test.beforeEach(() => {
 
 test.after(() => {
   if (ORIGINAL_RUNTIME_ADAPTER_MODULE) {
-    process.env.UMS_RUNTIME_ADAPTER_MODULE = ORIGINAL_RUNTIME_ADAPTER_MODULE;
+    process.env["UMS_RUNTIME_ADAPTER_MODULE"] = ORIGINAL_RUNTIME_ADAPTER_MODULE;
   } else {
-    delete process.env.UMS_RUNTIME_ADAPTER_MODULE;
+    delete process.env["UMS_RUNTIME_ADAPTER_MODULE"];
   }
   if (ORIGINAL_RUNTIME_ADAPTER_EXPORT) {
-    process.env.UMS_RUNTIME_ADAPTER_EXPORT = ORIGINAL_RUNTIME_ADAPTER_EXPORT;
+    process.env["UMS_RUNTIME_ADAPTER_EXPORT"] = ORIGINAL_RUNTIME_ADAPTER_EXPORT;
   } else {
-    delete process.env.UMS_RUNTIME_ADAPTER_EXPORT;
+    delete process.env["UMS_RUNTIME_ADAPTER_EXPORT"];
   }
   if (ORIGINAL_POLICY_PACK_PLUGIN_MODULE) {
-    process.env.UMS_POLICY_PACK_PLUGIN_MODULE =
+    process.env["UMS_POLICY_PACK_PLUGIN_MODULE"] =
       ORIGINAL_POLICY_PACK_PLUGIN_MODULE;
   } else {
-    delete process.env.UMS_POLICY_PACK_PLUGIN_MODULE;
+    delete process.env["UMS_POLICY_PACK_PLUGIN_MODULE"];
   }
   if (ORIGINAL_POLICY_PACK_PLUGIN_EXPORT) {
-    process.env.UMS_POLICY_PACK_PLUGIN_EXPORT =
+    process.env["UMS_POLICY_PACK_PLUGIN_EXPORT"] =
       ORIGINAL_POLICY_PACK_PLUGIN_EXPORT;
   } else {
-    delete process.env.UMS_POLICY_PACK_PLUGIN_EXPORT;
+    delete process.env["UMS_POLICY_PACK_PLUGIN_EXPORT"];
   }
   clearRuntimeAdapterCache();
   resetStore();
@@ -151,7 +154,7 @@ test("runtime adapter module override resolves deterministic contract behavior",
     stateFile: "/tmp/custom-state.json",
   });
 
-  assert.equal(first.adapterId, "deterministic-runtime-adapter");
+  assert.equal((first as any).adapterId, "deterministic-runtime-adapter");
   assert.deepEqual(first, second);
 });
 
@@ -187,19 +190,22 @@ test("legacy runtime adapter can load policy pack plugins from env module", asyn
     env,
   });
 
-  assert.equal(first.action, "created");
-  assert.equal(first.decision.outcome, "deny");
+  assert.equal((first as any).action, "created");
+  assert.equal((first as any).decision.outcome, "deny");
   assert.equal(
-    first.decision.reasonCodes.includes("fixture-plugin-deny"),
+    (first as any).decision.reasonCodes.includes("fixture-plugin-deny"),
     true
   );
   assert.equal(
-    first.decision.metadata.policyPackPlugin.pluginName,
+    (first as any).decision.metadata.policyPackPlugin.pluginName,
     "fixture-policy-pack-plugin"
   );
-  assert.equal(first.decision.metadata.policyPackPlugin.status, "executed");
-  assert.equal(replay.action, "noop");
-  assert.equal(replay.decisionDigest, first.decisionDigest);
+  assert.equal(
+    (first as any).decision.metadata.policyPackPlugin.status,
+    "executed"
+  );
+  assert.equal((replay as any).action, "noop");
+  assert.equal((replay as any).decisionDigest, (first as any).decisionDigest);
 });
 
 test("api server routes through runtime adapter override for list + operation execution", async () => {
@@ -251,9 +257,9 @@ test("api server routes through runtime adapter override for list + operation ex
     assert.equal(secondBody.ok, true);
     assert.equal(secondBody.data.requestDigest, firstBody.data.requestDigest);
   } finally {
-    await new Promise((resolvePromise, rejectPromise) => {
+    await new Promise<void>((resolvePromise, rejectPromise) => {
       server.close((error) =>
-        error ? rejectPromise(error) : resolvePromise()
+        error ? rejectPromise(error) : resolvePromise(undefined)
       );
     });
   }
@@ -275,14 +281,14 @@ test("cli routes through runtime adapter override deterministically", async () =
   ];
 
   const first = await runCli(args, "", { env });
-  assert.equal(first.code, 0, first.stderr);
-  const firstBody = JSON.parse(first.stdout);
+  assert.equal((first as any).code, 0, (first as any).stderr);
+  const firstBody = JSON.parse((first as any).stdout);
   assert.equal(firstBody.ok, true);
   assert.equal(firstBody.data.adapterId, "deterministic-runtime-adapter");
 
   const second = await runCli(args, "", { env });
-  assert.equal(second.code, 0, second.stderr);
-  const secondBody = JSON.parse(second.stdout);
+  assert.equal((second as any).code, 0, (second as any).stderr);
+  const secondBody = JSON.parse((second as any).stdout);
   assert.equal(secondBody.ok, true);
   assert.equal(secondBody.data.requestDigest, firstBody.data.requestDigest);
 });

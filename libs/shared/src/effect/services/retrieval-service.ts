@@ -147,6 +147,20 @@ interface HitChronology {
   readonly supersedesMemoryIds: readonly RetrievalHit["memoryId"][];
 }
 
+interface ExplainabilityProvenance {
+  readonly tenantId: string;
+  readonly projectId: string | null;
+  readonly roleId: string | null;
+  readonly userId: string | null;
+  readonly agentId: string | null;
+  readonly conversationId: string | null;
+  readonly messageId: string | null;
+  readonly sourceId: string | null;
+  readonly batchId: string | null;
+  readonly evidencePointerIds: readonly string[];
+  readonly evidenceSourceRefs: readonly string[];
+}
+
 interface PlannedHit {
   readonly memoryId: RetrievalHit["memoryId"];
   readonly layer: RetrievalHit["layer"];
@@ -159,6 +173,7 @@ interface PlannedHit {
   readonly rankingSignals: RankingSignals;
   readonly chronology: HitChronology;
   readonly reconciledMemoryIds: readonly RetrievalHit["memoryId"][];
+  readonly provenance: ExplainabilityProvenance | null;
 }
 
 interface NormalizedScopeSelectors {
@@ -211,6 +226,7 @@ interface PlannedHitCandidate {
   readonly expiresAtMillis: number | null;
   readonly rankingSignals: Omit<RankingSignals, "decay">;
   readonly chronology: HitChronology;
+  readonly provenance: ExplainabilityProvenance | null;
 }
 
 interface CursorPayload {
@@ -590,6 +606,144 @@ const parsePayloadRecord = (
   } catch {
     return null;
   }
+};
+
+const readNullableTrimmedString = (
+  record: Record<string, unknown> | null,
+  keys: readonly string[]
+): string | null => {
+  const value = readRecordValue(record, keys);
+  const trimmed = toOptionalTrimmedString(value);
+  return trimmed === null ? null : trimmed;
+};
+
+const toSortedUniqueStrings = (values: Iterable<string>): readonly string[] =>
+  Object.freeze(
+    [...new Set(values)].sort((left, right) => left.localeCompare(right))
+  );
+
+const evidencePointerCollectionKeys = Object.freeze([
+  "evidencePointers",
+  "evidence_pointers",
+]);
+
+const evidencePointerIdKeys = Object.freeze([
+  "pointerId",
+  "pointer_id",
+  "evidenceId",
+  "evidence_id",
+  "id",
+]);
+
+const evidencePointerSourceRefKeys = Object.freeze([
+  "sourceRef",
+  "source_ref",
+  "reference",
+  "ref",
+]);
+
+const collectExplainabilityEvidenceChain = (
+  payloadRecord: Record<string, unknown> | null
+): {
+  readonly evidencePointerIds: readonly string[];
+  readonly evidenceSourceRefs: readonly string[];
+} => {
+  const metadataRecord = toOptionalRecord(
+    readRecordValue(payloadRecord, ["metadata"])
+  );
+  const containers = [payloadRecord, metadataRecord];
+  const evidencePointerIds = new Set<string>();
+  const evidenceSourceRefs = new Set<string>();
+
+  for (const container of containers) {
+    if (container === null) {
+      continue;
+    }
+    for (const key of evidencePointerCollectionKeys) {
+      const pointers = readRecordValue(container, [key]);
+      if (!Array.isArray(pointers)) {
+        continue;
+      }
+      for (const pointer of pointers) {
+        const pointerRecord = toOptionalRecord(pointer);
+        if (pointerRecord === null) {
+          continue;
+        }
+        const pointerId = readNullableTrimmedString(
+          pointerRecord,
+          evidencePointerIdKeys
+        );
+        if (pointerId !== null) {
+          evidencePointerIds.add(pointerId);
+        }
+        const sourceRef = readNullableTrimmedString(
+          pointerRecord,
+          evidencePointerSourceRefKeys
+        );
+        if (sourceRef !== null) {
+          evidenceSourceRefs.add(sourceRef);
+        }
+      }
+    }
+  }
+
+  return {
+    evidencePointerIds: toSortedUniqueStrings(evidencePointerIds),
+    evidenceSourceRefs: toSortedUniqueStrings(evidenceSourceRefs),
+  };
+};
+
+const toExplainabilityProvenance = (
+  payloadRecord: Record<string, unknown> | null,
+  tenantId: string
+): ExplainabilityProvenance | null => {
+  const metadataRecord = toOptionalRecord(
+    readRecordValue(payloadRecord, ["metadata"])
+  );
+  const provenanceRecord = toOptionalRecord(
+    readRecordValue(payloadRecord, [
+      "provenance",
+      "provenanceMetadata",
+      "provenance_metadata",
+    ])
+  );
+  const metadataProvenanceRecord = toOptionalRecord(
+    readRecordValue(metadataRecord, [
+      "provenance",
+      "provenanceMetadata",
+      "provenance_metadata",
+    ])
+  );
+  const envelope = provenanceRecord ?? metadataProvenanceRecord;
+  if (envelope === null) {
+    return null;
+  }
+
+  const envelopeTenantId = readNullableTrimmedString(envelope, [
+    "tenantId",
+    "tenant_id",
+  ]);
+  if (envelopeTenantId === null || envelopeTenantId !== tenantId) {
+    return null;
+  }
+
+  const evidenceChain = collectExplainabilityEvidenceChain(payloadRecord);
+  return Object.freeze({
+    tenantId: envelopeTenantId,
+    projectId: readNullableTrimmedString(envelope, ["projectId", "project_id"]),
+    roleId: readNullableTrimmedString(envelope, ["roleId", "role_id"]),
+    userId: readNullableTrimmedString(envelope, ["userId", "user_id"]),
+    agentId: readNullableTrimmedString(envelope, ["agentId", "agent_id"]),
+    conversationId: readNullableTrimmedString(envelope, [
+      "conversationId",
+      "conversation_id",
+    ]),
+    messageId: readNullableTrimmedString(envelope, ["messageId", "message_id"]),
+    sourceId: readNullableTrimmedString(envelope, ["sourceId", "source_id"]),
+    batchId: readNullableTrimmedString(envelope, ["batchId", "batch_id"]),
+    evidencePointerIds: evidenceChain.evidencePointerIds,
+    evidenceSourceRefs: evidenceChain.evidenceSourceRefs,
+  });
 };
 
 const contradictionLinkKeys = Object.freeze([
@@ -1225,6 +1379,7 @@ const createPlannedHit = (
     rankingSignals,
     chronology: candidate.chronology,
     reconciledMemoryIds: Object.freeze([]),
+    provenance: candidate.provenance,
   };
 };
 
@@ -1710,6 +1865,10 @@ const buildPlannedHits = (
 
     const payloadRecord = parsePayloadRecord(memoryRow.payloadJson);
     const excerpt = toExcerpt(memoryRow.title, payloadRecord);
+    const provenance = toExplainabilityProvenance(
+      payloadRecord,
+      normalized.request.spaceId
+    );
     const searchableText =
       `${memoryRow.title}\n${excerpt}\n${memoryRow.payloadJson}`.toLowerCase();
     const scopeRank = toScopeRank(scopeRow.scopeLevel);
@@ -1735,6 +1894,7 @@ const buildPlannedHits = (
       expiresAtMillis: memoryRow.expiresAtMillis,
       rankingSignals,
       chronology,
+      provenance,
     });
   }
 
@@ -2008,27 +2168,52 @@ const toRetrievalExplainabilityHit = (
   normalized: NormalizedRetrievalRequest,
   hit: PlannedHit,
   rank: number
-): RetrievalExplainabilityHit => ({
-  memoryId: hit.memoryId,
-  layer: hit.layer,
-  score: hit.score,
-  excerpt: hit.excerpt,
-  rank,
-  scopeId: hit.scopeId,
-  scopeLevel: hit.scopeLevel,
-  reasonCodes: toExplainabilityReasonCodes(normalized, hit),
-  rankingSignals: {
-    relevance: hit.rankingSignals.relevance,
-    evidenceStrength: hit.rankingSignals.evidenceStrength,
-    decay: hit.rankingSignals.decay,
-    humanWeight: hit.rankingSignals.humanWeight,
-    utility: hit.rankingSignals.utility,
-  },
-  weightedContributions: toExplainabilityWeightedContributions(
-    normalized.rankingWeights,
-    hit.rankingSignals
-  ),
-});
+): RetrievalExplainabilityHit => {
+  const baseHit: RetrievalExplainabilityHit = {
+    memoryId: hit.memoryId,
+    layer: hit.layer,
+    score: hit.score,
+    excerpt: hit.excerpt,
+    rank,
+    scopeId: hit.scopeId,
+    scopeLevel: hit.scopeLevel,
+    reasonCodes: toExplainabilityReasonCodes(normalized, hit),
+    rankingSignals: {
+      relevance: hit.rankingSignals.relevance,
+      evidenceStrength: hit.rankingSignals.evidenceStrength,
+      decay: hit.rankingSignals.decay,
+      humanWeight: hit.rankingSignals.humanWeight,
+      utility: hit.rankingSignals.utility,
+    },
+    weightedContributions: toExplainabilityWeightedContributions(
+      normalized.rankingWeights,
+      hit.rankingSignals
+    ),
+  };
+
+  if (hit.provenance === null) {
+    return baseHit;
+  }
+
+  const provenance = {
+    tenantId: hit.provenance.tenantId,
+    projectId: hit.provenance.projectId ?? undefined,
+    roleId: hit.provenance.roleId ?? undefined,
+    userId: hit.provenance.userId ?? undefined,
+    agentId: hit.provenance.agentId ?? undefined,
+    conversationId: hit.provenance.conversationId ?? undefined,
+    messageId: hit.provenance.messageId ?? undefined,
+    sourceId: hit.provenance.sourceId ?? undefined,
+    batchId: hit.provenance.batchId ?? undefined,
+    evidencePointerIds: [...hit.provenance.evidencePointerIds],
+    evidenceSourceRefs: [...hit.provenance.evidenceSourceRefs],
+  } as unknown as NonNullable<RetrievalExplainabilityHit["provenance"]>;
+
+  return {
+    ...baseHit,
+    provenance,
+  };
+};
 
 const toRetrievalExplainabilityResponse = (
   normalized: NormalizedRetrievalRequest,

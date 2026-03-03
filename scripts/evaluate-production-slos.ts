@@ -66,7 +66,25 @@ const ACTION_BY_OBJECTIVE = Object.freeze({
     "Review policy decisions, tighten policy guardrails, and ensure review/deny rates return within objective.",
 });
 
-function compareStrings(left, right) {
+interface EvaluateProductionSloOptions {
+  readonly tuningRecommendation?: unknown;
+  readonly evaluatedAt?: string;
+  readonly dashboardSources?: readonly string[];
+  readonly tuningSource?: string | null;
+}
+
+interface ParsedArgs {
+  dashboard: string[];
+  tuning: string;
+  output: string;
+  compact: boolean;
+  evaluatedAt: string;
+  help: boolean;
+}
+
+type JsonObject = Record<string, unknown>;
+
+function compareStrings(left: string, right: string): number {
   if (left < right) {
     return -1;
   }
@@ -76,36 +94,40 @@ function compareStrings(left, right) {
   return 0;
 }
 
-function isRecord(value) {
+function isRecord(value: unknown): value is JsonObject {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
-function round(value, digits = 6) {
+function round(value: number, digits = 6): number {
   return Number(value.toFixed(digits));
 }
 
-function roundRateOrNull(count, total) {
+function roundRateOrNull(count: number, total: number): number | null {
   if (total <= 0) {
     return null;
   }
   return round(count / total);
 }
 
-function roundPerThousandOrNull(count, total) {
+function roundPerThousandOrNull(count: number, total: number): number | null {
   if (total <= 0) {
     return null;
   }
   return round((count * 1000) / total);
 }
 
-function readRequiredField(record, key, label) {
+function readRequiredField(
+  record: JsonObject,
+  key: string,
+  label: string
+): unknown {
   if (!(key in record)) {
     throw new Error(`Missing required field: ${label}.`);
   }
   return record[key];
 }
 
-function readNonNegativeInteger(value, label) {
+function readNonNegativeInteger(value: unknown, label: string): number {
   if (
     typeof value !== "number" ||
     !Number.isFinite(value) ||
@@ -117,14 +139,14 @@ function readNonNegativeInteger(value, label) {
   return value;
 }
 
-function readNonNegativeNumber(value, label) {
+function readNonNegativeNumber(value: unknown, label: string): number {
   if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
     throw new Error(`Missing required numeric field: ${label}.`);
   }
   return round(value);
 }
 
-function readRate(value, label) {
+function readRate(value: unknown, label: string): number {
   if (
     typeof value !== "number" ||
     !Number.isFinite(value) ||
@@ -136,7 +158,7 @@ function readRate(value, label) {
   return round(value);
 }
 
-function readLatency(value, label) {
+function readLatency(value: unknown, label: string): number | null {
   if (value === null) {
     return null;
   }
@@ -146,14 +168,14 @@ function readLatency(value, label) {
   return round(value, 3);
 }
 
-function readBoolean(value, label) {
+function readBoolean(value: unknown, label: string): boolean {
   if (typeof value !== "boolean") {
     throw new Error(`Missing required boolean field: ${label}.`);
   }
   return value;
 }
 
-function readHistogram(value, label) {
+function readHistogram(value: unknown, label: string): Map<string, number> {
   if (!isRecord(value)) {
     throw new Error(`Missing required histogram field: ${label}.`);
   }
@@ -167,7 +189,7 @@ function readHistogram(value, label) {
   return histogram;
 }
 
-function normalizeToken(value) {
+function normalizeToken(value: unknown): string {
   return String(value ?? "")
     .trim()
     .toLowerCase()
@@ -175,14 +197,19 @@ function normalizeToken(value) {
     .replace(/-+/g, "_");
 }
 
-function isPolicyReviewOrDeny(policyDecision) {
+function isPolicyReviewOrDeny(policyDecision: unknown): boolean {
   const normalized = normalizeToken(policyDecision);
   return (
     normalized === "review" || normalized === "deny" || normalized === "denied"
   );
 }
 
-function assertApproxEqual(actual, expected, label, tolerance = 1e-6) {
+function assertApproxEqual(
+  actual: number,
+  expected: number,
+  label: string,
+  tolerance = 1e-6
+) {
   if (Math.abs(actual - expected) > tolerance) {
     throw new Error(
       `Inconsistent derived field: ${label}. Expected ${expected}, received ${actual}.`
@@ -190,7 +217,7 @@ function assertApproxEqual(actual, expected, label, tolerance = 1e-6) {
   }
 }
 
-function toIsoTimestamp(value) {
+function toIsoTimestamp(value: unknown): string | null {
   if (typeof value !== "string" || !value.trim()) {
     return null;
   }
@@ -205,7 +232,7 @@ function toIsoTimestamp(value) {
   return new Date(parsed).toISOString();
 }
 
-function sumHistogramValues(histogram) {
+function sumHistogramValues(histogram: Map<string, number>): number {
   let total = 0;
   for (const count of histogram.values()) {
     total += count;
@@ -213,7 +240,7 @@ function sumHistogramValues(histogram) {
   return total;
 }
 
-function readDashboard(dashboard, sourceLabel) {
+function readDashboard(dashboard: unknown, sourceLabel: string) {
   if (!isRecord(dashboard)) {
     throw new Error(`${sourceLabel} must be a JSON object.`);
   }
@@ -440,7 +467,10 @@ function readDashboard(dashboard, sourceLabel) {
   };
 }
 
-function readTuningRecommendation(recommendation, sourceLabel) {
+function readTuningRecommendation(
+  recommendation: unknown,
+  sourceLabel: string
+) {
   if (!isRecord(recommendation)) {
     throw new Error(`${sourceLabel} must be a JSON object.`);
   }
@@ -527,7 +557,9 @@ function readTuningRecommendation(recommendation, sourceLabel) {
   };
 }
 
-function buildThresholds(tuningRecommendation) {
+function buildThresholds(
+  tuningRecommendation: ReturnType<typeof readTuningRecommendation> | null
+) {
   const maxFailureRate = tuningRecommendation
     ? Math.min(BASE_THRESHOLDS.failureRate, tuningRecommendation.maxFailureRate)
     : BASE_THRESHOLDS.failureRate;
@@ -637,7 +669,9 @@ function buildThresholds(tuningRecommendation) {
   };
 }
 
-function aggregateMeasurements(dashboards) {
+function aggregateMeasurements(
+  dashboards: readonly ReturnType<typeof readDashboard>[]
+) {
   let requestVolume = 0;
   let successCount = 0;
   let failureCount = 0;
@@ -694,12 +728,24 @@ function aggregateMeasurements(dashboards) {
   };
 }
 
-function evaluateObjectives(measurements, thresholds) {
-  const failures = [];
+function evaluateObjectives(
+  measurements: ReturnType<typeof aggregateMeasurements>,
+  thresholds: ReturnType<typeof buildThresholds>
+) {
+  const failures: Array<{
+    objective: string;
+    description: string;
+    operator: "<=" | ">=";
+    threshold: number;
+    actual: number | null;
+    reason: "missing_measurement" | "threshold_breach";
+  }> = [];
 
   for (const objective of OBJECTIVES) {
-    const threshold = thresholds[objective.key];
-    const actual = measurements[objective.key];
+    const objectiveKey = objective.key as keyof typeof thresholds &
+      keyof typeof measurements;
+    const threshold = thresholds[objectiveKey];
+    const actual = measurements[objectiveKey];
     let passed = false;
 
     if (actual !== null) {
@@ -718,7 +764,7 @@ function evaluateObjectives(measurements, thresholds) {
       failures.push({
         objective: objective.key,
         description: objective.description,
-        operator: threshold.operator,
+        operator: threshold.operator as "<=" | ">=",
         threshold: threshold.value,
         actual,
         reason: actual === null ? "missing_measurement" : "threshold_breach",
@@ -729,7 +775,11 @@ function evaluateObjectives(measurements, thresholds) {
   return failures;
 }
 
-function buildActionPlan(failedObjectives) {
+function buildActionPlan(
+  failedObjectives: readonly {
+    readonly objective: string;
+  }[]
+) {
   if (failedObjectives.length === 0) {
     return [
       {
@@ -741,21 +791,26 @@ function buildActionPlan(failedObjectives) {
     ];
   }
 
-  return failedObjectives.map((failure, index) => ({
-    priority: index + 1,
-    objective: failure.objective,
-    action: ACTION_BY_OBJECTIVE[failure.objective],
-  }));
+  return failedObjectives.map((failure, index: number) => {
+    const objectiveKey = String(
+      failure.objective
+    ) as keyof typeof ACTION_BY_OBJECTIVE;
+    return {
+      priority: index + 1,
+      objective: failure.objective,
+      action: ACTION_BY_OBJECTIVE[objectiveKey],
+    };
+  });
 }
 
 export function evaluateProductionSlos(
-  dashboards,
+  dashboards: readonly unknown[],
   {
     tuningRecommendation = null,
     evaluatedAt,
     dashboardSources = [],
     tuningSource = null,
-  } = {}
+  }: EvaluateProductionSloOptions = {}
 ) {
   if (!Array.isArray(dashboards) || dashboards.length === 0) {
     throw new Error("Expected at least one pilot KPI dashboard object.");
@@ -815,8 +870,8 @@ export function evaluateProductionSlos(
   };
 }
 
-function parseArgs(argv) {
-  const parsed = {
+function parseArgs(argv: readonly string[]): ParsedArgs {
+  const parsed: ParsedArgs = {
     dashboard: [],
     tuning: "",
     output: "",
@@ -903,8 +958,8 @@ function printUsage() {
   );
 }
 
-async function readStdin() {
-  return new Promise((resolvePromise, reject) => {
+async function readStdin(): Promise<string> {
+  return new Promise<string>((resolvePromise, reject) => {
     let content = "";
     process.stdin.setEncoding("utf8");
     process.stdin.on("data", (chunk) => {
@@ -919,7 +974,13 @@ async function readStdin() {
   });
 }
 
-async function readInput(inputPath, ioState) {
+async function readInput(
+  inputPath: string,
+  ioState: {
+    stdinConsumed: boolean;
+    stdinCache: string;
+  }
+) {
   if (inputPath !== "-") {
     return readFileSync(resolve(process.cwd(), inputPath), "utf8");
   }
@@ -931,7 +992,11 @@ async function readInput(inputPath, ioState) {
   return ioState.stdinCache;
 }
 
-function parseJsonObject(content, sourceLabel, artifactLabel) {
+function parseJsonObject(
+  content: string,
+  sourceLabel: string,
+  artifactLabel: string
+): JsonObject {
   let parsed;
   try {
     parsed = JSON.parse(content);
@@ -957,7 +1022,7 @@ export async function main(argv = process.argv.slice(2)) {
   }
 
   const ioState = { stdinConsumed: false, stdinCache: "" };
-  const dashboards = [];
+  const dashboards: JsonObject[] = [];
   for (const dashboardPath of parsedArgs.dashboard) {
     const rawDashboard = await readInput(dashboardPath, ioState);
     dashboards.push(parseJsonObject(rawDashboard, dashboardPath, "dashboard"));

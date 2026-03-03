@@ -9,7 +9,7 @@ import { resetStore } from "../../api/src/core.ts";
 
 const CLI_PATH = resolve(process.cwd(), "apps/cli/src/index.ts");
 
-function runCli(args, stdin = "", { env = process.env } = {}) {
+function runCli(args: any, stdin = "", { env = process.env } = {}) {
   return new Promise((resolvePromise) => {
     const proc = spawn(
       process.execPath,
@@ -55,8 +55,8 @@ test("cli maps ingest command to shared operation core", async () => {
         events: [{ type: "note", source: "cli", content: "wire same core" }],
       }),
     ]);
-    assert.equal(ingest.code, 0);
-    const ingestBody = JSON.parse(ingest.stdout);
+    assert.equal((ingest as any).code, 0);
+    const ingestBody = JSON.parse((ingest as any).stdout);
     assert.equal(ingestBody.ok, true);
     assert.equal(ingestBody.data.operation, "ingest");
     assert.equal(ingestBody.data.accepted, 1);
@@ -68,8 +68,8 @@ test("cli maps ingest command to shared operation core", async () => {
       "--input",
       '{"profile":"cli-test","query":"wire"}',
     ]);
-    assert.equal(context.code, 0);
-    const contextBody = JSON.parse(context.stdout);
+    assert.equal((context as any).code, 0);
+    const contextBody = JSON.parse((context as any).stdout);
     assert.equal(contextBody.ok, true);
     assert.equal(contextBody.data.operation, "context");
     assert.equal(contextBody.data.matches.length, 1);
@@ -89,8 +89,8 @@ test("cli supports stdin json input", async () => {
         events: [{ type: "task", source: "stdin", content: "stdin payload" }],
       })
     );
-    assert.equal(ingest.code, 0);
-    const body = JSON.parse(ingest.stdout);
+    assert.equal((ingest as any).code, 0);
+    const body = JSON.parse((ingest as any).stdout);
     assert.equal(body.ok, true);
     assert.equal(body.data.profile, "__store_default__");
   } finally {
@@ -124,7 +124,7 @@ test("cli honors UMS_STATE_FILE as shared default state path", async () => {
       "",
       { env }
     );
-    assert.equal(ingest.code, 0);
+    assert.equal((ingest as any).code, 0);
 
     const context = await runCli(
       [
@@ -138,8 +138,8 @@ test("cli honors UMS_STATE_FILE as shared default state path", async () => {
       "",
       { env }
     );
-    assert.equal(context.code, 0);
-    const contextBody = JSON.parse(context.stdout);
+    assert.equal((context as any).code, 0);
+    const contextBody = JSON.parse((context as any).stdout);
     assert.equal(contextBody.ok, true);
     assert.equal(contextBody.data.matches.length, 1);
   } finally {
@@ -164,7 +164,7 @@ test("cli store-id flag isolates memories across stores", async () => {
         events: [{ type: "ticket", source: "jira", content: "jira only note" }],
       }),
     ]);
-    assert.equal(jiraIngest.code, 0);
+    assert.equal((jiraIngest as any).code, 0);
 
     const codingIngest = await runCli([
       "ingest",
@@ -180,7 +180,7 @@ test("cli store-id flag isolates memories across stores", async () => {
         ],
       }),
     ]);
-    assert.equal(codingIngest.code, 0);
+    assert.equal((codingIngest as any).code, 0);
 
     const jiraContext = await runCli([
       "context",
@@ -191,7 +191,7 @@ test("cli store-id flag isolates memories across stores", async () => {
       "--input",
       JSON.stringify({ profile: "shared-profile", query: "coding only note" }),
     ]);
-    const jiraBody = JSON.parse(jiraContext.stdout);
+    const jiraBody = JSON.parse((jiraContext as any).stdout);
     assert.equal(jiraBody.ok, true);
     assert.equal(jiraBody.data.matches.length, 0);
 
@@ -204,7 +204,7 @@ test("cli store-id flag isolates memories across stores", async () => {
       "--input",
       JSON.stringify({ profile: "shared-profile", query: "jira only note" }),
     ]);
-    const codingBody = JSON.parse(codingContext.stdout);
+    const codingBody = JSON.parse((codingContext as any).stdout);
     assert.equal(codingBody.ok, true);
     assert.equal(codingBody.data.matches.length, 0);
   } finally {
@@ -238,8 +238,8 @@ test("ums-memory-d6q.1.4 cli routes learner profile + identity graph updates wit
         evidenceEventIds: ["ep-profile-cli-1"],
       }),
     ]);
-    assert.equal(profileCreate.code, 0);
-    const profileCreateBody = JSON.parse(profileCreate.stdout);
+    assert.equal((profileCreate as any).code, 0);
+    const profileCreateBody = JSON.parse((profileCreate as any).stdout);
     assert.equal(profileCreateBody.ok, true);
     assert.equal(profileCreateBody.data.operation, "learner_profile_update");
     assert.equal(profileCreateBody.data.action, "created");
@@ -265,8 +265,8 @@ test("ums-memory-d6q.1.4 cli routes learner profile + identity graph updates wit
         evidenceEventIds: ["ep-profile-cli-1"],
       }),
     ]);
-    assert.equal(profileReplay.code, 0);
-    const profileReplayBody = JSON.parse(profileReplay.stdout);
+    assert.equal((profileReplay as any).code, 0);
+    const profileReplayBody = JSON.parse((profileReplay as any).stdout);
     assert.equal(profileReplayBody.ok, true);
     assert.equal(profileReplayBody.data.action, "noop");
     assert.equal(
@@ -290,8 +290,8 @@ test("ums-memory-d6q.1.4 cli routes learner profile + identity graph updates wit
         evidenceEventIds: ["ep-2", "ep-1", "ep-1"],
       }),
     ]);
-    assert.equal(edgeCreate.code, 0);
-    const edgeCreateBody = JSON.parse(edgeCreate.stdout);
+    assert.equal((edgeCreate as any).code, 0);
+    const edgeCreateBody = JSON.parse((edgeCreate as any).stdout);
     assert.equal(edgeCreateBody.ok, true);
     assert.equal(edgeCreateBody.data.operation, "identity_graph_update");
     assert.equal(edgeCreateBody.data.action, "created");
@@ -312,8 +312,8 @@ test("ums-memory-d6q.1.4 cli routes learner profile + identity graph updates wit
         evidenceEventIds: ["ep-1", "ep-2"],
       }),
     ]);
-    assert.equal(edgeReplay.code, 0);
-    const edgeReplayBody = JSON.parse(edgeReplay.stdout);
+    assert.equal((edgeReplay as any).code, 0);
+    const edgeReplayBody = JSON.parse((edgeReplay as any).stdout);
     assert.equal(edgeReplayBody.ok, true);
     assert.equal(edgeReplayBody.data.action, "noop");
     assert.equal(edgeReplayBody.data.edgeId, edgeCreateBody.data.edgeId);
@@ -333,8 +333,8 @@ test("ums-memory-d6q.1.4 cli routes learner profile + identity graph updates wit
         toRef: { namespace: "learner", value: "learner-88" },
       }),
     ]);
-    assert.equal(edgeOtherStore.code, 0);
-    const edgeOtherStoreBody = JSON.parse(edgeOtherStore.stdout);
+    assert.equal((edgeOtherStore as any).code, 0);
+    const edgeOtherStoreBody = JSON.parse((edgeOtherStore as any).stdout);
     assert.equal(edgeOtherStoreBody.ok, true);
     assert.equal(edgeOtherStoreBody.data.action, "created");
     assert.notEqual(edgeOtherStoreBody.data.edgeId, edgeCreateBody.data.edgeId);
@@ -362,8 +362,8 @@ test("ums-memory-d6q.2.4/3.4/4.4/5.4 cli routes deterministic P3 contract handle
         evidenceEventIds: ["ep-1"],
       }),
     ]);
-    assert.equal(misconception.code, 0);
-    const misconceptionBody = JSON.parse(misconception.stdout);
+    assert.equal((misconception as any).code, 0);
+    const misconceptionBody = JSON.parse((misconception as any).stdout);
     assert.equal(misconceptionBody.ok, true);
     assert.equal(misconceptionBody.data.operation, "misconception_update");
     assert.equal(misconceptionBody.data.action, "created");
@@ -383,8 +383,8 @@ test("ums-memory-d6q.2.4/3.4/4.4/5.4 cli routes deterministic P3 contract handle
         provenanceSignalIds: ["sig-1"],
       }),
     ]);
-    assert.equal(curriculum.code, 0);
-    const curriculumBody = JSON.parse(curriculum.stdout);
+    assert.equal((curriculum as any).code, 0);
+    const curriculumBody = JSON.parse((curriculum as any).stdout);
     assert.equal(curriculumBody.ok, true);
     assert.equal(curriculumBody.data.operation, "curriculum_plan_update");
     assert.equal(curriculumBody.data.action, "created");
@@ -403,8 +403,8 @@ test("ums-memory-d6q.2.4/3.4/4.4/5.4 cli routes deterministic P3 contract handle
         sourceEventIds: ["evt-1"],
       }),
     ]);
-    assert.equal(review.code, 0);
-    const reviewBody = JSON.parse(review.stdout);
+    assert.equal((review as any).code, 0);
+    const reviewBody = JSON.parse((review as any).stdout);
     assert.equal(reviewBody.ok, true);
     assert.equal(reviewBody.data.operation, "review_schedule_update");
     assert.equal(reviewBody.data.action, "created");
@@ -424,8 +424,8 @@ test("ums-memory-d6q.2.4/3.4/4.4/5.4 cli routes deterministic P3 contract handle
         provenanceEventIds: ["evt-policy-1"],
       }),
     ]);
-    assert.equal(policy.code, 0);
-    const policyBody = JSON.parse(policy.stdout);
+    assert.equal((policy as any).code, 0);
+    const policyBody = JSON.parse((policy as any).stdout);
     assert.equal(policyBody.ok, true);
     assert.equal(policyBody.data.operation, "policy_decision_update");
     assert.equal(policyBody.data.action, "created");
@@ -453,8 +453,8 @@ test("ums-memory-d6q.1.11/ums-memory-d6q.1.9 cli rejects missing evidence pointe
         signal: "harmful",
       }),
     ]);
-    assert.equal(rejected.code, 1);
-    const rejectedBody = JSON.parse(rejected.stderr);
+    assert.equal((rejected as any).code, 1);
+    const rejectedBody = JSON.parse((rejected as any).stderr);
     assert.equal(rejectedBody.ok, false);
     assert.equal(rejectedBody.error.code, "CLI_ERROR");
     assert.match(rejectedBody.error.message, /evidenceeventid/i);
@@ -478,8 +478,8 @@ test("ums-memory-d6q.1.11/ums-memory-d6q.1.9 cli rejects missing evidence pointe
         },
       }),
     ]);
-    assert.equal(policy.code, 0);
-    const policyBody = JSON.parse(policy.stdout);
+    assert.equal((policy as any).code, 0);
+    const policyBody = JSON.parse((policy as any).stdout);
     assert.equal(policyBody.ok, true);
     assert.equal(policyBody.data.operation, "policy_decision_update");
     assert.equal(policyBody.data.decision.outcome, "review");
@@ -545,8 +545,8 @@ test("ums-memory-d6q.2.6/ums-memory-d6q.3.6/ums-memory-d6q.4.6/ums-memory-d6q.5.
         "--input",
         JSON.stringify(entry.payload),
       ]);
-      assert.equal(result.code, 1);
-      const body = JSON.parse(result.stderr);
+      assert.equal((result as any).code, 1);
+      const body = JSON.parse((result as any).stderr);
       assert.equal(body.ok, false);
       assert.equal(body.error.code, "CLI_ERROR");
       assert.match(body.error.message, entry.messagePattern);
@@ -576,8 +576,8 @@ test("ums-memory-d6q.2.7/ums-memory-d6q.2.9/ums-memory-d6q.3.7/ums-memory-d6q.3.
         evidenceEventIds: ["evt-cli-m-1", "evt-cli-m-2"],
       }),
     ]);
-    assert.equal(misconception.code, 0);
-    const misconceptionBody = JSON.parse(misconception.stdout);
+    assert.equal((misconception as any).code, 0);
+    const misconceptionBody = JSON.parse((misconception as any).stdout);
     assert.equal(misconceptionBody.ok, true);
     assert.equal(misconceptionBody.data.action, "created");
     assert.equal(misconceptionBody.data.observability.evidenceCount, 2);
@@ -600,8 +600,8 @@ test("ums-memory-d6q.2.7/ums-memory-d6q.2.9/ums-memory-d6q.3.7/ums-memory-d6q.3.
         provenanceSignalIds: ["sig-cli-1", "sig-cli-2"],
       }),
     ]);
-    assert.equal(curriculum.code, 0);
-    const curriculumBody = JSON.parse(curriculum.stdout);
+    assert.equal((curriculum as any).code, 0);
+    const curriculumBody = JSON.parse((curriculum as any).stdout);
     assert.equal(curriculumBody.ok, true);
     assert.equal(curriculumBody.data.action, "created");
     assert.equal(curriculumBody.data.observability.evidenceCount, 1);
@@ -627,8 +627,8 @@ test("ums-memory-d6q.2.7/ums-memory-d6q.2.9/ums-memory-d6q.3.7/ums-memory-d6q.3.
         sourceEventIds: ["evt-cli-r-1", "evt-cli-r-2"],
       }),
     ]);
-    assert.equal(review.code, 0);
-    const reviewBody = JSON.parse(review.stdout);
+    assert.equal((review as any).code, 0);
+    const reviewBody = JSON.parse((review as any).stdout);
     assert.equal(reviewBody.ok, true);
     assert.equal(reviewBody.data.action, "created");
     assert.equal(
@@ -655,8 +655,8 @@ test("ums-memory-d6q.2.7/ums-memory-d6q.2.9/ums-memory-d6q.3.7/ums-memory-d6q.3.
         provenanceEventIds: ["evt-cli-p-1"],
       }),
     ]);
-    assert.equal(policy.code, 0);
-    const policyBody = JSON.parse(policy.stdout);
+    assert.equal((policy as any).code, 0);
+    const policyBody = JSON.parse((policy as any).stdout);
     assert.equal(policyBody.ok, true);
     assert.equal(policyBody.data.action, "created");
     assert.equal(policyBody.data.observability.denied, true);
@@ -688,8 +688,8 @@ test("ums-memory-d6q.2.11/ums-memory-d6q.2.12/ums-memory-d6q.4.11/ums-memory-d6q
         usedRuleIds: ["rule-cli-1"],
       }),
     ]);
-    assert.equal(outcome.code, 0);
-    const outcomeBody = JSON.parse(outcome.stdout);
+    assert.equal((outcome as any).code, 0);
+    const outcomeBody = JSON.parse((outcome as any).stdout);
     assert.equal(outcomeBody.ok, true);
 
     const explicitMisconception = await runCli([
@@ -711,8 +711,8 @@ test("ums-memory-d6q.2.11/ums-memory-d6q.2.12/ums-memory-d6q.4.11/ums-memory-d6q
         },
       }),
     ]);
-    assert.equal(explicitMisconception.code, 0);
-    const explicitBody = JSON.parse(explicitMisconception.stdout);
+    assert.equal((explicitMisconception as any).code, 0);
+    const explicitBody = JSON.parse((explicitMisconception as any).stdout);
     assert.equal(explicitBody.ok, true);
     assert.equal(explicitBody.data.action, "created");
     assert.equal(explicitBody.data.observability.signalCount, 1);
@@ -737,8 +737,8 @@ test("ums-memory-d6q.2.11/ums-memory-d6q.2.12/ums-memory-d6q.4.11/ums-memory-d6q
         },
       }),
     ]);
-    assert.equal(implicitMisconception.code, 0);
-    const implicitBody = JSON.parse(implicitMisconception.stdout);
+    assert.equal((implicitMisconception as any).code, 0);
+    const implicitBody = JSON.parse((implicitMisconception as any).stdout);
     assert.equal(implicitBody.ok, true);
     assert.equal(implicitBody.data.action, "updated");
     assert.equal(implicitBody.data.observability.signalCount, 2);
@@ -767,8 +767,8 @@ test("ums-memory-d6q.2.11/ums-memory-d6q.2.12/ums-memory-d6q.4.11/ums-memory-d6q
         },
       }),
     ]);
-    assert.equal(implicitReplay.code, 0);
-    const implicitReplayBody = JSON.parse(implicitReplay.stdout);
+    assert.equal((implicitReplay as any).code, 0);
+    const implicitReplayBody = JSON.parse((implicitReplay as any).stdout);
     assert.equal(implicitReplayBody.ok, true);
     assert.equal(implicitReplayBody.data.action, "noop");
 
@@ -798,8 +798,8 @@ test("ums-memory-d6q.2.11/ums-memory-d6q.2.12/ums-memory-d6q.4.11/ums-memory-d6q
         },
       }),
     ]);
-    assert.equal(schedule.code, 0);
-    const scheduleBody = JSON.parse(schedule.stdout);
+    assert.equal((schedule as any).code, 0);
+    const scheduleBody = JSON.parse((schedule as any).stdout);
     assert.equal(scheduleBody.ok, true);
     assert.equal(scheduleBody.data.action, "created");
     assert.equal(
@@ -834,8 +834,8 @@ test("ums-memory-d6q.2.11/ums-memory-d6q.2.12/ums-memory-d6q.4.11/ums-memory-d6q
         },
       }),
     ]);
-    assert.equal(scheduleReplay.code, 0);
-    const scheduleReplayBody = JSON.parse(scheduleReplay.stdout);
+    assert.equal((scheduleReplay as any).code, 0);
+    const scheduleReplayBody = JSON.parse((scheduleReplay as any).stdout);
     assert.equal(scheduleReplayBody.ok, true);
     assert.equal(scheduleReplayBody.data.action, "noop");
     assert.equal(scheduleReplayBody.data.observability.sourceEventCount, 2);

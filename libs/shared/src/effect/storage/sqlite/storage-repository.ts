@@ -300,6 +300,8 @@ export interface SqliteStorageRepositoryOptions {
   readonly wal?: SqliteStorageRepositoryWalOptions;
   readonly encryptionAtRest?: SqliteStorageRepositoryEncryptionAtRestOptions;
   readonly backupReplication?: SqliteBackupReplicationOptions;
+  readonly provenancePolicy?: SqliteStorageRepositoryProvenancePolicyOptions;
+  readonly provenanceBackfill?: SqliteStorageRepositoryProvenanceBackfillOptions;
   readonly onTenantIsolationViolation?: (
     event: TenantIsolationViolationAuditEvent
   ) => void;
@@ -313,6 +315,27 @@ export interface SqliteStorageRepositoryEncryptionAtRestOptions {
   readonly enabled?: boolean;
   readonly activeKeyId?: string;
   readonly keyRing?: Readonly<Record<string, string>>;
+}
+
+export type SqliteProvenanceRequiredDimension =
+  | "projectId"
+  | "roleId"
+  | "userId"
+  | "agentId"
+  | "conversationId"
+  | "messageId"
+  | "sourceId"
+  | "batchId";
+
+export interface SqliteStorageRepositoryProvenancePolicyOptions {
+  readonly requireOnWrite?: boolean;
+  readonly requiredDimensions?: readonly SqliteProvenanceRequiredDimension[];
+}
+
+export interface SqliteStorageRepositoryProvenanceBackfillOptions {
+  readonly runOnInit?: boolean;
+  readonly defaultSourceIdPrefix?: string;
+  readonly defaultBatchId?: string;
 }
 
 export interface SqliteStorageRepository {
@@ -346,6 +369,32 @@ interface SqlitePayloadEncryptionEnvelope {
   readonly authTagBase64: string;
   readonly ciphertextBase64: string;
 }
+
+interface NormalizedProvenancePolicy {
+  readonly requireOnWrite: boolean;
+  readonly requiredDimensions: ReadonlySet<SqliteProvenanceRequiredDimension>;
+}
+
+interface NormalizedProvenanceBackfillOptions {
+  readonly runOnInit: boolean;
+  readonly defaultSourceIdPrefix: string;
+  readonly defaultBatchId: string;
+}
+
+const supportedProvenanceDimensions = Object.freeze([
+  "projectId",
+  "roleId",
+  "userId",
+  "agentId",
+  "conversationId",
+  "messageId",
+  "sourceId",
+  "batchId",
+] as const satisfies readonly SqliteProvenanceRequiredDimension[]);
+
+const supportedProvenanceDimensionSet: ReadonlySet<string> = new Set(
+  supportedProvenanceDimensions
+);
 
 const withImmediateTransaction = <Value>(
   database: DatabaseSync,
@@ -785,6 +834,70 @@ const parseOptionalProvenanceEnvelopeProjection = (
   });
 };
 
+const resolveProvenancePolicy = (
+  options: SqliteStorageRepositoryOptions
+): NormalizedProvenancePolicy => {
+  const policy = options.provenancePolicy;
+  const requiredDimensions = new Set<SqliteProvenanceRequiredDimension>();
+  for (const dimension of policy?.requiredDimensions ?? []) {
+    if (!supportedProvenanceDimensionSet.has(dimension)) {
+      throw new ContractValidationError({
+        contract:
+          "SqliteStorageRepositoryOptions.provenancePolicy.requiredDimensions",
+        message:
+          "provenancePolicy.requiredDimensions contains an unsupported dimension.",
+        details: `Unsupported provenance dimension: ${String(dimension)}.`,
+      });
+    }
+    requiredDimensions.add(dimension);
+  }
+
+  return Object.freeze({
+    requireOnWrite: policy?.requireOnWrite ?? false,
+    requiredDimensions,
+  });
+};
+
+const resolveProvenanceBackfillOptions = (
+  options: SqliteStorageRepositoryOptions
+): NormalizedProvenanceBackfillOptions => {
+  const configuredPrefix =
+    options.provenanceBackfill?.defaultSourceIdPrefix?.trim() ?? "";
+  const configuredBatchId =
+    options.provenanceBackfill?.defaultBatchId?.trim() ?? "";
+
+  return Object.freeze({
+    runOnInit: options.provenanceBackfill?.runOnInit ?? false,
+    defaultSourceIdPrefix:
+      configuredPrefix.length > 0 ? configuredPrefix : "backfill",
+    defaultBatchId: configuredBatchId.length > 0 ? configuredBatchId : "v1",
+  });
+};
+
+const assertProvenancePolicyForWrite = (
+  policy: NormalizedProvenancePolicy,
+  request: StorageUpsertRequest,
+  provenanceEnvelopeProjection: ProvenanceEnvelopeProjection | null
+): void => {
+  if (!policy.requireOnWrite) {
+    return;
+  }
+  if (provenanceEnvelopeProjection === null) {
+    throw new StoragePayloadValidationFailure(
+      "payload.provenance is required for enterprise writes when provenancePolicy.requireOnWrite is enabled."
+    );
+  }
+
+  for (const dimension of policy.requiredDimensions) {
+    const dimensionValue = provenanceEnvelopeProjection[dimension];
+    if (dimensionValue === null || dimensionValue.trim().length === 0) {
+      throw new StoragePayloadValidationFailure(
+        `payload.provenance.${dimension} is required for enterprise writes in tenant ${request.spaceId}.`
+      );
+    }
+  }
+};
+
 const readPayloadEvidencePointersValue = (
   payload: DomainRecord
 ): DomainValue | undefined => {
@@ -1161,6 +1274,80 @@ const readPersistedProvenanceJsonFromPayloadJson = (
   }
 
   return toCanonicalJsonString(provenanceValue, "persistedPayload.provenance");
+};
+
+const readPersistedScopeAnchorProjectionFromPayloadJson = (
+  payloadJson: string,
+  payloadEncryptionConfig: SqlitePayloadEncryptionConfig
+): {
+  readonly projectId: string | null;
+  readonly roleId: string | null;
+  readonly userId: string | null;
+} => {
+  const plaintextPayloadJson = decryptPersistedMemoryPayloadJson(
+    payloadJson,
+    payloadEncryptionConfig
+  );
+  let parsedPayload: unknown;
+  try {
+    parsedPayload = JSON.parse(plaintextPayloadJson);
+  } catch (cause) {
+    const details = cause instanceof Error ? cause.message : String(cause);
+    throw new Error(
+      `Persisted memory payload_json is not valid JSON: ${details}`
+    );
+  }
+  if (!isDomainRecord(parsedPayload)) {
+    return Object.freeze({
+      projectId: null,
+      roleId: null,
+      userId: null,
+    });
+  }
+
+  const sanitizedPayload = sanitizePayloadForPersistence(parsedPayload);
+  const metadataRecord = readPayloadMetadataRecord(sanitizedPayload);
+  const payloadScopeValue = readRecordValue(sanitizedPayload, ["scope"]);
+  const payloadScopeRecord = isDomainRecord(payloadScopeValue)
+    ? payloadScopeValue
+    : null;
+  const metadataScopeValue =
+    metadataRecord === undefined
+      ? undefined
+      : readRecordValue(metadataRecord, ["scope"]);
+  const metadataScopeRecord = isDomainRecord(metadataScopeValue)
+    ? metadataScopeValue
+    : null;
+  const scopeRecord = payloadScopeRecord ?? metadataScopeRecord;
+
+  if (scopeRecord === null) {
+    return Object.freeze({
+      projectId: null,
+      roleId: null,
+      userId: null,
+    });
+  }
+
+  return Object.freeze({
+    projectId:
+      parseOptionalNullableTrimmedString(
+        scopeRecord,
+        ["projectId", "project_id"],
+        "persistedPayload.scope.projectId"
+      ) ?? null,
+    roleId:
+      parseOptionalNullableTrimmedString(
+        scopeRecord,
+        ["roleId", "role_id", "jobRoleId", "job_role_id"],
+        "persistedPayload.scope.roleId"
+      ) ?? null,
+    userId:
+      parseOptionalNullableTrimmedString(
+        scopeRecord,
+        ["userId", "user_id"],
+        "persistedPayload.scope.userId"
+      ) ?? null,
+  });
 };
 
 const toSqlitePayloadEncryptionContractError = (
@@ -2780,6 +2967,33 @@ const readRowColumn = (row: unknown, columnName: string): unknown => {
   return (row as Record<string, unknown>)[columnName];
 };
 
+const readStringColumn = (row: unknown, columnName: string): string => {
+  const value = readRowColumn(row, columnName);
+  if (typeof value !== "string" || value.trim().length === 0) {
+    throw new Error(
+      `SQLite row column ${columnName} must be a non-empty string.`
+    );
+  }
+  return value;
+};
+
+const toNullableReadStringColumn = (
+  row: unknown,
+  columnName: string
+): string | null => {
+  const value = readRowColumn(row, columnName);
+  if (value === null) {
+    return null;
+  }
+  if (typeof value !== "string") {
+    throw new Error(
+      `SQLite row column ${columnName} must be a string or null.`
+    );
+  }
+  const trimmed = value.trim();
+  return trimmed.length === 0 ? null : trimmed;
+};
+
 const isSqliteConstraintFailure = (cause: unknown): boolean => {
   if (!(cause instanceof Error)) {
     return false;
@@ -3081,6 +3295,460 @@ const scrubEncryptedPayloadTextFromFts = (
   }
 };
 
+export interface SqliteProvenanceBackfillSummary {
+  readonly scannedMemoryRows: number;
+  readonly backfilledMemoryRows: number;
+  readonly skippedMemoryRows: number;
+  readonly insertedEnvelopeRows: number;
+  readonly insertedMemoryLinkRows: number;
+  readonly insertedEvidenceLinkRows: number;
+  readonly insertedAuditRows: number;
+}
+
+type SqliteProvenanceHealthAlertCode =
+  | "missing_provenance_links"
+  | "lineage_breaks"
+  | "normalization_rejects";
+type SqliteProvenanceHealthAlertSeverity = "warning" | "critical";
+
+export interface SqliteProvenanceHealthAlert {
+  readonly code: SqliteProvenanceHealthAlertCode;
+  readonly severity: SqliteProvenanceHealthAlertSeverity;
+  readonly count: number;
+  readonly threshold: number;
+  readonly message: string;
+}
+
+export interface SqliteProvenanceHealthCriticalThresholds {
+  readonly missingProvenanceLinks: number;
+  readonly lineageBreaks: number;
+  readonly normalizationRejects: number;
+}
+
+export interface SqliteProvenanceHealthCounters {
+  readonly scannedMemoryRows: number;
+  readonly missingProvenanceLinks: number;
+  readonly lineageBreaks: number;
+  readonly normalizationRejects: number;
+}
+
+export interface SqliteProvenanceHealthReport {
+  readonly counters: SqliteProvenanceHealthCounters;
+  readonly alerts: readonly SqliteProvenanceHealthAlert[];
+}
+
+export interface SqliteProvenanceHealthOptions {
+  readonly criticalThresholds?: Partial<SqliteProvenanceHealthCriticalThresholds>;
+}
+
+const defaultSqliteProvenanceHealthCriticalThresholds: Readonly<SqliteProvenanceHealthCriticalThresholds> =
+  Object.freeze({
+    missingProvenanceLinks: 1,
+    lineageBreaks: 1,
+    normalizationRejects: 5,
+  });
+
+const resolveSqliteProvenanceHealthCriticalThresholds = (
+  options: SqliteProvenanceHealthOptions = {}
+): SqliteProvenanceHealthCriticalThresholds => {
+  const fromOptions = options.criticalThresholds;
+  const normalizeThreshold = (
+    value: number | undefined,
+    field: keyof SqliteProvenanceHealthCriticalThresholds
+  ): number => {
+    const fallback = defaultSqliteProvenanceHealthCriticalThresholds[field];
+    if (value === undefined) {
+      return fallback;
+    }
+    if (!Number.isSafeInteger(value) || value <= 0) {
+      throw new ContractValidationError({
+        contract: "SqliteProvenanceHealthOptions.criticalThresholds",
+        message:
+          "criticalThresholds fields must be positive safe integer values.",
+        details: `criticalThresholds.${field} received ${String(value)}.`,
+      });
+    }
+    return value;
+  };
+
+  return Object.freeze({
+    missingProvenanceLinks: normalizeThreshold(
+      fromOptions?.missingProvenanceLinks,
+      "missingProvenanceLinks"
+    ),
+    lineageBreaks: normalizeThreshold(
+      fromOptions?.lineageBreaks,
+      "lineageBreaks"
+    ),
+    normalizationRejects: normalizeThreshold(
+      fromOptions?.normalizationRejects,
+      "normalizationRejects"
+    ),
+  });
+};
+
+const toProvenanceHealthAlertSeverity = (
+  count: number,
+  criticalThreshold: number
+): SqliteProvenanceHealthAlertSeverity =>
+  count >= criticalThreshold ? "critical" : "warning";
+
+export const evaluateSqliteProvenanceHealth = (
+  database: DatabaseSync,
+  options: SqliteProvenanceHealthOptions = {}
+): SqliteProvenanceHealthReport => {
+  const criticalThresholds =
+    resolveSqliteProvenanceHealthCriticalThresholds(options);
+  const readCounter = (sql: string): number => {
+    const row = database.prepare(sql).get();
+    return toNonNegativeSafeInteger(
+      readRowColumn(row, "row_count"),
+      "provenance_health.row_count"
+    );
+  };
+
+  const scannedMemoryRows = readCounter(
+    "SELECT COUNT(*) AS row_count FROM memory_items;"
+  );
+  const missingProvenanceLinks = readCounter(
+    [
+      "SELECT COUNT(*) AS row_count",
+      "FROM memory_items AS m",
+      "LEFT JOIN memory_provenance_links AS mpl",
+      "  ON mpl.tenant_id = m.tenant_id",
+      " AND mpl.memory_id = m.memory_id",
+      "WHERE mpl.provenance_id IS NULL;",
+    ].join("\n")
+  );
+  const lineageBreaks = readCounter(
+    [
+      "SELECT COUNT(*) AS row_count",
+      "FROM memory_evidence_links AS mel",
+      "INNER JOIN memory_provenance_links AS mpl",
+      "  ON mpl.tenant_id = mel.tenant_id",
+      " AND mpl.memory_id = mel.memory_id",
+      "LEFT JOIN evidence_provenance_links AS epl",
+      "  ON epl.tenant_id = mel.tenant_id",
+      " AND epl.evidence_id = mel.evidence_id",
+      " AND epl.provenance_id = mpl.provenance_id",
+      "WHERE epl.provenance_id IS NULL;",
+    ].join("\n")
+  );
+  const normalizationRejects = readCounter(
+    [
+      "SELECT COUNT(*) AS row_count",
+      "FROM audit_events",
+      "WHERE operation = 'upsert'",
+      "  AND outcome = 'denied'",
+      "  AND details LIKE '%payload.provenance%';",
+    ].join("\n")
+  );
+
+  const counters: SqliteProvenanceHealthCounters = Object.freeze({
+    scannedMemoryRows,
+    missingProvenanceLinks,
+    lineageBreaks,
+    normalizationRejects,
+  });
+
+  const alerts: SqliteProvenanceHealthAlert[] = [];
+  if (missingProvenanceLinks > 0) {
+    alerts.push(
+      Object.freeze({
+        code: "missing_provenance_links",
+        severity: toProvenanceHealthAlertSeverity(
+          missingProvenanceLinks,
+          criticalThresholds.missingProvenanceLinks
+        ),
+        count: missingProvenanceLinks,
+        threshold: criticalThresholds.missingProvenanceLinks,
+        message:
+          "Memory rows without provenance links detected; lineage coverage is incomplete.",
+      })
+    );
+  }
+  if (lineageBreaks > 0) {
+    alerts.push(
+      Object.freeze({
+        code: "lineage_breaks",
+        severity: toProvenanceHealthAlertSeverity(
+          lineageBreaks,
+          criticalThresholds.lineageBreaks
+        ),
+        count: lineageBreaks,
+        threshold: criticalThresholds.lineageBreaks,
+        message:
+          "Evidence lineage breaks detected; memory/evidence provenance linkage is inconsistent.",
+      })
+    );
+  }
+  if (normalizationRejects > 0) {
+    alerts.push(
+      Object.freeze({
+        code: "normalization_rejects",
+        severity: toProvenanceHealthAlertSeverity(
+          normalizationRejects,
+          criticalThresholds.normalizationRejects
+        ),
+        count: normalizationRejects,
+        threshold: criticalThresholds.normalizationRejects,
+        message:
+          "Provenance normalization rejects observed in denied upsert audit events.",
+      })
+    );
+  }
+
+  return Object.freeze({
+    counters,
+    alerts: Object.freeze(alerts),
+  });
+};
+
+export const backfillSqliteProvenanceSchema = (
+  database: DatabaseSync,
+  options: SqliteStorageRepositoryOptions = {}
+): SqliteProvenanceBackfillSummary => {
+  const payloadEncryptionConfig = resolveSqlitePayloadEncryptionConfig(options);
+  const backfillOptions = resolveProvenanceBackfillOptions(options);
+
+  const selectMemoryRowsStatement = database.prepare(
+    [
+      "SELECT",
+      "  m.tenant_id,",
+      "  m.memory_id,",
+      "  m.payload_json,",
+      "  m.updated_at_ms,",
+      "  m.created_at_ms,",
+      "  s.project_id,",
+      "  s.role_id,",
+      "  s.user_id",
+      "FROM memory_items AS m",
+      "INNER JOIN scopes AS s",
+      "  ON s.tenant_id = m.tenant_id",
+      " AND s.scope_id = m.scope_id",
+      "ORDER BY m.tenant_id ASC, m.memory_id ASC;",
+    ].join("\n")
+  );
+  const insertProvenanceEnvelopeStatement = database.prepare(
+    [
+      "INSERT OR IGNORE INTO provenance_envelopes (",
+      "  tenant_id,",
+      "  provenance_id,",
+      "  project_id,",
+      "  role_id,",
+      "  user_id,",
+      "  agent_id,",
+      "  conversation_id,",
+      "  message_id,",
+      "  source_id,",
+      "  batch_id,",
+      "  observed_at_ms,",
+      "  created_at_ms",
+      ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);",
+    ].join("\n")
+  );
+  const insertMemoryProvenanceLinkStatement = database.prepare(
+    "INSERT OR IGNORE INTO memory_provenance_links (tenant_id, memory_id, provenance_id, linked_at_ms) VALUES (?, ?, ?, ?);"
+  );
+  const selectMemoryEvidenceIdsStatement = database.prepare(
+    [
+      "SELECT evidence_id",
+      "FROM memory_evidence_links",
+      "WHERE tenant_id = ? AND memory_id = ?",
+      "ORDER BY evidence_id ASC;",
+    ].join("\n")
+  );
+  const insertEvidenceProvenanceLinkStatement = database.prepare(
+    "INSERT OR IGNORE INTO evidence_provenance_links (tenant_id, evidence_id, provenance_id, linked_at_ms) VALUES (?, ?, ?, ?);"
+  );
+  const insertAuditEventStatement = database.prepare(
+    [
+      "INSERT OR IGNORE INTO audit_events (",
+      "  event_id,",
+      "  tenant_id,",
+      "  memory_id,",
+      "  operation,",
+      "  outcome,",
+      "  reason,",
+      "  details,",
+      "  reference_kind,",
+      "  reference_id,",
+      "  owner_tenant_id,",
+      "  recorded_at_ms",
+      ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);",
+    ].join("\n")
+  );
+
+  return withImmediateTransaction(database, () => {
+    const summary = {
+      scannedMemoryRows: 0,
+      backfilledMemoryRows: 0,
+      skippedMemoryRows: 0,
+      insertedEnvelopeRows: 0,
+      insertedMemoryLinkRows: 0,
+      insertedEvidenceLinkRows: 0,
+      insertedAuditRows: 0,
+    };
+
+    const memoryRows = selectMemoryRowsStatement.all() as readonly unknown[];
+    for (const row of memoryRows) {
+      summary.scannedMemoryRows += 1;
+      const tenantId = readStringColumn(row, "tenant_id");
+      const memoryId = readStringColumn(row, "memory_id");
+      const payloadJson = readStringColumn(row, "payload_json");
+      const updatedAtMillis = toNonNegativeSafeInteger(
+        readRowColumn(row, "updated_at_ms"),
+        "memory_items.updated_at_ms"
+      );
+      const createdAtMillis = toNonNegativeSafeInteger(
+        readRowColumn(row, "created_at_ms"),
+        "memory_items.created_at_ms"
+      );
+      const scopeProjectId = toNullableReadStringColumn(row, "project_id");
+      const scopeRoleId = toNullableReadStringColumn(row, "role_id");
+      const scopeUserId = toNullableReadStringColumn(row, "user_id");
+      const persistedScopeAnchors =
+        readPersistedScopeAnchorProjectionFromPayloadJson(
+          payloadJson,
+          payloadEncryptionConfig
+        );
+      const defaultProjectId =
+        persistedScopeAnchors.projectId ?? scopeProjectId;
+      const defaultRoleId = persistedScopeAnchors.roleId ?? scopeRoleId;
+      const defaultUserId = persistedScopeAnchors.userId ?? scopeUserId;
+
+      let provenanceEnvelopeProjection =
+        parseOptionalProvenanceEnvelopeProjection(
+          tenantId,
+          readPersistedProvenanceJsonFromPayloadJson(
+            payloadJson,
+            payloadEncryptionConfig
+          ),
+          updatedAtMillis
+        );
+
+      let backfillReason = "normalized_envelope";
+      if (provenanceEnvelopeProjection === null) {
+        const sourceId = `${backfillOptions.defaultSourceIdPrefix}:${memoryId}`;
+        const batchId = backfillOptions.defaultBatchId;
+        provenanceEnvelopeProjection = Object.freeze({
+          provenanceId: toDeterministicProvenanceId(tenantId, {
+            projectId: defaultProjectId,
+            roleId: defaultRoleId,
+            userId: defaultUserId,
+            agentId: null,
+            conversationId: null,
+            messageId: null,
+            sourceId,
+            batchId,
+          }),
+          tenantId,
+          projectId: defaultProjectId,
+          roleId: defaultRoleId,
+          userId: defaultUserId,
+          agentId: null,
+          conversationId: null,
+          messageId: null,
+          sourceId,
+          batchId,
+          observedAtMillis: updatedAtMillis,
+          createdAtMillis,
+        });
+        backfillReason = "defaulted_envelope";
+      }
+
+      const insertEnvelopeResult = insertProvenanceEnvelopeStatement.run(
+        provenanceEnvelopeProjection.tenantId,
+        provenanceEnvelopeProjection.provenanceId,
+        provenanceEnvelopeProjection.projectId,
+        provenanceEnvelopeProjection.roleId,
+        provenanceEnvelopeProjection.userId,
+        provenanceEnvelopeProjection.agentId,
+        provenanceEnvelopeProjection.conversationId,
+        provenanceEnvelopeProjection.messageId,
+        provenanceEnvelopeProjection.sourceId,
+        provenanceEnvelopeProjection.batchId,
+        provenanceEnvelopeProjection.observedAtMillis,
+        provenanceEnvelopeProjection.createdAtMillis
+      );
+      const insertedEnvelopeChanges = toNonNegativeSafeInteger(
+        readRowColumn(insertEnvelopeResult, "changes"),
+        "provenance_envelopes.insert.changes"
+      );
+      summary.insertedEnvelopeRows += insertedEnvelopeChanges;
+
+      const insertMemoryLinkResult = insertMemoryProvenanceLinkStatement.run(
+        tenantId,
+        memoryId,
+        provenanceEnvelopeProjection.provenanceId,
+        updatedAtMillis
+      );
+      const insertedMemoryLinkChanges = toNonNegativeSafeInteger(
+        readRowColumn(insertMemoryLinkResult, "changes"),
+        "memory_provenance_links.insert.changes"
+      );
+      summary.insertedMemoryLinkRows += insertedMemoryLinkChanges;
+
+      const evidenceRows = selectMemoryEvidenceIdsStatement.all(
+        tenantId,
+        memoryId
+      ) as readonly unknown[];
+      for (const evidenceRow of evidenceRows) {
+        const evidenceId = readStringColumn(evidenceRow, "evidence_id");
+        const insertEvidenceLinkResult =
+          insertEvidenceProvenanceLinkStatement.run(
+            tenantId,
+            evidenceId,
+            provenanceEnvelopeProjection.provenanceId,
+            updatedAtMillis
+          );
+        summary.insertedEvidenceLinkRows += toNonNegativeSafeInteger(
+          readRowColumn(insertEvidenceLinkResult, "changes"),
+          "evidence_provenance_links.insert.changes"
+        );
+      }
+
+      const auditEntry = createStorageAuditLedgerEntry({
+        tenantId,
+        memoryId,
+        operation: "upsert",
+        outcome: "accepted",
+        reason: "updated",
+        details: `provenance_backfill:${backfillReason}`,
+        referenceKind: null,
+        referenceId: null,
+        ownerTenantId: null,
+        recordedAtMillis: updatedAtMillis,
+      });
+      const insertAuditResult = insertAuditEventStatement.run(
+        auditEntry.eventId,
+        auditEntry.tenantId,
+        auditEntry.memoryId,
+        auditEntry.operation,
+        auditEntry.outcome,
+        auditEntry.reason,
+        auditEntry.details,
+        auditEntry.referenceKind,
+        auditEntry.referenceId,
+        auditEntry.ownerTenantId,
+        auditEntry.recordedAtMillis
+      );
+      summary.insertedAuditRows += toNonNegativeSafeInteger(
+        readRowColumn(insertAuditResult, "changes"),
+        "audit_events.insert.changes"
+      );
+
+      if (insertedEnvelopeChanges > 0 || insertedMemoryLinkChanges > 0) {
+        summary.backfilledMemoryRows += 1;
+      } else {
+        summary.skippedMemoryRows += 1;
+      }
+    }
+
+    return Object.freeze(summary);
+  });
+};
+
 export const makeSqliteStorageRepository = (
   database: DatabaseSync,
   options: SqliteStorageRepositoryOptions = {}
@@ -3088,6 +3756,8 @@ export const makeSqliteStorageRepository = (
   const enforceForeignKeys = options.enforceForeignKeys ?? true;
   const walEnabled = options.wal?.enabled ?? false;
   const runMigrations = options.applyMigrations ?? true;
+  const provenancePolicy = resolveProvenancePolicy(options);
+  const provenanceBackfillOptions = resolveProvenanceBackfillOptions(options);
   const payloadEncryptionConfig = resolveSqlitePayloadEncryptionConfig(options);
 
   configureSqliteForeignKeys(database, enforceForeignKeys);
@@ -3101,6 +3771,12 @@ export const makeSqliteStorageRepository = (
     payloadEncryptionConfig,
     memoryItemsFtsAvailable
   );
+  if (provenanceBackfillOptions.runOnInit) {
+    backfillSqliteProvenanceSchema(database, {
+      ...options,
+      provenanceBackfill: provenanceBackfillOptions,
+    });
+  }
   if (options.backupReplication !== undefined) {
     createSqliteBackupReplicator(database, options.backupReplication);
   }
@@ -3873,6 +4549,11 @@ export const makeSqliteStorageRepository = (
                 payloadProjection.provenanceJson,
                 payloadProjection.updatedAtMillis
               );
+            assertProvenancePolicyForWrite(
+              provenancePolicy,
+              request,
+              provenanceEnvelopeProjection
+            );
             const scopeAuthorization =
               resolveScopeAuthorizationContext(request);
             assertScopeAuthorizationTenantAccess(

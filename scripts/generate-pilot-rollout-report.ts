@@ -79,7 +79,19 @@ const PROJECT_KEYS = ["project", "projectId", "project_id"];
 const ISO_TIMESTAMP_PATTERN =
   /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?(?:Z|[+-]\d{2}:\d{2})$/u;
 
-function compareStrings(left, right) {
+type JsonRecord = Record<string, unknown>;
+type KeyPath = string | readonly string[];
+type TelemetryEvents = JsonRecord[] & { invalidCount?: number };
+
+interface PerOperationTotals {
+  requestVolume: number;
+  successCount: number;
+  failureCount: number;
+  latencies: number[];
+  failureCodeHistogram: Map<string, number>;
+}
+
+function compareStrings(left: string, right: string) {
   if (left < right) {
     return -1;
   }
@@ -89,7 +101,7 @@ function compareStrings(left, right) {
   return 0;
 }
 
-function normalizeToken(value) {
+function normalizeToken(value: unknown) {
   return String(value ?? "")
     .trim()
     .toLowerCase()
@@ -97,12 +109,12 @@ function normalizeToken(value) {
     .replace(/-+/g, "_");
 }
 
-function normalizeOperation(value) {
+function normalizeOperation(value: unknown) {
   const token = normalizeToken(value);
-  return token || "unknown";
+  return token || "any";
 }
 
-function normalizeFailureCode(value) {
+function normalizeFailureCode(value: unknown) {
   const token = String(value ?? "")
     .trim()
     .toUpperCase()
@@ -111,12 +123,12 @@ function normalizeFailureCode(value) {
   return token || "UNKNOWN_FAILURE";
 }
 
-function normalizeSliceLabel(value, fallback) {
+function normalizeSliceLabel(value: unknown, fallback: string) {
   const token = normalizeToken(value);
   return token || fallback;
 }
 
-function toNumber(value) {
+function toNumber(value: unknown) {
   if (typeof value === "number" && Number.isFinite(value)) {
     return value;
   }
@@ -129,7 +141,7 @@ function toNumber(value) {
   return null;
 }
 
-function toIsoTimestamp(value) {
+function toIsoTimestamp(value: unknown) {
   if (typeof value !== "string" || !value.trim()) {
     return null;
   }
@@ -144,21 +156,24 @@ function toIsoTimestamp(value) {
   return new Date(parsed).toISOString();
 }
 
-function getValue(record, key) {
+function getValue(record: JsonRecord, key: KeyPath) {
   if (Array.isArray(key)) {
-    let current = record;
+    let current: unknown = record;
     for (const segment of key) {
       if (!current || typeof current !== "object" || Array.isArray(current)) {
         return;
       }
-      current = current[segment];
+      current = (current as JsonRecord)[segment];
     }
     return current;
   }
-  return record[key];
+  if (typeof key === "string") {
+    return record[key];
+  }
+  return;
 }
 
-function pickFirst(record, keys) {
+function pickFirst(record: JsonRecord, keys: readonly KeyPath[]) {
   for (const key of keys) {
     const value = getValue(record, key);
     if (value !== undefined && value !== null) {
@@ -168,8 +183,8 @@ function pickFirst(record, keys) {
   return;
 }
 
-function parseTelemetryEvent(line, lineNumber) {
-  let parsed;
+function parseTelemetryEvent(line: string, lineNumber: number): JsonRecord {
+  let parsed: unknown;
   try {
     parsed = JSON.parse(line);
   } catch (error) {
@@ -184,22 +199,28 @@ function parseTelemetryEvent(line, lineNumber) {
       `Telemetry event on line ${lineNumber} must be a JSON object.`
     );
   }
-  return parsed;
+  return parsed as JsonRecord;
 }
 
-function attachInvalidCount(events, invalidCount) {
+function attachInvalidCount<T>(
+  events: T[],
+  invalidCount: number
+): T[] & { invalidCount: number } {
   Object.defineProperty(events, "invalidCount", {
     value: invalidCount,
     writable: true,
     configurable: true,
     enumerable: false,
   });
-  return events;
+  return events as T[] & { invalidCount: number };
 }
 
-export function parseTelemetryEvents(source, { allowInvalid = false } = {}) {
+export function parseTelemetryEvents(
+  source: unknown,
+  { allowInvalid = false }: { allowInvalid?: boolean } = {}
+): TelemetryEvents {
   if (Array.isArray(source)) {
-    const events = [];
+    const events: JsonRecord[] = [];
     let invalidCount = 0;
     for (let index = 0; index < source.length; index += 1) {
       const event = source[index];
@@ -212,7 +233,7 @@ export function parseTelemetryEvents(source, { allowInvalid = false } = {}) {
           `Telemetry array entry ${index} must be a JSON object.`
         );
       }
-      events.push(event);
+      events.push(event as JsonRecord);
     }
     return attachInvalidCount(events, invalidCount);
   }
@@ -226,7 +247,7 @@ export function parseTelemetryEvents(source, { allowInvalid = false } = {}) {
   if (trimmed.startsWith("[")) {
     let parsed;
     try {
-      parsed = JSON.parse(trimmed);
+      parsed = JSON.parse(trimmed) as unknown;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       throw new Error(`Invalid JSON telemetry array: ${message}`);
@@ -239,11 +260,11 @@ export function parseTelemetryEvents(source, { allowInvalid = false } = {}) {
     return parseTelemetryEvents(parsed, { allowInvalid });
   }
 
-  const events = [];
+  const events: JsonRecord[] = [];
   let invalidCount = 0;
   const lines = text.split(/\r?\n/u);
   for (let index = 0; index < lines.length; index += 1) {
-    const raw = lines[index];
+    const raw = lines[index] ?? "";
     const line = raw.trim();
     if (!line) {
       continue;
@@ -260,7 +281,7 @@ export function parseTelemetryEvents(source, { allowInvalid = false } = {}) {
   return attachInvalidCount(events, invalidCount);
 }
 
-function parseOutcomeToken(value) {
+function parseOutcomeToken(value: unknown) {
   if (typeof value === "string") {
     const token = normalizeToken(value);
     if (!token) {
@@ -279,10 +300,10 @@ function parseOutcomeToken(value) {
       return false;
     }
   }
-  return;
+  return null;
 }
 
-function classifySuccess(record, index) {
+function classifySuccess(record: JsonRecord, index: number) {
   const explicit = pickFirst(record, [
     "success",
     "ok",
@@ -368,7 +389,7 @@ function classifySuccess(record, index) {
   );
 }
 
-function extractLatencyMs(record, index) {
+function extractLatencyMs(record: JsonRecord, index: number) {
   const raw = pickFirst(record, LATENCY_KEYS);
   const parsed = toNumber(raw);
   if (parsed === null || parsed < 0) {
@@ -379,16 +400,16 @@ function extractLatencyMs(record, index) {
   return Number(parsed.toFixed(3));
 }
 
-function extractFailureCode(record, success) {
+function extractFailureCode(record: JsonRecord, success: boolean) {
   if (success) {
     return null;
   }
   return normalizeFailureCode(pickFirst(record, FAILURE_CODE_KEYS));
 }
 
-function extractOperation(record, index) {
+function extractOperation(record: JsonRecord, index: number) {
   const operation = normalizeOperation(pickFirst(record, OPERATION_KEYS));
-  if (operation === "unknown") {
+  if (operation === "any") {
     throw new Error(
       `Telemetry event at index ${index} is missing required field: operation.`
     );
@@ -396,7 +417,7 @@ function extractOperation(record, index) {
   return operation;
 }
 
-function extractPolicyDecision(record) {
+function extractPolicyDecision(record: JsonRecord) {
   const value = pickFirst(record, POLICY_KEYS);
   if (value === undefined || value === null) {
     return null;
@@ -404,7 +425,7 @@ function extractPolicyDecision(record) {
   return normalizeSliceLabel(value, "unknown_policy");
 }
 
-function extractAnomalyType(record) {
+function extractAnomalyType(record: JsonRecord) {
   const value = pickFirst(record, ANOMALY_KEYS);
   if (value === undefined || value === null) {
     return null;
@@ -412,7 +433,7 @@ function extractAnomalyType(record) {
   return normalizeSliceLabel(value, "unknown_anomaly");
 }
 
-function extractTimestamp(record, index) {
+function extractTimestamp(record: JsonRecord, index: number) {
   const timestamp = toIsoTimestamp(pickFirst(record, TIMESTAMP_KEYS));
   if (!timestamp) {
     throw new Error(
@@ -422,7 +443,7 @@ function extractTimestamp(record, index) {
   return timestamp;
 }
 
-function extractTeam(record, index) {
+function extractTeam(record: JsonRecord, index: number) {
   const team = normalizeSliceLabel(pickFirst(record, TEAM_KEYS), "");
   if (!team) {
     throw new Error(
@@ -432,7 +453,7 @@ function extractTeam(record, index) {
   return team;
 }
 
-function extractProject(record, index) {
+function extractProject(record: JsonRecord, index: number) {
   const project = normalizeSliceLabel(pickFirst(record, PROJECT_KEYS), "");
   if (!project) {
     throw new Error(
@@ -442,25 +463,25 @@ function extractProject(record, index) {
   return project;
 }
 
-function incrementHistogram(histogram, key) {
+function incrementHistogram(histogram: Map<string, number>, key: string) {
   histogram.set(key, (histogram.get(key) || 0) + 1);
 }
 
-function histogramToSortedObject(histogram) {
+function histogramToSortedObject(histogram: Map<string, number>) {
   const entries = [...histogram.entries()].sort((a, b) =>
     compareStrings(a[0], b[0])
   );
   return Object.fromEntries(entries);
 }
 
-function roundRate(count, total) {
+function roundRate(count: number, total: number) {
   if (total <= 0) {
     return 0;
   }
   return Number((count / total).toFixed(6));
 }
 
-function computeP95(latencies) {
+function computeP95(latencies: number[]) {
   if (latencies.length === 0) {
     return null;
   }
@@ -469,7 +490,7 @@ function computeP95(latencies) {
   return sorted[index];
 }
 
-function computeWindow(timestamps) {
+function computeWindow(timestamps: string[]) {
   if (timestamps.length === 0) {
     return { start: null, end: null };
   }
@@ -480,7 +501,9 @@ function computeWindow(timestamps) {
   };
 }
 
-function summarizePerOperation(operationTotals) {
+function summarizePerOperation(
+  operationTotals: Map<string, PerOperationTotals>
+) {
   const entries = [...operationTotals.entries()].sort((a, b) =>
     compareStrings(a[0], b[0])
   );
@@ -504,7 +527,7 @@ function summarizePerOperation(operationTotals) {
 }
 
 export function generatePilotRolloutReport(
-  events,
+  events: readonly unknown[] & { invalidCount?: number },
   { allowInvalid = false } = {}
 ) {
   if (!Array.isArray(events)) {
@@ -517,19 +540,22 @@ export function generatePilotRolloutReport(
   let successCount = 0;
   let failureCount = 0;
 
-  const operationHistogram = new Map();
-  const failureCodeHistogram = new Map();
-  const policyDecisionHistogram = new Map();
-  const anomalyHistogram = new Map();
-  const teamHistogram = new Map();
-  const projectHistogram = new Map();
-  const perOperation = new Map();
+  const operationHistogram = new Map<string, number>();
+  const failureCodeHistogram = new Map<string, number>();
+  const policyDecisionHistogram = new Map<string, number>();
+  const anomalyHistogram = new Map<string, number>();
+  const teamHistogram = new Map<string, number>();
+  const projectHistogram = new Map<string, number>();
+  const perOperation = new Map<string, PerOperationTotals>();
 
-  const latencies = [];
-  const timestamps = [];
+  const latencies: number[] = [];
+  const timestamps: string[] = [];
+  const eventsInvalidCountRaw = Number(
+    (events as { invalidCount?: number }).invalidCount ?? 0
+  );
   const parsedInvalidCount =
-    Number.isInteger(events.invalidCount) && events.invalidCount > 0
-      ? events.invalidCount
+    Number.isInteger(eventsInvalidCountRaw) && eventsInvalidCountRaw > 0
+      ? eventsInvalidCountRaw
       : 0;
   let invalidEventCount = parsedInvalidCount;
 
@@ -579,7 +605,7 @@ export function generatePilotRolloutReport(
         successCount: 0,
         failureCount: 0,
         latencies: [],
-        failureCodeHistogram: new Map(),
+        failureCodeHistogram: new Map<string, number>(),
       };
       perOperation.set(operation, opTotals);
     }
@@ -636,7 +662,7 @@ export function generatePilotRolloutReport(
   };
 }
 
-function parseArgs(argv) {
+function parseArgs(argv: readonly string[]) {
   const parsed = {
     input: "",
     output: "",
@@ -720,7 +746,7 @@ async function readStdin() {
   });
 }
 
-async function readInput(inputPath) {
+async function readInput(inputPath: string) {
   if (inputPath === "-") {
     return readStdin();
   }

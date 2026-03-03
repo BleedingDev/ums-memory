@@ -145,7 +145,9 @@ test("production SLO evaluation returns pass verdict for healthy metrics", () =>
   assert.equal(result.measurements.requestVolume, 2000);
   assert.equal(result.measurements.successRate, 0.9965);
   assert.equal(result.measurements.p95LatencyMs, 240);
-  assert.equal(result.actionPlan[0].objective, "all");
+  const firstAction = result.actionPlan[0];
+  assert.ok(firstAction);
+  assert.equal(firstAction.objective, "all");
 });
 
 test("production SLO evaluation records tuning guardrail metadata deterministically", () => {

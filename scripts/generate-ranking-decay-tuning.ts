@@ -29,14 +29,32 @@ const RANKING_WEIGHT_ORDER = Object.freeze([
   "semanticSimilarity",
   "reliability",
   "policySafety",
-]);
+] as const);
+
+interface RankingDecayTuningOptions {
+  readonly dashboards?: readonly unknown[];
+  readonly feedbackRecords?: readonly unknown[];
+}
+
+interface ParsedArgs {
+  input: string[];
+  dashboard: string[];
+  feedback: string[];
+  output: string;
+  compact: boolean;
+  help: boolean;
+}
+
+type JsonRecord = Record<string, unknown>;
+type RankingWeightKey = (typeof RANKING_WEIGHT_ORDER)[number];
+type RankingWeights = Record<RankingWeightKey, number>;
 
 const RANKING_WEIGHT_BOUNDS = Object.freeze({
   min: 0.05,
   max: 0.7,
 });
 
-function compareStrings(left, right) {
+function compareStrings(left: string, right: string) {
   if (left < right) {
     return -1;
   }
@@ -46,33 +64,33 @@ function compareStrings(left, right) {
   return 0;
 }
 
-function isRecord(value) {
+function isRecord(value: unknown): value is JsonRecord {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
-function clamp(value, min, max) {
+function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
 }
 
-function round(value, digits = 6) {
+function round(value: number, digits = 6) {
   return Number(value.toFixed(digits));
 }
 
-function roundRate(count, total) {
+function roundRate(count: number, total: number) {
   if (total <= 0) {
     return 0;
   }
   return round(count / total);
 }
 
-function roundPerThousand(count, total) {
+function roundPerThousand(count: number, total: number) {
   if (total <= 0) {
     return 0;
   }
   return round((count * 1000) / total);
 }
 
-function normalizeToken(value) {
+function normalizeToken(value: unknown) {
   return String(value ?? "")
     .trim()
     .toLowerCase()
@@ -80,14 +98,14 @@ function normalizeToken(value) {
     .replace(/-+/g, "_");
 }
 
-function readRequiredField(record, key, label) {
+function readRequiredField(record: JsonRecord, key: string, label: string) {
   if (!(key in record)) {
     throw new Error(`Missing required field: ${label}.`);
   }
   return record[key];
 }
 
-function readNonNegativeInteger(value, label) {
+function readNonNegativeInteger(value: unknown, label: string) {
   if (
     typeof value !== "number" ||
     !Number.isFinite(value) ||
@@ -99,7 +117,7 @@ function readNonNegativeInteger(value, label) {
   return value;
 }
 
-function readRate(value, label) {
+function readRate(value: unknown, label: string) {
   if (
     typeof value !== "number" ||
     !Number.isFinite(value) ||
@@ -111,7 +129,7 @@ function readRate(value, label) {
   return round(value);
 }
 
-function readLatency(value, label) {
+function readLatency(value: unknown, label: string) {
   if (value === null) {
     return null;
   }
@@ -121,11 +139,11 @@ function readLatency(value, label) {
   return round(value, 3);
 }
 
-function readHistogram(value, label) {
+function readHistogram(value: unknown, label: string) {
   if (!isRecord(value)) {
     throw new Error(`Missing required histogram field: ${label}.`);
   }
-  const histogram = new Map();
+  const histogram = new Map<string, number>();
   for (const [key, rawCount] of Object.entries(value)) {
     histogram.set(
       String(key),
@@ -135,7 +153,7 @@ function readHistogram(value, label) {
   return histogram;
 }
 
-function readTimestampOrNull(value, label) {
+function readTimestampOrNull(value: unknown, label: string) {
   if (value === null) {
     return null;
   }
@@ -149,7 +167,12 @@ function readTimestampOrNull(value, label) {
   return new Date(parsed).toISOString();
 }
 
-function mergeWindows(currentStart, currentEnd, nextStart, nextEnd) {
+function mergeWindows(
+  currentStart: string | null,
+  currentEnd: string | null,
+  nextStart: string | null,
+  nextEnd: string | null
+) {
   let start = currentStart;
   let end = currentEnd;
 
@@ -163,15 +186,23 @@ function mergeWindows(currentStart, currentEnd, nextStart, nextEnd) {
   return { start, end };
 }
 
-function isRecallOperation(operation) {
+function isRecallOperation(operation: string) {
   return RECALL_KEY_PATTERN.test(operation);
 }
 
-function readPerOperation(value, label) {
+function readPerOperation(value: unknown, label: string) {
   if (!isRecord(value)) {
     throw new Error(`Missing required object field: ${label}.`);
   }
-  const perOperation = new Map();
+  const perOperation = new Map<
+    string,
+    {
+      requestVolume: number;
+      successCount: number;
+      failureCount: number;
+      failureCodeHistogram: Map<string, number>;
+    }
+  >();
   for (const [operation, stats] of Object.entries(value)) {
     const operationLabel = `${label}.${operation}`;
     if (!isRecord(stats)) {
@@ -248,7 +279,7 @@ function readPerOperation(value, label) {
   return perOperation;
 }
 
-function readPilotSummary(summary, sourceLabel) {
+function readPilotSummary(summary: unknown, sourceLabel: string) {
   if (!isRecord(summary)) {
     throw new Error(`${sourceLabel} must be a JSON object.`);
   }
@@ -387,7 +418,7 @@ function readPilotSummary(summary, sourceLabel) {
   };
 }
 
-function readDashboard(dashboard, sourceLabel) {
+function readDashboard(dashboard: unknown, sourceLabel: string) {
   if (!isRecord(dashboard)) {
     throw new Error(`${sourceLabel} must be a JSON object.`);
   }
@@ -541,14 +572,14 @@ function readDashboard(dashboard, sourceLabel) {
   };
 }
 
-function readNonNegativeNumber(value, label) {
+function readNonNegativeNumber(value: unknown, label: string) {
   if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
     throw new Error(`Missing required numeric field: ${label}.`);
   }
   return round(value);
 }
 
-function aggregateSummaries(summaries) {
+function aggregateSummaries(summaries: ReturnType<typeof readPilotSummary>[]) {
   let requestVolume = 0;
   let successCount = 0;
   let failureCount = 0;
@@ -641,7 +672,7 @@ function aggregateSummaries(summaries) {
   };
 }
 
-function aggregateDashboards(dashboards) {
+function aggregateDashboards(dashboards: ReturnType<typeof readDashboard>[]) {
   if (dashboards.length === 0) {
     return null;
   }
@@ -713,7 +744,7 @@ function aggregateDashboards(dashboards) {
   };
 }
 
-function normalizeFeedbackRecord(record, index) {
+function normalizeFeedbackRecord(record: unknown, index: number) {
   if (!isRecord(record)) {
     throw new Error(`feedbackRecords[${index}] must be a JSON object.`);
   }
@@ -723,7 +754,7 @@ function normalizeFeedbackRecord(record, index) {
   const severity = normalizeToken(
     readRequiredField(record, "severity", `feedbackRecords[${index}].severity`)
   );
-  const action = normalizeToken(record.action ?? "none");
+  const action = normalizeToken(record["action"] ?? "none");
   if (!category) {
     throw new Error(
       `feedbackRecords[${index}] is missing required field: category.`
@@ -737,7 +768,10 @@ function normalizeFeedbackRecord(record, index) {
   return { category, severity, action };
 }
 
-function aggregateFeedback(feedbackRecords, requestVolume) {
+function aggregateFeedback(
+  feedbackRecords: readonly unknown[],
+  requestVolume: number
+) {
   let feedbackCount = 0;
   let incidentCount = 0;
   let highSeverityCount = 0;
@@ -778,7 +812,7 @@ function aggregateFeedback(feedbackRecords, requestVolume) {
   };
 }
 
-function maxNullable(left, right) {
+function maxNullable(left: number | null, right: number | null) {
   if (left === null) {
     return right;
   }
@@ -789,9 +823,13 @@ function maxNullable(left, right) {
 }
 
 function mergeObservedMetrics(
-  summarySignals,
-  dashboardSignals,
-  feedbackSignals
+  summarySignals: ReturnType<typeof aggregateSummaries> & {
+    summaryCount: number;
+  },
+  dashboardSignals:
+    | (ReturnType<typeof aggregateDashboards> & { dashboardCount: number })
+    | null,
+  feedbackSignals: ReturnType<typeof aggregateFeedback>
 ) {
   const requestVolume = Math.max(
     summarySignals.requestVolume,
@@ -863,7 +901,9 @@ function mergeObservedMetrics(
   };
 }
 
-function computePressures(observedMetrics) {
+function computePressures(
+  observedMetrics: ReturnType<typeof mergeObservedMetrics>
+) {
   const failurePressure = clamp(
     (observedMetrics.failureRate - 0.005) / 0.025,
     0,
@@ -907,11 +947,11 @@ function computePressures(observedMetrics) {
   };
 }
 
-function boundedNormalizeWeights(rawWeights) {
-  const weights = new Map(
+function boundedNormalizeWeights(rawWeights: RankingWeights) {
+  const weights = new Map<RankingWeightKey, number>(
     RANKING_WEIGHT_ORDER.map((key) => [key, rawWeights[key] ?? 0])
   );
-  const fixed = new Map();
+  const fixed = new Map<RankingWeightKey, number>();
   const epsilon = 1e-12;
 
   while (true) {
@@ -923,19 +963,19 @@ function boundedNormalizeWeights(rawWeights) {
     const fixedSum = [...fixed.values()].reduce((sum, value) => sum + value, 0);
     const remaining = Math.max(0, 1 - fixedSum);
     const freeRawSum = freeKeys.reduce(
-      (sum, key) => sum + Math.max(0, weights.get(key)),
+      (sum, key) => sum + Math.max(0, weights.get(key) ?? 0),
       0
     );
     const denominator = freeRawSum > 0 ? freeRawSum : freeKeys.length;
 
     for (const key of freeKeys) {
-      const raw = freeRawSum > 0 ? Math.max(0, weights.get(key)) : 1;
+      const raw = freeRawSum > 0 ? Math.max(0, weights.get(key) ?? 0) : 1;
       weights.set(key, (remaining * raw) / denominator);
     }
 
     let changed = false;
     for (const key of freeKeys) {
-      const value = weights.get(key);
+      const value = weights.get(key) ?? 0;
       if (value < RANKING_WEIGHT_BOUNDS.min - epsilon) {
         fixed.set(key, RANKING_WEIGHT_BOUNDS.min);
         weights.set(key, RANKING_WEIGHT_BOUNDS.min);
@@ -952,7 +992,7 @@ function boundedNormalizeWeights(rawWeights) {
   }
 
   const sum = RANKING_WEIGHT_ORDER.reduce(
-    (total, key) => total + weights.get(key),
+    (total, key) => total + (weights.get(key) ?? 0),
     0
   );
   if (sum <= 0) {
@@ -962,25 +1002,30 @@ function boundedNormalizeWeights(rawWeights) {
     }
   } else {
     for (const key of RANKING_WEIGHT_ORDER) {
-      weights.set(key, weights.get(key) / sum);
+      weights.set(key, (weights.get(key) ?? 0) / sum);
     }
   }
 
-  const normalized = {};
+  const normalized: Partial<RankingWeights> = {};
   let running = 0;
   for (let index = 0; index < RANKING_WEIGHT_ORDER.length; index += 1) {
     const key = RANKING_WEIGHT_ORDER[index];
+    if (key === undefined) {
+      continue;
+    }
     if (index === RANKING_WEIGHT_ORDER.length - 1) {
       normalized[key] = round(1 - running);
       continue;
     }
-    normalized[key] = round(weights.get(key));
-    running += normalized[key];
+    normalized[key] = round(weights.get(key) ?? 0);
+    running += normalized[key] ?? 0;
   }
-  return normalized;
+  return normalized as RankingWeights;
 }
 
-function recommendRankingWeights(pressures) {
+function recommendRankingWeights(
+  pressures: ReturnType<typeof computePressures>
+) {
   const recencyDelta =
     0.1 * pressures.latencyPressure + 0.06 * pressures.anomalyPressure;
   const reliabilityDelta =
@@ -1006,7 +1051,7 @@ function recommendRankingWeights(pressures) {
   return boundedNormalizeWeights(rawWeights);
 }
 
-function recommendDecayPolicy(pressures) {
+function recommendDecayPolicy(pressures: ReturnType<typeof computePressures>) {
   const halfLifeDays = clamp(
     Math.round(
       BASELINE_DECAY_POLICY.halfLifeDays +
@@ -1072,7 +1117,10 @@ function recommendDecayPolicy(pressures) {
   };
 }
 
-function buildGuardrails(observedMetrics, pressures) {
+function buildGuardrails(
+  observedMetrics: ReturnType<typeof mergeObservedMetrics>,
+  pressures: ReturnType<typeof computePressures>
+) {
   return {
     minObservationRequests: 500,
     minFeedbackSamples: 10,
@@ -1109,14 +1157,18 @@ function buildGuardrails(observedMetrics, pressures) {
 }
 
 function buildRationale(
-  observedMetrics,
-  pressures,
-  rankingWeights,
-  decayPolicy
+  observedMetrics: ReturnType<typeof mergeObservedMetrics>,
+  pressures: ReturnType<typeof computePressures>,
+  rankingWeights: RankingWeights,
+  decayPolicy: ReturnType<typeof recommendDecayPolicy>
 ) {
-  const reasonCodes = [];
+  const reasonCodes: Array<{ code: string } & Record<string, unknown>> = [];
 
-  function pushReason(code, condition, details) {
+  function pushReason(
+    code: string,
+    condition: boolean,
+    details: Record<string, unknown>
+  ) {
     if (!condition) {
       return;
     }
@@ -1243,8 +1295,8 @@ function buildRationale(
 }
 
 export function generateRankingDecayTuning(
-  summaries,
-  { dashboards = [], feedbackRecords = [] } = {}
+  summaries: readonly unknown[],
+  { dashboards = [], feedbackRecords = [] }: RankingDecayTuningOptions = {}
 ) {
   if (!Array.isArray(summaries) || summaries.length === 0) {
     throw new Error("Expected at least one pilot summary object.");
@@ -1263,13 +1315,18 @@ export function generateRankingDecayTuning(
     readDashboard(dashboard, `dashboards[${index}]`)
   );
 
-  const summarySignals = aggregateSummaries(normalizedSummaries);
-  summarySignals.summaryCount = normalizedSummaries.length;
+  const summarySignals = {
+    ...aggregateSummaries(normalizedSummaries),
+    summaryCount: normalizedSummaries.length,
+  };
 
-  const dashboardSignals = aggregateDashboards(normalizedDashboards);
-  if (dashboardSignals) {
-    dashboardSignals.dashboardCount = normalizedDashboards.length;
-  }
+  const dashboardAggregate = aggregateDashboards(normalizedDashboards);
+  const dashboardSignals = dashboardAggregate
+    ? {
+        ...dashboardAggregate,
+        dashboardCount: normalizedDashboards.length,
+      }
+    : null;
   const feedbackSignals = aggregateFeedback(
     feedbackRecords,
     summarySignals.requestVolume
@@ -1304,8 +1361,8 @@ export function generateRankingDecayTuning(
   };
 }
 
-function parseArgs(argv) {
-  const parsed = {
+function parseArgs(argv: readonly string[]): ParsedArgs {
+  const parsed: ParsedArgs = {
     input: [],
     dashboard: [],
     feedback: [],
@@ -1387,8 +1444,8 @@ function printUsage() {
   );
 }
 
-async function readStdin() {
-  return new Promise((resolvePromise, reject) => {
+async function readStdin(): Promise<string> {
+  return new Promise<string>((resolvePromise, reject) => {
     let content = "";
     process.stdin.setEncoding("utf8");
     process.stdin.on("data", (chunk) => {
@@ -1403,7 +1460,10 @@ async function readStdin() {
   });
 }
 
-async function readInput(inputPath, ioState) {
+async function readInput(
+  inputPath: string,
+  ioState: { stdinConsumed: boolean; stdinCache: string }
+) {
   if (inputPath !== "-") {
     return readFileSync(resolve(process.cwd(), inputPath), "utf8");
   }
@@ -1415,8 +1475,12 @@ async function readInput(inputPath, ioState) {
   return ioState.stdinCache;
 }
 
-function parseJsonObject(content, sourceLabel, artifactLabel) {
-  let parsed;
+function parseJsonObject(
+  content: string,
+  sourceLabel: string,
+  artifactLabel: string
+) {
+  let parsed: unknown;
   try {
     parsed = JSON.parse(content);
   } catch (error) {
@@ -1433,27 +1497,30 @@ function parseJsonObject(content, sourceLabel, artifactLabel) {
   return parsed;
 }
 
-export async function main(argv = process.argv.slice(2)) {
+export async function main(argv: readonly string[] = process.argv.slice(2)) {
   const parsedArgs = parseArgs(argv);
   if (parsedArgs.help) {
     printUsage();
     return 0;
   }
 
-  const ioState = { stdinConsumed: false, stdinCache: "" };
-  const summaries = [];
+  const ioState: { stdinConsumed: boolean; stdinCache: string } = {
+    stdinConsumed: false,
+    stdinCache: "",
+  };
+  const summaries: JsonRecord[] = [];
   for (const inputPath of parsedArgs.input) {
     const rawSummary = await readInput(inputPath, ioState);
     summaries.push(parseJsonObject(rawSummary, inputPath, "summary"));
   }
 
-  const dashboards = [];
+  const dashboards: JsonRecord[] = [];
   for (const dashboardPath of parsedArgs.dashboard) {
     const rawDashboard = await readInput(dashboardPath, ioState);
     dashboards.push(parseJsonObject(rawDashboard, dashboardPath, "dashboard"));
   }
 
-  const feedbackRecords = [];
+  const feedbackRecords: unknown[] = [];
   for (const feedbackPath of parsedArgs.feedback) {
     const rawFeedback = await readInput(feedbackPath, ioState);
     const parsedFeedback = parseFeedbackEvents(rawFeedback, {

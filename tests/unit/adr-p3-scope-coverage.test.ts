@@ -16,7 +16,7 @@ const REQUIRED_P3_IDS = Object.freeze([
   "ums-memory-d6q.1.1",
 ]);
 
-function escapeRegExp(value) {
+function escapeRegExp(value: any) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 

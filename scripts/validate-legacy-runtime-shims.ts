@@ -11,23 +11,52 @@ const VALID_ENTRY_KINDS = new Set([
 ]);
 const FOLLOW_UP_BEAD_PATTERN = /^ums-memory-[a-z0-9]+(?:[.-][a-z0-9]+)*$/i;
 
-function compareStrings(left, right) {
+interface InventoryEntry {
+  readonly path: string;
+  readonly kind: string;
+  readonly followUpBeadId: string;
+  readonly notes: string;
+}
+
+interface ParsedArgs {
+  projectRoot: string;
+  inventoryPath: string;
+  json: boolean;
+  help: boolean;
+}
+
+interface LegacyShimValidationResult {
+  readonly schemaVersion: string;
+  readonly projectRoot: string;
+  readonly inventoryPath: string;
+  readonly expectedCount: number;
+  readonly actualCount: number;
+  readonly missingFromInventory: readonly string[];
+  readonly missingOnDisk: readonly string[];
+  readonly duplicateInventoryEntries: readonly string[];
+  readonly invalidFollowUpBeadIds: readonly string[];
+  readonly inventoryOrderStable: boolean;
+  readonly inventoryMustBeEmpty: boolean;
+  readonly ok: boolean;
+}
+
+function compareStrings(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0;
 }
 
-function normalizePath(filePath) {
+function normalizePath(filePath: string): string {
   return filePath.split(path.sep).join("/");
 }
 
-function toProjectRelativePath(projectRoot, filePath) {
+function toProjectRelativePath(projectRoot: string, filePath: string): string {
   return normalizePath(path.relative(projectRoot, filePath));
 }
 
-function isRecord(value) {
+function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
-async function pathExists(targetPath) {
+async function pathExists(targetPath: string): Promise<boolean> {
   try {
     await access(targetPath, fsConstants.F_OK);
     return true;
@@ -36,7 +65,10 @@ async function pathExists(targetPath) {
   }
 }
 
-async function walkDirectory(rootDirectory, fileVisitor) {
+async function walkDirectory(
+  rootDirectory: string,
+  fileVisitor: (filePath: string) => void | Promise<void>
+): Promise<void> {
   const exists = await pathExists(rootDirectory);
   if (!exists) {
     return;
@@ -69,8 +101,8 @@ async function walkDirectory(rootDirectory, fileVisitor) {
   }
 }
 
-async function collectLegacyShimPaths(projectRoot) {
-  const collected = [];
+async function collectLegacyShimPaths(projectRoot: string): Promise<string[]> {
+  const collected: string[] = [];
   const appsRoot = path.resolve(projectRoot, "apps");
   const appsRootExists = await pathExists(appsRoot);
 
@@ -101,17 +133,19 @@ async function collectLegacyShimPaths(projectRoot) {
   return [...new Set(collected)].sort(compareStrings);
 }
 
-function parseInventoryEntry(entry, index) {
+function parseInventoryEntry(entry: unknown, index: number): InventoryEntry {
   if (!isRecord(entry)) {
     throw new Error(`entries[${index}] must be a JSON object.`);
   }
 
-  const pathValue = typeof entry.path === "string" ? entry.path.trim() : "";
+  const pathValue =
+    typeof entry["path"] === "string" ? entry["path"].trim() : "";
   if (!pathValue) {
     throw new Error(`entries[${index}].path must be a non-empty string.`);
   }
 
-  const kindValue = typeof entry.kind === "string" ? entry.kind.trim() : "";
+  const kindValue =
+    typeof entry["kind"] === "string" ? entry["kind"].trim() : "";
   if (!VALID_ENTRY_KINDS.has(kindValue)) {
     throw new Error(
       `entries[${index}].kind must be one of: ${[...VALID_ENTRY_KINDS].sort(compareStrings).join(", ")}.`
@@ -119,8 +153,10 @@ function parseInventoryEntry(entry, index) {
   }
 
   const followUpBeadId =
-    typeof entry.followUpBeadId === "string" ? entry.followUpBeadId.trim() : "";
-  const notes = typeof entry.notes === "string" ? entry.notes.trim() : "";
+    typeof entry["followUpBeadId"] === "string"
+      ? entry["followUpBeadId"].trim()
+      : "";
+  const notes = typeof entry["notes"] === "string" ? entry["notes"].trim() : "";
   if (!notes) {
     throw new Error(`entries[${index}].notes must be a non-empty string.`);
   }
@@ -133,7 +169,10 @@ function parseInventoryEntry(entry, index) {
   };
 }
 
-async function loadInventory(inventoryPath) {
+async function loadInventory(inventoryPath: string): Promise<{
+  readonly schemaVersion: string;
+  readonly entries: InventoryEntry[];
+}> {
   const raw = await readFile(inventoryPath, "utf8");
 
   let parsed;
@@ -150,13 +189,13 @@ async function loadInventory(inventoryPath) {
     throw new Error("Inventory root must be an object.");
   }
 
-  if (parsed.schemaVersion !== INVENTORY_SCHEMA_VERSION) {
+  if (parsed["schemaVersion"] !== INVENTORY_SCHEMA_VERSION) {
     throw new Error(
-      `Inventory schemaVersion must be "${INVENTORY_SCHEMA_VERSION}", received "${String(parsed.schemaVersion)}".`
+      `Inventory schemaVersion must be "${INVENTORY_SCHEMA_VERSION}", received "${String(parsed["schemaVersion"])}".`
     );
   }
 
-  const rawEntries = parsed.entries;
+  const rawEntries = parsed["entries"];
   if (!Array.isArray(rawEntries)) {
     throw new Error("Inventory entries must be an array.");
   }
@@ -170,7 +209,10 @@ async function loadInventory(inventoryPath) {
   };
 }
 
-function compareExpectedAndActual(expectedPaths, actualPaths) {
+function compareExpectedAndActual(
+  expectedPaths: readonly string[],
+  actualPaths: readonly string[]
+) {
   const expected = new Set(expectedPaths);
   const actual = new Set(actualPaths);
 
@@ -182,9 +224,9 @@ function compareExpectedAndActual(expectedPaths, actualPaths) {
   };
 }
 
-function findDuplicates(values) {
-  const duplicates = new Set();
-  const seen = new Set();
+function findDuplicates(values: readonly string[]): string[] {
+  const duplicates = new Set<string>();
+  const seen = new Set<string>();
   for (const value of values) {
     if (seen.has(value)) {
       duplicates.add(value);
@@ -195,14 +237,16 @@ function findDuplicates(values) {
   return [...duplicates].sort(compareStrings);
 }
 
-function findInvalidFollowUpBeadIds(entries) {
+function findInvalidFollowUpBeadIds(
+  entries: readonly InventoryEntry[]
+): string[] {
   return entries
     .filter((entry) => !FOLLOW_UP_BEAD_PATTERN.test(entry.followUpBeadId))
     .map((entry) => entry.path)
     .sort(compareStrings);
 }
 
-function validateInventoryOrder(entries) {
+function validateInventoryOrder(entries: readonly InventoryEntry[]): boolean {
   const inventoryOrder = entries.map((entry) => entry.path);
   const sortedOrder = [...inventoryOrder].sort(compareStrings);
   if (inventoryOrder.length !== sortedOrder.length) {
@@ -222,7 +266,10 @@ export async function validateLegacyRuntimeShims({
     process.cwd(),
     "docs/migration/legacy-runtime-shim-inventory.v1.json"
   ),
-} = {}) {
+}: {
+  readonly projectRoot?: string;
+  readonly inventoryPath?: string;
+} = {}): Promise<LegacyShimValidationResult> {
   const absoluteProjectRoot = path.resolve(projectRoot);
   const absoluteInventoryPath = path.resolve(inventoryPath);
   const inventory = await loadInventory(absoluteInventoryPath);
@@ -279,8 +326,8 @@ function printUsage() {
   );
 }
 
-function parseArgs(argv) {
-  const parsed = {
+function parseArgs(argv: readonly string[]): ParsedArgs {
+  const parsed: ParsedArgs = {
     projectRoot: process.cwd(),
     inventoryPath: path.resolve(
       process.cwd(),
@@ -326,7 +373,7 @@ function parseArgs(argv) {
   return parsed;
 }
 
-function renderFailureSummary(result) {
+function renderFailureSummary(result: LegacyShimValidationResult): string {
   const lines = ["Legacy runtime shim validation failed."];
   if (!result.inventoryMustBeEmpty) {
     lines.push(
@@ -357,7 +404,7 @@ function renderFailureSummary(result) {
   return lines.join("\n");
 }
 
-export async function main(argv = process.argv.slice(2)) {
+export async function main(argv: readonly string[] = process.argv.slice(2)) {
   try {
     const args = parseArgs(argv);
     if (args.help) {

@@ -237,6 +237,20 @@ export const RetrievalExplainabilityWeightedContributionSchema = Schema.Struct({
   weightedContribution: RetrievalScoreSchema,
 });
 
+export const RetrievalExplainabilityProvenanceSchema = Schema.Struct({
+  tenantId: TenantIdSchema,
+  projectId: Schema.optional(ProjectIdSchema),
+  roleId: Schema.optional(RoleIdSchema),
+  userId: Schema.optional(UserIdSchema),
+  agentId: Schema.optional(AgentIdSchema),
+  conversationId: Schema.optional(ConversationIdSchema),
+  messageId: Schema.optional(MessageIdSchema),
+  sourceId: Schema.optional(SourceIdSchema),
+  batchId: Schema.optional(BatchIdSchema),
+  evidencePointerIds: Schema.Array(Schema.String),
+  evidenceSourceRefs: Schema.Array(Schema.String),
+});
+
 export const RetrievalExplainabilityHitSchema = Schema.Struct({
   memoryId: MemoryIdSchema,
   layer: MemoryLayerSchema,
@@ -250,6 +264,7 @@ export const RetrievalExplainabilityHitSchema = Schema.Struct({
   weightedContributions: Schema.Array(
     RetrievalExplainabilityWeightedContributionSchema
   ),
+  provenance: Schema.optional(RetrievalExplainabilityProvenanceSchema),
 });
 
 const ActionableRetrievalLineSchema = NonEmptyTrimmedStringSchema;

@@ -7,7 +7,7 @@ if (files.length === 0) {
   process.exit(1);
 }
 
-const failures = [];
+const failures: string[] = [];
 
 for (const filePath of files) {
   try {

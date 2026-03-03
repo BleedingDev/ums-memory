@@ -16,7 +16,7 @@ const REQUIRED_BEAD_IDS = Object.freeze([
   "ums-memory-d6q.4.1",
 ]);
 
-function escapeRegExp(value) {
+function escapeRegExp(value: any) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 

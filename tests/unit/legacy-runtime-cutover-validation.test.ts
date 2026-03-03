@@ -217,7 +217,7 @@ test("legacy runtime cutover validation ignores commented import references when
   }
 });
 
-test("legacy runtime cutover CLI main returns failure on unknown args", async () => {
+test("legacy runtime cutover CLI main returns failure on any args", async () => {
   const code = await main(["--does-not-exist"]);
   assert.equal(code, 1);
 });

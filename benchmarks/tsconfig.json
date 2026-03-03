@@ -5,6 +5,6 @@
     "noEmit": true,
     "tsBuildInfoFile": "../dist/typecheck/benchmarks.tsbuildinfo"
   },
-  "include": ["**/*.ts"],
+  "include": ["**/*.ts", "../tests/support/**/*.ts"],
   "references": [{ "path": "../apps/api" }]
 }

@@ -12,6 +12,8 @@ import {
 } from "../../libs/shared/src/entities.ts";
 import { ErrorCode } from "../../libs/shared/src/errors.ts";
 
+type ErrorCodeValue = (typeof ErrorCode)[keyof typeof ErrorCode];
+
 test("createLearnerProfile enforces canonical identity normalization and deterministic IDs", () => {
   const createdAt = "2026-02-28T00:00:00.000Z";
   const left = createLearnerProfile({
@@ -57,7 +59,8 @@ test("createLearnerProfile rejects missing identity references", () => {
         learnerId: "learner-42",
         identityRefs: [],
       }),
-    (error) => error?.code === ErrorCode.IDENTITY_INVARIANT
+    (error) =>
+      (error as { code?: ErrorCodeValue }).code === ErrorCode.IDENTITY_INVARIANT
   );
 });
 
@@ -71,7 +74,8 @@ test("createLearnerProfile rejects impossible timestamp ordering", () => {
         createdAt: "2026-02-28T00:00:00.000Z",
         updatedAt: "2026-02-27T23:59:59.000Z",
       }),
-    (error) => error?.code === ErrorCode.IDENTITY_INVARIANT
+    (error) =>
+      (error as { code?: ErrorCodeValue }).code === ErrorCode.IDENTITY_INVARIANT
   );
 });
 
@@ -85,7 +89,8 @@ test("createIdentityGraphEdge requires evidence for misconception relations", ()
         fromRef: { namespace: "misconception", value: "loop-off-by-one" },
         toRef: { namespace: "learner", value: "learner-42" },
       }),
-    (error) => error?.code === ErrorCode.EVIDENCE_REQUIRED
+    (error) =>
+      (error as { code?: ErrorCodeValue }).code === ErrorCode.EVIDENCE_REQUIRED
   );
 });
 
@@ -104,7 +109,9 @@ test("identity graph edge helpers enforce space boundaries", () => {
   assert.doesNotThrow(() => assertIdentityEdgeInSpace(edge, "tenant-a"));
   assert.throws(
     () => assertIdentityEdgeInSpace(edge, "tenant-b"),
-    (error) => error?.code === ErrorCode.ISOLATION_VIOLATION
+    (error) =>
+      (error as { code?: ErrorCodeValue }).code ===
+      ErrorCode.ISOLATION_VIOLATION
   );
 });
 
