@@ -3,8 +3,20 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { dirname, join } from "node:path";
 import test from "node:test";
 import { pathToFileURL } from "node:url";
-import { Effect } from "effect";
+import { Effect as EffectOriginal } from "effect";
 import ts from "typescript";
+
+const either = (effect) =>
+  EffectOriginal.result(effect).pipe(
+    EffectOriginal.map((result) =>
+      result._tag === "Failure"
+        ? { _tag: "Left", left: result.failure }
+        : { _tag: "Right", right: result.success,
+        },
+    ),
+  );
+
+const Effect = { ...EffectOriginal, either };
 
 const effectModuleDirectory = new URL("../../libs/shared/src/effect/", import.meta.url);
 
@@ -214,12 +226,14 @@ test("ums-memory-a9v.1: deterministicAuthorizationLayer provides zeroed evaluati
   const { authorizationServiceModule } = await loadAuthorizationModules();
 
   const decision = await Effect.runPromise(
-    Effect.provide(
-      Effect.flatMap(authorizationServiceModule.AuthorizationServiceTag, (service) =>
-        service.evaluate({
-          role: "admin",
-          action: "memory.read",
-        }),
+      Effect.provide(
+      Effect.flatMap(
+        Effect.service(authorizationServiceModule.AuthorizationServiceTag),
+        (service) =>
+          service.evaluate({
+            role: "admin",
+            action: "memory.read",
+          }),
       ),
       authorizationServiceModule.deterministicAuthorizationLayer,
     ),

@@ -7,6 +7,6 @@
     "outDir": "../../dist/typecheck/apps/cli",
     "tsBuildInfoFile": "../../dist/typecheck/apps/cli.tsbuildinfo"
   },
-  "include": ["**/*.mjs"],
+  "include": ["src/**/*.ts"],
   "references": [{ "path": "../../libs/shared" }, { "path": "../api" }]
 }

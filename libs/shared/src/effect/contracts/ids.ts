@@ -1,6 +1,9 @@
 import { Schema } from "effect";
 
-const BrandedIdBaseSchema = Schema.NonEmptyTrimmedString;
+const BrandedIdBaseSchema = Schema.String.check(
+  Schema.isTrimmed(),
+  Schema.isNonEmpty()
+);
 
 const makeBrandedIdSchema = <TBrand extends string>(brandName: TBrand) =>
   BrandedIdBaseSchema.pipe(Schema.brand(brandName));

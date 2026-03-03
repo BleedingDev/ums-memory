@@ -101,7 +101,7 @@ const decodeSqliteStorageAdapterConfiguration = (
 const storageAdapterIdValidationHint =
   "Use lowercase ASCII letters, digits, and internal hyphens (for example: sqlite, postgres-readonly).";
 
-export class StorageAdapterIdValidationError extends Schema.TaggedError<StorageAdapterIdValidationError>()(
+export class StorageAdapterIdValidationError extends Schema.TaggedErrorClass<StorageAdapterIdValidationError>()(
   "StorageAdapterIdValidationError",
   {
     adapterId: Schema.String,
@@ -109,7 +109,7 @@ export class StorageAdapterIdValidationError extends Schema.TaggedError<StorageA
   }
 ) {}
 
-export class StorageAdapterDuplicateIdError extends Schema.TaggedError<StorageAdapterDuplicateIdError>()(
+export class StorageAdapterDuplicateIdError extends Schema.TaggedErrorClass<StorageAdapterDuplicateIdError>()(
   "StorageAdapterDuplicateIdError",
   {
     adapterId: Schema.String,
@@ -117,7 +117,7 @@ export class StorageAdapterDuplicateIdError extends Schema.TaggedError<StorageAd
   }
 ) {}
 
-export class StorageAdapterUnknownIdError extends Schema.TaggedError<StorageAdapterUnknownIdError>()(
+export class StorageAdapterUnknownIdError extends Schema.TaggedErrorClass<StorageAdapterUnknownIdError>()(
   "StorageAdapterUnknownIdError",
   {
     adapterId: Schema.String,

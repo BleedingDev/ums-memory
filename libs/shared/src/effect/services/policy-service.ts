@@ -1,4 +1,4 @@
-import { Context, Effect, Layer } from "effect";
+import { Effect, Layer, ServiceMap } from "effect";
 
 import type {
   PolicyContext,
@@ -23,7 +23,7 @@ export interface PolicyService {
   ) => Effect.Effect<PolicyResponse, PolicyServiceError>;
 }
 
-export const PolicyServiceTag = Context.GenericTag<PolicyService>(
+export const PolicyServiceTag = ServiceMap.Service<PolicyService>(
   "@ums/effect/PolicyService"
 );
 

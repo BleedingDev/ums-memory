@@ -28,7 +28,7 @@ const expectFailure = async <A, E>(effect: Effect.Effect<A, E>): Promise<E> => {
   const exit = await Effect.runPromiseExit(effect);
 
   if (exit._tag === "Failure") {
-    const failure = Cause.failureOption(exit.cause);
+    const failure = Cause.findErrorOption(exit.cause);
     return Option.match(failure, {
       onNone: () => assert.fail("Expected Effect to fail with a typed error."),
       onSome: (error) => error,

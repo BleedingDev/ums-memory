@@ -1,4 +1,4 @@
-import { Context, Effect, Layer } from "effect";
+import { Effect, Layer, ServiceMap } from "effect";
 
 import type {
   PolicyPackPluginContractVersion,
@@ -22,7 +22,7 @@ export interface PolicyPackPluginService {
 }
 
 export const PolicyPackPluginServiceTag =
-  Context.GenericTag<PolicyPackPluginService>(
+  ServiceMap.Service<PolicyPackPluginService>(
     "@ums/effect/PolicyPackPluginService"
   );
 

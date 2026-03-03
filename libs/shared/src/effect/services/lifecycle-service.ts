@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 
-import { Context, Effect, Layer } from "effect";
+import { Effect, Layer, ServiceMap } from "effect";
 
 import type {
   MemoryLifecycleCandidate,
@@ -86,7 +86,7 @@ export interface MemoryLifecycleService {
 }
 
 export const MemoryLifecycleServiceTag =
-  Context.GenericTag<MemoryLifecycleService>(
+  ServiceMap.Service<MemoryLifecycleService>(
     "@ums/effect/MemoryLifecycleService"
   );
 

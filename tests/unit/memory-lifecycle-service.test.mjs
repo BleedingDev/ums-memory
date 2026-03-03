@@ -3,8 +3,20 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { dirname, join } from "node:path";
 import test from "node:test";
 import { pathToFileURL } from "node:url";
-import { Effect } from "effect";
+import { Effect as EffectOriginal } from "effect";
 import ts from "typescript";
+
+const either = (effect) =>
+  EffectOriginal.result(effect).pipe(
+    EffectOriginal.map((result) =>
+      result._tag === "Failure"
+        ? { _tag: "Left", left: result.failure }
+        : { _tag: "Right", right: result.success,
+        },
+    ),
+  );
+
+const Effect = { ...EffectOriginal, either };
 
 const effectModuleDirectory = new URL("../../libs/shared/src/effect/", import.meta.url);
 
@@ -96,8 +108,9 @@ const defaultShadowWriteRequest = Object.freeze({
 const runShadowWriteViaLayer = (lifecycleServiceModule, request) =>
   Effect.runPromise(
     Effect.provide(
-      Effect.flatMap(lifecycleServiceModule.MemoryLifecycleServiceTag, (service) =>
-        service.shadowWrite(request),
+      Effect.flatMap(
+        Effect.service(lifecycleServiceModule.MemoryLifecycleServiceTag),
+        (service) => service.shadowWrite(request),
       ),
       lifecycleServiceModule.noopMemoryLifecycleLayer,
     ),

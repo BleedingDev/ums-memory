@@ -1,30 +1,40 @@
-import { Context, Layer, ParseResult, Schema } from "effect";
+import { Layer, Schema, SchemaIssue, ServiceMap } from "effect";
 
-export const RuntimeEnvironmentSchema = Schema.Literal(
+type ParseError = SchemaIssue.Issue;
+type DecodeEither<E, A> =
+  | { readonly _tag: "Left"; readonly left: E }
+  | { readonly _tag: "Right"; readonly right: A };
+
+const NonEmptyTrimmedStringSchema = Schema.String.check(
+  Schema.isTrimmed(),
+  Schema.isNonEmpty()
+);
+
+export const RuntimeEnvironmentSchema = Schema.Literals([
   "development",
   "test",
-  "production"
-);
+  "production",
+]);
 export type RuntimeEnvironment = Schema.Schema.Type<
   typeof RuntimeEnvironmentSchema
 >;
 
-export const RuntimeLogLevelSchema = Schema.Literal(
+export const RuntimeLogLevelSchema = Schema.Literals([
   "debug",
   "info",
   "warn",
-  "error"
-);
+  "error",
+]);
 export type RuntimeLogLevel = Schema.Schema.Type<typeof RuntimeLogLevelSchema>;
 
 export const RuntimeConfigSchema = Schema.Struct({
   environment: RuntimeEnvironmentSchema,
-  serviceName: Schema.NonEmptyTrimmedString,
+  serviceName: NonEmptyTrimmedStringSchema,
   logLevel: RuntimeLogLevelSchema,
 });
 
 export type RuntimeConfig = Schema.Schema.Type<typeof RuntimeConfigSchema>;
-export type RuntimeConfigInput = Schema.Schema.Encoded<
+export type RuntimeConfigInput = Schema.Codec.Encoded<
   typeof RuntimeConfigSchema
 >;
 
@@ -34,29 +44,46 @@ export const runtimeConfigDefaults: RuntimeConfig = {
   logLevel: "info",
 };
 
-type SchemaWithoutContext<A, I = A> = Schema.Schema<A, I, never>;
+type SchemaWithoutContext<A, I = A> = Schema.Codec<A, I, never, never>;
 
 const decodeUnknownSync = <A, I>(schema: SchemaWithoutContext<A, I>) =>
   Schema.decodeUnknownSync(schema);
 
-const decodeUnknownEither = <A, I>(schema: SchemaWithoutContext<A, I>) =>
-  Schema.decodeUnknownEither(schema);
+const decodeUnknownEither = <A, I>(schema: SchemaWithoutContext<A, I>) => {
+  const decode = Schema.decodeUnknownSync(schema);
+
+  return (input: unknown): DecodeEither<ParseError, A> => {
+    try {
+      return {
+        _tag: "Right",
+        right: decode(input),
+      };
+    } catch (error) {
+      if (Schema.isSchemaError(error)) {
+        return {
+          _tag: "Left",
+          left: error.issue,
+        };
+      }
+      throw error;
+    }
+  };
+};
 
 const decodeUnknownEffect = <A, I>(schema: SchemaWithoutContext<A, I>) =>
-  Schema.decodeUnknown(schema);
+  Schema.decodeUnknownEffect(schema);
 
 const validateUnknownSync = <A, I>(schema: SchemaWithoutContext<A, I>) =>
-  Schema.validateSync(schema);
+  Schema.decodeUnknownSync(schema);
 
 const validateUnknownEither = <A, I>(schema: SchemaWithoutContext<A, I>) =>
-  Schema.validateEither(schema);
+  decodeUnknownEither(schema);
 
 const validateUnknownEffect = <A, I>(schema: SchemaWithoutContext<A, I>) =>
-  Schema.validate(schema);
+  Schema.decodeUnknownEffect(schema);
 
-export const formatRuntimeConfigParseError = (
-  error: ParseResult.ParseError
-): string => ParseResult.TreeFormatter.formatErrorSync(error);
+export const formatRuntimeConfigParseError = (error: ParseError): string =>
+  SchemaIssue.makeFormatterDefault()(error);
 
 export const decodeRuntimeConfigSync = decodeUnknownSync(RuntimeConfigSchema);
 export const decodeRuntimeConfigEither =
@@ -182,7 +209,7 @@ export interface ConfigService {
   readonly getAll: () => RuntimeConfig;
 }
 
-export const ConfigServiceTag = Context.GenericTag<ConfigService>(
+export const ConfigServiceTag = ServiceMap.Service<ConfigService>(
   "@ums/effect/ConfigService"
 );
 

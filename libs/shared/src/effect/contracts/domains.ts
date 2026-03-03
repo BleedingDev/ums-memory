@@ -2,12 +2,12 @@ import { Schema } from "effect";
 
 import { ProjectIdSchema, RoleIdSchema, UserIdSchema } from "./ids.js";
 
-export const ScopeLevelSchema = Schema.Literal(
+export const ScopeLevelSchema = Schema.Literals([
   "common",
   "project",
   "job_role",
-  "user"
-);
+  "user",
+]);
 
 export const CommonScopeSchema = Schema.Struct({
   level: Schema.Literal("common"),
@@ -28,20 +28,20 @@ export const UserScopeSchema = Schema.Struct({
   userId: UserIdSchema,
 });
 
-export const ScopeSchema = Schema.Union(
+export const ScopeSchema = Schema.Union([
   CommonScopeSchema,
   ProjectScopeSchema,
   JobRoleScopeSchema,
-  UserScopeSchema
-);
+  UserScopeSchema,
+]);
 
-export const MemoryLayerSchema = Schema.Literal(
+export const MemoryLayerSchema = Schema.Literals([
   "episodic",
   "working",
-  "procedural"
-);
+  "procedural",
+]);
 
-export const PolicyOutcomeSchema = Schema.Literal("allow", "review", "deny");
+export const PolicyOutcomeSchema = Schema.Literals(["allow", "review", "deny"]);
 
 export interface DomainArray extends ReadonlyArray<DomainValue> {}
 
@@ -59,23 +59,20 @@ export type DomainValue =
 
 export const DomainValueSchema: Schema.Schema<DomainValue> = Schema.suspend(
   () =>
-    Schema.Union(
+    Schema.Union([
       Schema.String,
       Schema.Number,
       Schema.Boolean,
       Schema.Null,
       Schema.Array(DomainValueSchema),
-      Schema.Record({
-        key: Schema.String,
-        value: DomainValueSchema,
-      })
-    )
+      Schema.Record(Schema.String, DomainValueSchema),
+    ])
 );
 
-export const DomainRecordSchema: Schema.Schema<DomainRecord> = Schema.Record({
-  key: Schema.String,
-  value: DomainValueSchema,
-});
+export const DomainRecordSchema: Schema.Schema<DomainRecord> = Schema.Record(
+  Schema.String,
+  DomainValueSchema
+);
 
 export const PolicyContextValueSchema = DomainValueSchema;
 export const PolicyContextSchema = DomainRecordSchema;

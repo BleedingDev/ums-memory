@@ -7,5 +7,5 @@
     "outDir": "../../dist/typecheck/libs/shared",
     "tsBuildInfoFile": "../../dist/typecheck/libs/shared.tsbuildinfo"
   },
-  "include": ["src/**/*.js", "src/**/*.ts"]
+  "include": ["src/**/*.ts"]
 }

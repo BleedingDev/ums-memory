@@ -1,4 +1,4 @@
-import { Context, Effect, Layer } from "effect";
+import { Effect, Layer, ServiceMap } from "effect";
 
 import type {
   AuthorizationAction,
@@ -29,7 +29,7 @@ export interface AuthorizationService {
   ) => Effect.Effect<AuthorizationResponse, AuthorizationServiceError>;
 }
 
-export const AuthorizationServiceTag = Context.GenericTag<AuthorizationService>(
+export const AuthorizationServiceTag = ServiceMap.Service<AuthorizationService>(
   "@ums/effect/AuthorizationService"
 );
 

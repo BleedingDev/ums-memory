@@ -14,9 +14,19 @@ import {
   MemoryLifecyclePreconditionReasonCodeSchema,
 } from "./contracts/services.js";
 
-const RetrievalScoreSchema = Schema.Number.pipe(Schema.between(0, 1));
+const RetrievalScoreSchema = Schema.Number.check(
+  Schema.isBetween({ minimum: 0, maximum: 1 })
+);
+const NonNegativeIntSchema = Schema.Number.check(
+  Schema.isInt(),
+  Schema.isGreaterThanOrEqualTo(0)
+);
+const NonEmptyTrimmedStringSchema = Schema.String.check(
+  Schema.isTrimmed(),
+  Schema.isNonEmpty()
+);
 
-export class ContractValidationError extends Schema.TaggedError<ContractValidationError>()(
+export class ContractValidationError extends Schema.TaggedErrorClass<ContractValidationError>()(
   "ContractValidationError",
   {
     contract: Schema.String,
@@ -25,7 +35,7 @@ export class ContractValidationError extends Schema.TaggedError<ContractValidati
   }
 ) {}
 
-export class StorageConflictError extends Schema.TaggedError<StorageConflictError>()(
+export class StorageConflictError extends Schema.TaggedErrorClass<StorageConflictError>()(
   "StorageConflictError",
   {
     spaceId: SpaceIdSchema,
@@ -34,7 +44,7 @@ export class StorageConflictError extends Schema.TaggedError<StorageConflictErro
   }
 ) {}
 
-export class StorageNotFoundError extends Schema.TaggedError<StorageNotFoundError>()(
+export class StorageNotFoundError extends Schema.TaggedErrorClass<StorageNotFoundError>()(
   "StorageNotFoundError",
   {
     spaceId: SpaceIdSchema,
@@ -43,7 +53,7 @@ export class StorageNotFoundError extends Schema.TaggedError<StorageNotFoundErro
   }
 ) {}
 
-export class RetrievalQueryError extends Schema.TaggedError<RetrievalQueryError>()(
+export class RetrievalQueryError extends Schema.TaggedErrorClass<RetrievalQueryError>()(
   "RetrievalQueryError",
   {
     spaceId: SpaceIdSchema,
@@ -52,7 +62,7 @@ export class RetrievalQueryError extends Schema.TaggedError<RetrievalQueryError>
   }
 ) {}
 
-export class EvaluationThresholdError extends Schema.TaggedError<EvaluationThresholdError>()(
+export class EvaluationThresholdError extends Schema.TaggedErrorClass<EvaluationThresholdError>()(
   "EvaluationThresholdError",
   {
     objective: Schema.String,
@@ -61,7 +71,7 @@ export class EvaluationThresholdError extends Schema.TaggedError<EvaluationThres
   }
 ) {}
 
-export class PolicyDeniedError extends Schema.TaggedError<PolicyDeniedError>()(
+export class PolicyDeniedError extends Schema.TaggedErrorClass<PolicyDeniedError>()(
   "PolicyDeniedError",
   {
     actorId: UserIdSchema,
@@ -71,18 +81,18 @@ export class PolicyDeniedError extends Schema.TaggedError<PolicyDeniedError>()(
   }
 ) {}
 
-export class AuthorizationDeniedError extends Schema.TaggedError<AuthorizationDeniedError>()(
+export class AuthorizationDeniedError extends Schema.TaggedErrorClass<AuthorizationDeniedError>()(
   "AuthorizationDeniedError",
   {
     role: AuthorizationRoleSchema,
     action: AuthorizationActionSchema,
     reasonCode: AuthorizationDecisionReasonCodeSchema,
-    evaluatedAtMillis: Schema.NonNegativeInt,
+    evaluatedAtMillis: NonNegativeIntSchema,
     message: Schema.String,
   }
 ) {}
 
-export class IngestionDuplicateError extends Schema.TaggedError<IngestionDuplicateError>()(
+export class IngestionDuplicateError extends Schema.TaggedErrorClass<IngestionDuplicateError>()(
   "IngestionDuplicateError",
   {
     idempotencyKey: Schema.String,
@@ -91,12 +101,12 @@ export class IngestionDuplicateError extends Schema.TaggedError<IngestionDuplica
   }
 ) {}
 
-export class MemoryLifecyclePreconditionError extends Schema.TaggedError<MemoryLifecyclePreconditionError>()(
+export class MemoryLifecyclePreconditionError extends Schema.TaggedErrorClass<MemoryLifecyclePreconditionError>()(
   "MemoryLifecyclePreconditionError",
   {
     operation: MemoryLifecycleOperationSchema,
     spaceId: SpaceIdSchema,
-    candidateId: Schema.NonEmptyTrimmedString,
+    candidateId: NonEmptyTrimmedStringSchema,
     reasonCode: MemoryLifecyclePreconditionReasonCodeSchema,
     message: Schema.String,
   }

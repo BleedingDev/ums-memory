@@ -16,8 +16,23 @@ import {
   UserIdSchema,
 } from "./ids.js";
 
-const NonNegativeIntSchema = Schema.NonNegativeInt;
-const Sha256HexSchema = Schema.String.pipe(Schema.pattern(/^[0-9A-Fa-f]{64}$/));
+const NonEmptyTrimmedStringSchema = Schema.String.check(
+  Schema.isTrimmed(),
+  Schema.isNonEmpty()
+);
+const NonNegativeIntSchema = Schema.Number.check(
+  Schema.isInt(),
+  Schema.isGreaterThanOrEqualTo(0)
+);
+const Sha256HexSchema = Schema.String.check(
+  Schema.isPattern(/^[0-9A-Fa-f]{64}$/)
+);
+const RetrievalScoreSchema = Schema.Number.check(
+  Schema.isBetween({ minimum: 0, maximum: 1 })
+);
+const RetrievalRankingWeightSchema = Schema.Number.check(
+  Schema.isBetween({ minimum: 0, maximum: 1 })
+);
 
 export const ScopeAuthorizationInputSchema = Schema.Struct({
   tenantId: Schema.optional(SpaceIdSchema),
@@ -97,13 +112,12 @@ export const StorageSnapshotImportResponseSchema = Schema.Struct({
   rowCount: NonNegativeIntSchema,
 });
 
-const RetrievalScoreSchema = Schema.Number.pipe(Schema.between(0, 1));
-const RetrievalScopeLevelSchema = Schema.Literal(
+const RetrievalScopeLevelSchema = Schema.Literals([
   "common",
   "project",
   "job_role",
-  "user"
-);
+  "user",
+]);
 
 export const RetrievalScopeSelectorsSchema = Schema.Struct({
   projectId: Schema.optional(ProjectIdSchema),
@@ -118,8 +132,6 @@ export const RetrievalPolicyInputSchema = Schema.Struct({
   evidenceIds: Schema.optional(Schema.Array(EvidenceIdSchema)),
   context: Schema.optional(PolicyContextSchema),
 });
-
-const RetrievalRankingWeightSchema = Schema.Number.pipe(Schema.between(0, 1));
 
 export const RetrievalRankingWeightsSchema = Schema.Struct({
   relevance: Schema.optional(RetrievalRankingWeightSchema),
@@ -170,7 +182,7 @@ export const RetrievalHitSchema = Schema.Struct({
   ),
 });
 
-export const RetrievalExplainabilityReasonCodeSchema = Schema.Literal(
+export const RetrievalExplainabilityReasonCodeSchema = Schema.Literals([
   "QUERY_TOKEN_MATCH",
   "QUERY_EMPTY_FALLBACK",
   "SCOPE_FILTER_MATCH",
@@ -181,16 +193,16 @@ export const RetrievalExplainabilityReasonCodeSchema = Schema.Literal(
   "SCOPE_LEVEL_USER",
   "POLICY_ALLOW",
   "RANKING_WEIGHTED_SIGNALS",
-  "CHRONOLOGY_RECONCILED"
-);
+  "CHRONOLOGY_RECONCILED",
+]);
 
-export const RetrievalExplainabilityRankingSignalSchema = Schema.Literal(
+export const RetrievalExplainabilityRankingSignalSchema = Schema.Literals([
   "relevance",
   "evidenceStrength",
   "decay",
   "humanWeight",
-  "utility"
-);
+  "utility",
+]);
 
 export const RetrievalExplainabilityRankingSignalsSchema = Schema.Struct({
   relevance: RetrievalScoreSchema,
@@ -222,7 +234,7 @@ export const RetrievalExplainabilityHitSchema = Schema.Struct({
   ),
 });
 
-const ActionableRetrievalLineSchema = Schema.NonEmptyTrimmedString;
+const ActionableRetrievalLineSchema = NonEmptyTrimmedStringSchema;
 
 export const ActionableRetrievalPackSourceMetadataSchema = Schema.Struct({
   score: RetrievalScoreSchema,
@@ -297,10 +309,10 @@ export const PolicyPackPluginRequestSchema = Schema.Struct({
   operation: Schema.Literal("policy_decision_update"),
   storeId: SpaceIdSchema,
   profileId: ProfileIdSchema,
-  decisionId: Schema.NonEmptyTrimmedString,
-  policyKey: Schema.NonEmptyTrimmedString,
-  action: Schema.NonEmptyTrimmedString,
-  surface: Schema.NonEmptyTrimmedString,
+  decisionId: NonEmptyTrimmedStringSchema,
+  policyKey: NonEmptyTrimmedStringSchema,
+  action: NonEmptyTrimmedStringSchema,
+  surface: NonEmptyTrimmedStringSchema,
   outcome: PolicyOutcomeSchema,
   reasonCodes: Schema.Array(Schema.String),
   provenanceEventIds: Schema.Array(EvidenceIdSchema),
@@ -310,7 +322,7 @@ export const PolicyPackPluginRequestSchema = Schema.Struct({
   updatedAt: Schema.String,
 });
 
-export const PolicyPackPluginOutcomeSchema = Schema.Literal("pass", "deny");
+export const PolicyPackPluginOutcomeSchema = Schema.Literals(["pass", "deny"]);
 
 export const PolicyPackPluginResponseSchema = Schema.Struct({
   contractVersion: PolicyPackPluginContractVersionSchema,
@@ -319,14 +331,14 @@ export const PolicyPackPluginResponseSchema = Schema.Struct({
   metadata: Schema.optional(PolicyContextSchema),
 });
 
-export const AuthorizationRoleSchema = Schema.Literal(
+export const AuthorizationRoleSchema = Schema.Literals([
   "admin",
   "lead",
   "dev",
-  "auditor"
-);
+  "auditor",
+]);
 
-export const AuthorizationActionSchema = Schema.Literal(
+export const AuthorizationActionSchema = Schema.Literals([
   "memory.read",
   "memory.write",
   "memory.promote",
@@ -336,13 +348,13 @@ export const AuthorizationActionSchema = Schema.Literal(
   "policy.write",
   "policy.override",
   "compliance.read",
-  "compliance.export"
-);
+  "compliance.export",
+]);
 
-export const AuthorizationDecisionReasonCodeSchema = Schema.Literal(
+export const AuthorizationDecisionReasonCodeSchema = Schema.Literals([
   "RBAC_ALLOW",
-  "RBAC_DENY_ROLE_ACTION"
-);
+  "RBAC_DENY_ROLE_ACTION",
+]);
 
 export const AuthorizationRequestSchema = Schema.Struct({
   role: AuthorizationRoleSchema,
@@ -376,31 +388,36 @@ export const IngestionResponseSchema = Schema.Struct({
   ingestedAtMillis: NonNegativeIntSchema,
 });
 
-const LifecycleEntityIdSchema = Schema.NonEmptyTrimmedString;
-const LifecycleReasonCodeSchema = Schema.NonEmptyTrimmedString;
-const LifecycleDeltaScoreSchema = Schema.Number.pipe(Schema.between(-1, 1));
-const LifecycleDeltaMillisSchema = Schema.Number.pipe(
-  Schema.int(),
-  Schema.between(-86_400_000, 86_400_000)
+const LifecycleEntityIdSchema = NonEmptyTrimmedStringSchema;
+const LifecycleReasonCodeSchema = NonEmptyTrimmedStringSchema;
+const LifecycleDeltaScoreSchema = Schema.Number.check(
+  Schema.isBetween({ minimum: -1, maximum: 1 })
 );
-const LifecycleDeltaCountSchema = Schema.Number.pipe(Schema.int());
+const LifecycleDeltaMillisSchema = Schema.Number.check(
+  Schema.isInt(),
+  Schema.isBetween({ minimum: -86_400_000, maximum: 86_400_000 })
+);
+const LifecycleDeltaCountSchema = Schema.Number.check(Schema.isInt());
 
-export const MemoryLifecycleOperationSchema = Schema.Literal(
+export const MemoryLifecycleOperationSchema = Schema.Literals([
   "shadow_write",
   "replay_eval",
   "promote",
-  "demote"
-);
+  "demote",
+]);
 
-export const MemoryLifecycleCandidateStatusSchema = Schema.Literal(
+export const MemoryLifecycleCandidateStatusSchema = Schema.Literals([
   "shadow",
   "promoted",
-  "demoted"
-);
+  "demoted",
+]);
 
-export const MemoryLifecycleGateStatusSchema = Schema.Literal("pass", "fail");
+export const MemoryLifecycleGateStatusSchema = Schema.Literals([
+  "pass",
+  "fail",
+]);
 
-export const MemoryLifecyclePreconditionReasonCodeSchema = Schema.Literal(
+export const MemoryLifecyclePreconditionReasonCodeSchema = Schema.Literals([
   "SHADOW_WRITE_REQUIRES_SOURCE_EPISODES",
   "SHADOW_WRITE_REJECTS_PROMOTED_CANDIDATE",
   "REPLAY_EVAL_REQUIRES_SHADOW_CANDIDATE",
@@ -408,8 +425,8 @@ export const MemoryLifecyclePreconditionReasonCodeSchema = Schema.Literal(
   "PROMOTE_REQUIRES_PASSING_REPLAY_EVAL",
   "PROMOTE_REQUIRES_FRESH_EVIDENCE",
   "DEMOTE_REQUIRES_EXISTING_CANDIDATE",
-  "DEMOTE_REQUIRES_REASON_CODES"
-);
+  "DEMOTE_REQUIRES_REASON_CODES",
+]);
 
 export const MemoryLifecycleQualityDeltaSchema = Schema.Struct({
   successRateDelta: LifecycleDeltaScoreSchema,
@@ -418,7 +435,9 @@ export const MemoryLifecycleQualityDeltaSchema = Schema.Struct({
 
 export const MemoryLifecycleEfficiencyDeltaSchema = Schema.Struct({
   latencyP95DeltaMs: LifecycleDeltaMillisSchema,
-  tokenCostDelta: Schema.Number.pipe(Schema.between(-100_000, 100_000)),
+  tokenCostDelta: Schema.Number.check(
+    Schema.isBetween({ minimum: -100_000, maximum: 100_000 })
+  ),
 });
 
 export const MemoryLifecycleSafetyDeltaSchema = Schema.Struct({
@@ -429,8 +448,8 @@ export const MemoryLifecycleSafetyDeltaSchema = Schema.Struct({
 export const MemoryLifecycleCandidateSchema = Schema.Struct({
   spaceId: SpaceIdSchema,
   candidateId: LifecycleEntityIdSchema,
-  statement: Schema.NonEmptyTrimmedString,
-  scope: Schema.NonEmptyTrimmedString,
+  statement: NonEmptyTrimmedStringSchema,
+  scope: NonEmptyTrimmedStringSchema,
   sourceEpisodeIds: Schema.Array(EvidenceIdSchema),
   status: MemoryLifecycleCandidateStatusSchema,
   expiresAtMillis: NonNegativeIntSchema,
@@ -444,8 +463,8 @@ export const MemoryLifecycleCandidateSchema = Schema.Struct({
 export const MemoryLifecycleShadowWriteRequestSchema = Schema.Struct({
   spaceId: SpaceIdSchema,
   candidateId: LifecycleEntityIdSchema,
-  statement: Schema.NonEmptyTrimmedString,
-  scope: Schema.optional(Schema.NonEmptyTrimmedString),
+  statement: NonEmptyTrimmedStringSchema,
+  scope: Schema.optional(NonEmptyTrimmedStringSchema),
   sourceEpisodeIds: Schema.Array(EvidenceIdSchema),
   expiresAtMillis: NonNegativeIntSchema,
   writtenAtMillis: NonNegativeIntSchema,
@@ -454,7 +473,7 @@ export const MemoryLifecycleShadowWriteRequestSchema = Schema.Struct({
 export const MemoryLifecycleShadowWriteResponseSchema = Schema.Struct({
   operation: Schema.Literal("shadow_write"),
   requestDigest: Sha256HexSchema,
-  action: Schema.Literal("created", "updated", "noop"),
+  action: Schema.Literals(["created", "updated", "noop"]),
   candidate: MemoryLifecycleCandidateSchema,
 });
 
@@ -492,7 +511,7 @@ export const MemoryLifecyclePromoteRequestSchema = Schema.Struct({
 export const MemoryLifecyclePromoteResponseSchema = Schema.Struct({
   operation: Schema.Literal("promote"),
   requestDigest: Sha256HexSchema,
-  action: Schema.Literal("promoted", "noop"),
+  action: Schema.Literals(["promoted", "noop"]),
   candidate: MemoryLifecycleCandidateSchema,
   ruleId: Schema.NullOr(LifecycleEntityIdSchema),
   replayEvalId: Schema.NullOr(LifecycleEntityIdSchema),
@@ -509,7 +528,7 @@ export const MemoryLifecycleDemoteRequestSchema = Schema.Struct({
 export const MemoryLifecycleDemoteResponseSchema = Schema.Struct({
   operation: Schema.Literal("demote"),
   requestDigest: Sha256HexSchema,
-  action: Schema.Literal("demoted", "noop"),
+  action: Schema.Literals(["demoted", "noop"]),
   candidate: MemoryLifecycleCandidateSchema,
   removedRuleId: Schema.NullOr(LifecycleEntityIdSchema),
   reasonCodes: Schema.Array(LifecycleReasonCodeSchema),

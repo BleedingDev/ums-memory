@@ -1,4 +1,4 @@
-import { Effect, ParseResult, Schema } from "effect";
+import { Effect, Schema, SchemaIssue } from "effect";
 
 import { ContractValidationError } from "../errors.js";
 import {
@@ -16,24 +16,37 @@ import {
   StorageUpsertRequestSchema,
 } from "./services.js";
 
-type SchemaWithoutContext<A, I = A> = Schema.Schema<A, I, never>;
+type SyncDecodingSchema<S extends Schema.Top> = S & {
+  readonly DecodingServices: never;
+};
 
-export const decodeUnknownSync = <A, I>(schema: SchemaWithoutContext<A, I>) =>
-  Schema.decodeUnknownSync(schema);
+export const decodeUnknownSync = <S extends Schema.Top>(schema: S) =>
+  Schema.decodeUnknownSync(schema as SyncDecodingSchema<S>);
 
-export const validateUnknownSync = <A, I>(schema: SchemaWithoutContext<A, I>) =>
-  Schema.validateSync(schema);
+export const validateUnknownSync = <S extends Schema.Top>(schema: S) =>
+  Schema.decodeUnknownSync(schema as SyncDecodingSchema<S>);
 
-const formatParseError = (error: ParseResult.ParseError): string =>
-  ParseResult.TreeFormatter.formatErrorSync(error);
+const formatParseError = (error: unknown): string => {
+  const formatter = SchemaIssue.makeFormatterDefault();
+  if (SchemaIssue.isIssue(error)) {
+    return formatter(error);
+  }
+  if (Schema.isSchemaError(error)) {
+    return formatter(error.issue);
+  }
+  if (error instanceof Error) {
+    return error.message;
+  }
+  return String(error);
+};
 
-export const decodeUnknownEffect = <A, I>(
-  schema: SchemaWithoutContext<A, I>,
+export const decodeUnknownEffect = <S extends Schema.Top>(
+  schema: S,
   contract: string
 ) => {
-  const decode = Schema.decodeUnknown(schema);
+  const decode = Schema.decodeUnknownEffect(schema as SyncDecodingSchema<S>);
 
-  return (input: unknown): Effect.Effect<A, ContractValidationError> =>
+  return (input: unknown): Effect.Effect<S["Type"], ContractValidationError> =>
     decode(input).pipe(
       Effect.mapError(
         (error) =>

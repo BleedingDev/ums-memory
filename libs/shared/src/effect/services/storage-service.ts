@@ -1,6 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 
-import { Context, Effect, Layer } from "effect";
+import { Effect, Layer, ServiceMap } from "effect";
 
 import type {
   StorageDeleteRequest,
@@ -62,7 +62,7 @@ export interface StorageRepository {
   ) => Effect.Effect<StorageSnapshotImportResponse, StorageServiceError>;
 }
 
-export const StorageServiceTag = Context.GenericTag<StorageService>(
+export const StorageServiceTag = ServiceMap.Service<StorageService>(
   "@ums/effect/StorageService"
 );
 

@@ -1,4 +1,4 @@
-import { Context, Effect, Layer } from "effect";
+import { Effect, Layer, ServiceMap } from "effect";
 
 import type {
   IngestionRecord,
@@ -21,7 +21,7 @@ export interface IngestionService {
   ) => Effect.Effect<IngestionResponse, IngestionServiceError>;
 }
 
-export const IngestionServiceTag = Context.GenericTag<IngestionService>(
+export const IngestionServiceTag = ServiceMap.Service<IngestionService>(
   "@ums/effect/IngestionService"
 );
 

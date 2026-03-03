@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 
-import { Context, Effect, Layer } from "effect";
+import { Effect, Layer, ServiceMap } from "effect";
 
 import type {
   ActionableRetrievalPack,
@@ -48,7 +48,7 @@ export interface RetrievalService {
   ) => Effect.Effect<RetrievalExplainabilityResponse, RetrievalServiceError>;
 }
 
-export const RetrievalServiceTag = Context.GenericTag<RetrievalService>(
+export const RetrievalServiceTag = ServiceMap.Service<RetrievalService>(
   "@ums/effect/RetrievalService"
 );
 
@@ -1780,15 +1780,12 @@ const filterDeniedHits = (
           Effect.map((policyResult) =>
             policyResult.decision === "deny" ? null : hit
           ),
-          Effect.catchAll((error) =>
-            isPolicyDeniedError(error)
-              ? Effect.succeed(null)
-              : Effect.fail(
-                  toRetrievalQueryError(
-                    normalized.request,
-                    `Policy evaluation failed for memory ${hit.memoryId}: ${describeFailure(error)}`
-                  )
-                )
+          Effect.catchIf(isPolicyDeniedError, () => Effect.succeed(null)),
+          Effect.mapError((error) =>
+            toRetrievalQueryError(
+              normalized.request,
+              `Policy evaluation failed for memory ${hit.memoryId}: ${describeFailure(error)}`
+            )
           )
         ),
     { concurrency: 1 }

@@ -1,4 +1,4 @@
-import { Context, Effect, Layer } from "effect";
+import { Effect, Layer, ServiceMap } from "effect";
 
 import type { RuntimeLogLevel } from "./config-service.js";
 
@@ -19,7 +19,7 @@ export interface LoggerService {
   ) => Effect.Effect<void>;
 }
 
-export const LoggerServiceTag = Context.GenericTag<LoggerService>(
+export const LoggerServiceTag = ServiceMap.Service<LoggerService>(
   "@ums/effect/LoggerService"
 );
 

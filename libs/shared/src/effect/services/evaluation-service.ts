@@ -1,4 +1,4 @@
-import { Context, Effect, Layer } from "effect";
+import { Effect, Layer, ServiceMap } from "effect";
 
 import type {
   EvaluationRequest,
@@ -18,7 +18,7 @@ export interface EvaluationService {
   ) => Effect.Effect<EvaluationResponse, EvaluationServiceError>;
 }
 
-export const EvaluationServiceTag = Context.GenericTag<EvaluationService>(
+export const EvaluationServiceTag = ServiceMap.Service<EvaluationService>(
   "@ums/effect/EvaluationService"
 );
 
