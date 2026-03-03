@@ -1,5 +1,4 @@
 import { createHash } from "node:crypto";
-
 const DEFAULTS = Object.freeze({
   seed: "ums-engine-v1",
   defaultStore: "default",
@@ -26,7 +25,7 @@ function sha256(input) {
 
 function hashToUnit(input) {
   const hex = sha256(input).slice(0, 12);
-  return Number.parseInt(hex, 16) / Number.parseInt("ffffffffffff", 16);
+  return Number.parseInt(hex, 16) / 0xffffffffffff;
 }
 
 function normalizeTimestamp(value) {
@@ -58,7 +57,9 @@ function stableStringify(value) {
   }
 
   const keys = Object.keys(value).sort();
-  const serializedPairs = keys.map((key) => `${JSON.stringify(key)}:${stableStringify(value[key])}`);
+  const serializedPairs = keys.map(
+    (key) => `${JSON.stringify(key)}:${stableStringify(value[key])}`
+  );
   return `{${serializedPairs.join(",")}}`;
 }
 
@@ -67,7 +68,7 @@ function tokenize(text) {
     normalizeText(text)
       .toLowerCase()
       .split(/[^a-z0-9]+/i)
-      .filter((token) => token.length > 1),
+      .filter((token) => token.length > 1)
   );
 }
 
@@ -87,10 +88,13 @@ function redactSecrets(content) {
     return "[REDACTED_SECRET]";
   });
 
-  output = output.replace(/(\b(?:api[_-]?key|token|password)\s*[:=]\s*)([^\s,;]+)/gi, (_match, prefix) => {
-    count += 1;
-    return `${prefix}[REDACTED]`;
-  });
+  output = output.replace(
+    /(\b(?:api[_-]?key|token|password)\s*[:=]\s*)([^\s,;]+)/gi,
+    (_match, prefix) => {
+      count += 1;
+      return `${prefix}[REDACTED]`;
+    }
+  );
 
   output = output.replace(/\b[A-Fa-f0-9]{32,}\b/g, () => {
     count += 1;
@@ -120,7 +124,10 @@ function toBodyText(value) {
     return "";
   }
   if (Array.isArray(value)) {
-    return value.map((entry) => toBodyText(entry)).filter(Boolean).join("\n");
+    return value
+      .map((entry) => toBodyText(entry))
+      .filter(Boolean)
+      .join("\n");
   }
   if (typeof value === "object") {
     const candidate = value;
@@ -134,14 +141,20 @@ function toBodyText(value) {
       return candidate.content;
     }
     if (Array.isArray(candidate.content)) {
-      return candidate.content.map((entry) => toBodyText(entry)).filter(Boolean).join("\n");
+      return candidate.content
+        .map((entry) => toBodyText(entry))
+        .filter(Boolean)
+        .join("\n");
     }
   }
   return stableStringify(value);
 }
 
 function joinNonEmpty(lines) {
-  return lines.map((entry) => normalizeText(entry)).filter(Boolean).join("\n");
+  return lines
+    .map((entry) => normalizeText(entry))
+    .filter(Boolean)
+    .join("\n");
 }
 
 function createSyntheticId(event) {
@@ -160,18 +173,20 @@ function createSyntheticId(event) {
 function looksLikeJiraIssue(value) {
   return Boolean(
     value &&
-      typeof value === "object" &&
-      (typeof value.key === "string" ||
-        (value.fields && typeof value.fields === "object" && !Array.isArray(value.fields))),
+    typeof value === "object" &&
+    (typeof value.key === "string" ||
+      (value.fields &&
+        typeof value.fields === "object" &&
+        !Array.isArray(value.fields)))
   );
 }
 
 function looksLikeConversation(value) {
   return Boolean(
     value &&
-      typeof value === "object" &&
-      Array.isArray(value.messages) &&
-      (typeof value.id === "string" || typeof value.conversationId === "string"),
+    typeof value === "object" &&
+    Array.isArray(value.messages) &&
+    (typeof value.id === "string" || typeof value.conversationId === "string")
   );
 }
 
@@ -179,11 +194,20 @@ function makeContext(input, defaults, inherited = {}) {
   const raw = toObject(input);
   return {
     storeId: normalizeStoreId(
-      raw.storeId ?? raw.store ?? raw.memoryStore ?? raw.namespace ?? inherited.storeId,
-      defaults.defaultStore,
+      raw.storeId ??
+        raw.store ??
+        raw.memoryStore ??
+        raw.namespace ??
+        inherited.storeId,
+      defaults.defaultStore
     ),
-    space: normalizeText(raw.space ?? raw.project ?? raw.channel ?? inherited.space) || defaults.defaultSpace,
-    source: normalizeText(raw.source ?? raw.connector ?? raw.platform ?? inherited.source),
+    space:
+      normalizeText(
+        raw.space ?? raw.project ?? raw.channel ?? inherited.space
+      ) || defaults.defaultSpace,
+    source: normalizeText(
+      raw.source ?? raw.connector ?? raw.platform ?? inherited.source
+    ),
     platform: normalizeText(raw.platform ?? inherited.platform),
     jiraBaseUrl: normalizeText(raw.jiraBaseUrl ?? inherited.jiraBaseUrl),
   };
@@ -191,10 +215,16 @@ function makeContext(input, defaults, inherited = {}) {
 
 function normalizeConversationMessage(rawMessage, context, index) {
   const message = toObject(rawMessage);
-  const role = normalizeText(message.role || message.authorRole || message.speaker).toLowerCase() || "unknown";
+  const role =
+    normalizeText(
+      message.role || message.authorRole || message.speaker
+    ).toLowerCase() || "unknown";
   const conversationId =
-    normalizeText(message.conversationId || context.conversationId) || `conversation-${context.space}`;
-  const messageId = normalizeText(message.id || message.messageId) || `${conversationId}-msg-${index}`;
+    normalizeText(message.conversationId || context.conversationId) ||
+    `conversation-${context.space}`;
+  const messageId =
+    normalizeText(message.id || message.messageId) ||
+    `${conversationId}-msg-${index}`;
 
   const content = joinNonEmpty([
     typeof message.content === "string" ? message.content : "",
@@ -202,14 +232,18 @@ function normalizeConversationMessage(rawMessage, context, index) {
     typeof message.message === "string" ? message.message : "",
     typeof message.body === "string" ? message.body : "",
   ]);
-  const normalizedContent = content || toBodyText(message.content ?? message.payload ?? message);
+  const normalizedContent =
+    content || toBodyText(message.content ?? message.payload ?? message);
 
   return {
     id: messageId,
     storeId: context.storeId,
     space: context.space,
-    source: context.source || `agent-conversation:${context.platform || "unknown"}`,
-    timestamp: normalizeTimestamp(message.createdAt || message.timestamp || message.ts || message.time),
+    source:
+      context.source || `agent-conversation:${context.platform || "unknown"}`,
+    timestamp: normalizeTimestamp(
+      message.createdAt || message.timestamp || message.ts || message.time
+    ),
     content: normalizedContent,
     tags: [context.platform || "conversation", role].filter(Boolean),
     metadata: {
@@ -217,15 +251,22 @@ function normalizeConversationMessage(rawMessage, context, index) {
       conversationId,
       platform: context.platform || "unknown",
       messageIndex: index,
-      meta: message.meta && typeof message.meta === "object" ? message.meta : undefined,
+      meta:
+        message.meta && typeof message.meta === "object"
+          ? message.meta
+          : undefined,
     },
   };
 }
 
 function normalizeFerndeskConversation(rawConversation, context) {
   const conversation = toObject(rawConversation);
-  const explicitConversationId = normalizeText(conversation.id || conversation.conversationId);
-  const messages = Array.isArray(conversation.messages) ? conversation.messages : [];
+  const explicitConversationId = normalizeText(
+    conversation.id || conversation.conversationId
+  );
+  const messages = Array.isArray(conversation.messages)
+    ? conversation.messages
+    : [];
   const fallbackSeed = stableStringify({
     space: context.space,
     source: context.source,
@@ -233,16 +274,23 @@ function normalizeFerndeskConversation(rawConversation, context) {
     sample: messages.slice(0, 2).map((entry) => ({
       id: normalizeText(entry?.id),
       role: normalizeText(entry?.role),
-      text: normalizeText(entry?.text ?? entry?.message ?? entry?.content ?? ""),
+      text: normalizeText(
+        entry?.text ?? entry?.message ?? entry?.content ?? ""
+      ),
     })),
   });
   const conversationId =
-    explicitConversationId || `conversation-${sha256(fallbackSeed).slice(0, 12)}`;
+    explicitConversationId ||
+    `conversation-${sha256(fallbackSeed).slice(0, 12)}`;
   const platform = context.platform || "jira-ferndesk";
 
   if (messages.length > 0) {
     return messages.map((message, index) =>
-      normalizeConversationMessage(message, { ...context, conversationId, platform }, index),
+      normalizeConversationMessage(
+        message,
+        { ...context, conversationId, platform },
+        index
+      )
     );
   }
 
@@ -260,7 +308,9 @@ function normalizeFerndeskConversation(rawConversation, context) {
       storeId: context.storeId,
       space: context.space,
       source: context.source || "jira",
-      timestamp: normalizeTimestamp(conversation.lastMessageAt || conversation.updatedAt),
+      timestamp: normalizeTimestamp(
+        conversation.lastMessageAt || conversation.updatedAt
+      ),
       content: summaryContent,
       tags: ["jira", "summary"],
       metadata: {
@@ -274,16 +324,22 @@ function normalizeFerndeskConversation(rawConversation, context) {
 function normalizeJiraIssue(rawIssue, context, index) {
   const issue = toObject(rawIssue);
   const fields = toObject(issue.fields);
-  const issueKey = normalizeText(issue.key || issue.id || `jira-issue-${index}`);
+  const issueKey = normalizeText(
+    issue.key || issue.id || `jira-issue-${index}`
+  );
   const description = toBodyText(fields.description);
   const summary = normalizeText(fields.summary || issue.summary || issueKey);
-  const createdAt = normalizeTimestamp(fields.created || issue.createdAt || fields.updated || issue.updatedAt);
+  const createdAt = normalizeTimestamp(
+    fields.created || issue.createdAt || fields.updated || issue.updatedAt
+  );
   const commentsFromField = Array.isArray(fields.comments)
     ? fields.comments
     : Array.isArray(toObject(fields.comment).comments)
       ? toObject(fields.comment).comments
       : [];
-  const comments = Array.isArray(issue.comments) ? issue.comments : commentsFromField;
+  const comments = Array.isArray(issue.comments)
+    ? issue.comments
+    : commentsFromField;
 
   const issueEvent = {
     id: `jira-${issueKey}-summary`,
@@ -301,7 +357,9 @@ function normalizeJiraIssue(rawIssue, context, index) {
       issueId: normalizeText(issue.id) || undefined,
       status: normalizeText(toObject(fields.status).name) || undefined,
       priority: normalizeText(toObject(fields.priority).name) || undefined,
-      url: context.jiraBaseUrl ? `${context.jiraBaseUrl.replace(/\/$/, "")}/browse/${issueKey}` : undefined,
+      url: context.jiraBaseUrl
+        ? `${context.jiraBaseUrl.replace(/\/$/, "")}/browse/${issueKey}`
+        : undefined,
     },
   };
 
@@ -309,15 +367,22 @@ function normalizeJiraIssue(rawIssue, context, index) {
     const comment = toObject(rawComment);
     const author = toObject(comment.author);
     const authorName =
-      normalizeText(author.displayName || author.name || author.accountId) || "unknown-author";
+      normalizeText(author.displayName || author.name || author.accountId) ||
+      "unknown-author";
     const publicFlag =
-      comment.public == null ? undefined : comment.public ? "public" : "private";
+      comment.public == null
+        ? undefined
+        : comment.public
+          ? "public"
+          : "private";
     return {
       id: `jira-${issueKey}-comment-${normalizeText(comment.id) || commentIndex}`,
       storeId: context.storeId,
       space: context.space,
       source: context.source || "jira-comment",
-      timestamp: normalizeTimestamp(comment.created || comment.createdAt || issueEvent.timestamp),
+      timestamp: normalizeTimestamp(
+        comment.created || comment.createdAt || issueEvent.timestamp
+      ),
       content: joinNonEmpty([
         `Comment by ${authorName}`,
         publicFlag ? `Visibility: ${publicFlag}` : "",
@@ -363,7 +428,7 @@ function toRawEvents(input, defaults, inherited = {}) {
       toRawEvents(event, defaults, {
         ...context,
         source: context.source || normalizeText(toObject(event).source),
-      }),
+      })
     );
   }
 
@@ -374,13 +439,17 @@ function toRawEvents(input, defaults, inherited = {}) {
         source: context.source || "jira",
         platform: context.platform || "jira-ferndesk",
         conversationOrdinal,
-      }),
+      })
     );
   }
 
   if (Array.isArray(envelope.issues)) {
     return envelope.issues.flatMap((issue, index) =>
-      normalizeJiraIssue(issue, { ...context, source: context.source || "jira" }, index),
+      normalizeJiraIssue(
+        issue,
+        { ...context, source: context.source || "jira" },
+        index
+      )
     );
   }
 
@@ -393,7 +462,11 @@ function toRawEvents(input, defaults, inherited = {}) {
   }
 
   if (looksLikeJiraIssue(envelope)) {
-    return normalizeJiraIssue(envelope, { ...context, source: context.source || "jira" }, 0);
+    return normalizeJiraIssue(
+      envelope,
+      { ...context, source: context.source || "jira" },
+      0
+    );
   }
 
   return [envelope];
@@ -406,17 +479,26 @@ function normalizeEvent(rawEvent, defaults) {
 
   const storeId = normalizeStoreId(
     rawEvent.storeId ?? rawEvent.store ?? rawEvent.memoryStore,
-    defaults.defaultStore,
+    defaults.defaultStore
   );
   const space =
-    normalizeText(rawEvent.space || rawEvent.project || rawEvent.profile || defaults.defaultSpace) ||
-    defaults.defaultSpace;
+    normalizeText(
+      rawEvent.space ||
+        rawEvent.project ||
+        rawEvent.profile ||
+        defaults.defaultSpace
+    ) || defaults.defaultSpace;
   if (!space) {
     return null;
   }
 
   const source =
-    normalizeText(rawEvent.source || rawEvent.connector || rawEvent.platform || rawEvent.origin) || "unknown";
+    normalizeText(
+      rawEvent.source ||
+        rawEvent.connector ||
+        rawEvent.platform ||
+        rawEvent.origin
+    ) || "unknown";
   const contentCandidate =
     rawEvent.content ??
     rawEvent.text ??
@@ -427,17 +509,28 @@ function normalizeEvent(rawEvent, defaults) {
     "";
   const content = toBodyText(contentCandidate);
   const timestamp = normalizeTimestamp(
-    rawEvent.timestamp || rawEvent.createdAt || rawEvent.occurredAt || rawEvent.updatedAt,
+    rawEvent.timestamp ||
+      rawEvent.createdAt ||
+      rawEvent.occurredAt ||
+      rawEvent.updatedAt
   );
   const tags = Array.isArray(rawEvent.tags)
-    ? [...new Set(rawEvent.tags.map((tag) => normalizeText(tag)).filter(Boolean))].sort()
+    ? [
+        ...new Set(
+          rawEvent.tags.map((tag) => normalizeText(tag)).filter(Boolean)
+        ),
+      ].sort()
     : [];
   const metadata =
-    rawEvent.metadata && typeof rawEvent.metadata === "object" && !Array.isArray(rawEvent.metadata)
+    rawEvent.metadata &&
+    typeof rawEvent.metadata === "object" &&
+    !Array.isArray(rawEvent.metadata)
       ? { ...rawEvent.metadata }
       : {};
 
-  const role = normalizeText(rawEvent.role || rawEvent.authorRole).toLowerCase();
+  const role = normalizeText(
+    rawEvent.role || rawEvent.authorRole
+  ).toLowerCase();
   if (role && !metadata.role) {
     metadata.role = role;
   }
@@ -474,7 +567,8 @@ function eventScore(query, event, seed) {
       overlap += 1;
     }
   }
-  const tieBreaker = hashToUnit(`${seed}|${query}|${event.id}|${event.timestamp}`) * 0.01;
+  const tieBreaker =
+    hashToUnit(`${seed}|${query}|${event.id}|${event.timestamp}`) * 0.01;
   return overlap + tieBreaker;
 }
 
@@ -520,15 +614,22 @@ function importStoreEntry(stores, rawStoreId, rawSpaces, defaults) {
   const spaces = Array.isArray(rawSpaces) ? rawSpaces : [];
 
   for (const spaceEntry of spaces) {
-    const entrySpace = normalizeText(spaceEntry?.space || defaults.defaultSpace) || defaults.defaultSpace;
+    const entrySpace =
+      normalizeText(spaceEntry?.space || defaults.defaultSpace) ||
+      defaults.defaultSpace;
     const events = Array.isArray(spaceEntry?.events) ? spaceEntry.events : [];
     for (const rawEvent of events) {
-      const normalized = normalizeEvent({ ...rawEvent, storeId, space: entrySpace }, defaults);
+      const normalized = normalizeEvent(
+        { ...rawEvent, storeId, space: entrySpace },
+        defaults
+      );
       if (!normalized) {
         continue;
       }
       const redaction = redactSecrets(normalized.content);
-      const unsafeInstruction = UNSAFE_PATTERNS.some((pattern) => pattern.test(redaction.text));
+      const unsafeInstruction = UNSAFE_PATTERNS.some((pattern) =>
+        pattern.test(redaction.text)
+      );
       const bucket = getSpaceBucket(storeState, normalized.space);
       bucket.set(normalized.id, {
         ...normalized,
@@ -550,12 +651,21 @@ function importSnapshot(stores, snapshot, defaults) {
 
   if (Array.isArray(snapshot.stores)) {
     for (const storeEntry of snapshot.stores) {
-      importStoreEntry(stores, storeEntry?.storeId, storeEntry?.spaces, defaults);
+      importStoreEntry(
+        stores,
+        storeEntry?.storeId,
+        storeEntry?.spaces,
+        defaults
+      );
     }
     return;
   }
 
-  if (snapshot.stores && typeof snapshot.stores === "object" && !Array.isArray(snapshot.stores)) {
+  if (
+    snapshot.stores &&
+    typeof snapshot.stores === "object" &&
+    !Array.isArray(snapshot.stores)
+  ) {
     for (const storeId of Object.keys(snapshot.stores).sort()) {
       const entry = snapshot.stores[storeId];
       importStoreEntry(stores, storeId, entry?.spaces, defaults);
@@ -622,7 +732,9 @@ export function createUmsEngine(options = {}) {
       }
 
       const redaction = redactSecrets(normalized.content);
-      const unsafeInstruction = unsafePatterns.some((pattern) => pattern.test(redaction.text));
+      const unsafeInstruction = unsafePatterns.some((pattern) =>
+        pattern.test(redaction.text)
+      );
       if (unsafeInstruction) {
         unsafeInstructions += 1;
       }
@@ -655,16 +767,29 @@ export function createUmsEngine(options = {}) {
   }
 
   function recall(request = {}) {
-    const payload = typeof request === "string" ? { query: request } : toObject(request);
+    const payload =
+      typeof request === "string" ? { query: request } : toObject(request);
     const storeId = normalizeStoreId(
       payload.storeId ?? payload.store ?? payload.memoryStore,
-      config.defaultStore,
+      config.defaultStore
     );
-    const space = normalizeText(payload.space || config.defaultSpace) || config.defaultSpace;
+    const space =
+      normalizeText(payload.space || config.defaultSpace) ||
+      config.defaultSpace;
     const query = normalizeText(payload.query || payload.text);
     const includeUnsafe = Boolean(payload.includeUnsafe);
-    const maxItems = clampInteger(payload.maxItems, 1, config.maxMaxItems, config.defaultMaxItems);
-    const tokenBudget = clampInteger(payload.tokenBudget, 1, config.maxTokenBudget, config.defaultTokenBudget);
+    const maxItems = clampInteger(
+      payload.maxItems,
+      1,
+      config.maxMaxItems,
+      config.defaultMaxItems
+    );
+    const tokenBudget = clampInteger(
+      payload.tokenBudget,
+      1,
+      config.maxTokenBudget,
+      config.defaultTokenBudget
+    );
 
     const storeState = stores.get(storeId) ?? { spaces: new Map() };
     const bucket = storeState.spaces.get(space) ?? new Map();
@@ -755,10 +880,15 @@ export function createUmsEngine(options = {}) {
         const spaces = [...storeState.spaces.entries()]
           .sort(([spaceA], [spaceB]) => spaceA.localeCompare(spaceB))
           .map(([space, bucket]) => {
-            const events = [...bucket.values()].sort(compareEvents).map(exportEvent);
+            const events = [...bucket.values()]
+              .sort(compareEvents)
+              .map(exportEvent);
             return { space, events };
           });
-        const eventCount = spaces.reduce((count, entry) => count + entry.events.length, 0);
+        const eventCount = spaces.reduce(
+          (count, entry) => count + entry.events.length,
+          0
+        );
         return {
           storeId,
           spaces,
@@ -773,8 +903,14 @@ export function createUmsEngine(options = {}) {
       stores: serializedStores,
       totals: {
         storeCount: serializedStores.length,
-        spaceCount: serializedStores.reduce((count, storeEntry) => count + storeEntry.totals.spaceCount, 0),
-        eventCount: serializedStores.reduce((count, storeEntry) => count + storeEntry.totals.eventCount, 0),
+        spaceCount: serializedStores.reduce(
+          (count, storeEntry) => count + storeEntry.totals.spaceCount,
+          0
+        ),
+        eventCount: serializedStores.reduce(
+          (count, storeEntry) => count + storeEntry.totals.eventCount,
+          0
+        ),
       },
     };
   }

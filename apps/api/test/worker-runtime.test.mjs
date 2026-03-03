@@ -1,15 +1,16 @@
-import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
-import { executeOperation, resetStore } from "../src/core.mjs";
+import test from "node:test";
+
+import { executeOperation, resetStore } from "../src/core.ts";
 import { executeOperationWithSharedState } from "../src/persistence.ts";
 import {
   createSupervisedWorkerService,
   runBackgroundWorkerCycle,
   startSupervisedWorkerService,
-} from "../src/worker-runtime.mjs";
+} from "../src/worker-runtime.ts";
 
 async function withTempStateFile(fn) {
   const tempDir = await mkdtemp(resolve(tmpdir(), "ums-worker-runtime-"));
@@ -34,7 +35,9 @@ function waitForPhase(service, expectedPhase, timeoutMs = 5000) {
       if (Date.now() - startedAt > timeoutMs) {
         clearInterval(interval);
         rejectPromise(
-          new Error(`Timed out waiting for phase ${expectedPhase}. Current phase: ${snapshot.phase}`),
+          new Error(
+            `Timed out waiting for phase ${expectedPhase}. Current phase: ${snapshot.phase}`
+          )
         );
       }
     }, 20);
@@ -105,7 +108,8 @@ test("worker cycle executes review/replay/doctor with real shared state and retu
           storeId,
           profile,
           candidateId: "cand-worker-cycle-1",
-          statement: "Keep replay evaluations deterministic in background cycles.",
+          statement:
+            "Keep replay evaluations deterministic in background cycles.",
           sourceEventIds: ["evt-worker-cycle-1"],
           evidenceEventIds: ["evt-worker-cycle-1"],
           status: "shadow",

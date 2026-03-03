@@ -1,5 +1,5 @@
-import { startSupervisedApiService } from "../../api/src/service-runtime.mjs";
-import { startSupervisedWorkerService } from "../../api/src/worker-runtime.mjs";
+import { startSupervisedApiService } from "../../api/src/service-runtime.ts";
+import { startSupervisedWorkerService } from "../../api/src/worker-runtime.ts";
 import { main as runCliMain } from "../../cli/src/program.ts";
 
 interface ServeArgs {

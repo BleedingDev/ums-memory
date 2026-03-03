@@ -1,15 +1,31 @@
-import { createReadStream, existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
+import {
+  createReadStream,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  writeFileSync,
+} from "node:fs";
 import { extname, join, relative, resolve } from "node:path";
 import { createInterface } from "node:readline";
-import { createUmsEngine } from "../apps/api/src/ums/engine.mjs";
+
+import { createUmsEngine } from "../apps/api/src/ums/engine.ts";
 
 const OUTPUT_PATH = resolve(
   process.cwd(),
-  "docs/reports/multi-store-ingestion-validation-summary.json",
+  "docs/reports/multi-store-ingestion-validation-summary.json"
 );
-const MAX_CONTENT_LENGTH = Number.parseInt(process.env.UMS_VALIDATE_MAX_CONTENT || "2000", 10);
-const MAX_FILES_PER_SOURCE = Number.parseInt(process.env.UMS_VALIDATE_MAX_FILES || "0", 10);
-const MAX_LINES_PER_FILE = Number.parseInt(process.env.UMS_VALIDATE_MAX_LINES || "0", 10);
+const MAX_CONTENT_LENGTH = Number.parseInt(
+  process.env.UMS_VALIDATE_MAX_CONTENT || "2000",
+  10
+);
+const MAX_FILES_PER_SOURCE = Number.parseInt(
+  process.env.UMS_VALIDATE_MAX_FILES || "0",
+  10
+);
+const MAX_LINES_PER_FILE = Number.parseInt(
+  process.env.UMS_VALIDATE_MAX_LINES || "0",
+  10
+);
 
 function truncate(value, maxLength = MAX_CONTENT_LENGTH) {
   const text = String(value ?? "");
@@ -47,7 +63,9 @@ function listJsonlFiles(rootDirectory) {
     }
   }
   files.sort((a, b) => a.localeCompare(b));
-  return MAX_FILES_PER_SOURCE > 0 ? files.slice(0, MAX_FILES_PER_SOURCE) : files;
+  return MAX_FILES_PER_SOURCE > 0
+    ? files.slice(0, MAX_FILES_PER_SOURCE)
+    : files;
 }
 
 function tryParseJson(line) {
@@ -67,7 +85,11 @@ function pickFirstString(value, keys) {
     if (typeof candidate === "string" && candidate.trim()) {
       return candidate.trim();
     }
-    if (candidate && typeof candidate === "object" && !Array.isArray(candidate)) {
+    if (
+      candidate &&
+      typeof candidate === "object" &&
+      !Array.isArray(candidate)
+    ) {
       const nested = pickFirstString(candidate, keys);
       if (nested) {
         return nested;
@@ -82,7 +104,11 @@ function pickText(value) {
     return value.trim();
   }
   if (Array.isArray(value)) {
-    return value.map((entry) => pickText(entry)).filter(Boolean).join("\n").trim();
+    return value
+      .map((entry) => pickText(entry))
+      .filter(Boolean)
+      .join("\n")
+      .trim();
   }
   if (!value || typeof value !== "object") {
     return "";
@@ -129,16 +155,16 @@ function pickTimestamp(value) {
 }
 
 function pickRole(value) {
-  const role = pickFirstString(value, ["role", "actor", "sender", "authorRole"]);
+  const role = pickFirstString(value, [
+    "role",
+    "actor",
+    "sender",
+    "authorRole",
+  ]);
   return role || "unknown";
 }
 
-async function loadConversationEvents({
-  files,
-  storeId,
-  space,
-  source,
-}) {
+async function loadConversationEvents({ files, storeId, space, source }) {
   const events = [];
 
   for (const filePath of files) {
@@ -278,7 +304,9 @@ const jiraExamplePayload = {
         summary: "Example issue",
         description: {
           type: "doc",
-          content: [{ type: "paragraph", content: [{ type: "text", text: "Hello" }] }],
+          content: [
+            { type: "paragraph", content: [{ type: "text", text: "Hello" }] },
+          ],
         },
         created: "2024-01-02T03:04:05.000+0000",
         updated: "2024-01-03T03:04:05.000+0000",

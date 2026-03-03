@@ -5,8 +5,14 @@ const DEFAULT_EXPORT_NAME = "createUmsEngine";
 let cached;
 
 function toModuleSpecifier(modulePath) {
-  if (modulePath.startsWith(".") || modulePath.startsWith("/") || isAbsolute(modulePath)) {
-    const absolutePath = isAbsolute(modulePath) ? modulePath : resolve(process.cwd(), modulePath);
+  if (
+    modulePath.startsWith(".") ||
+    modulePath.startsWith("/") ||
+    isAbsolute(modulePath)
+  ) {
+    const absolutePath = isAbsolute(modulePath)
+      ? modulePath
+      : resolve(process.cwd(), modulePath);
     return pathToFileURL(absolutePath).href;
   }
   return modulePath;
@@ -18,11 +24,13 @@ async function loadEngineFactory() {
 
   if (!modulePath) {
     try {
-      const mod = await import(toModuleSpecifier("./apps/api/src/ums/engine.mjs"));
+      const mod = await import(
+        toModuleSpecifier("./apps/api/src/ums/engine.ts")
+      );
       if (typeof mod.createUmsEngine === "function") {
         return {
           factory: mod.createUmsEngine,
-          source: "./apps/api/src/ums/engine.mjs",
+          source: "./apps/api/src/ums/engine.ts",
           exportName: "createUmsEngine",
         };
       }

@@ -1,4 +1,4 @@
-declare module "*service-runtime.mjs" {
+declare module "*service-runtime.ts" {
   export function startSupervisedApiService(config: {
     host: string;
     port: number;
@@ -12,7 +12,7 @@ declare module "*service-runtime.mjs" {
   }>;
 }
 
-declare module "*worker-runtime.mjs" {
+declare module "*worker-runtime.ts" {
   export function startSupervisedWorkerService(config: {
     intervalMs: number;
     stateFile: string;

@@ -1,10 +1,16 @@
-import { Deferred, Duration, Effect, Fiber, Layer, ManagedRuntime } from "effect";
-import { exportStoreSnapshot } from "./core.mjs";
+import {
+  Deferred,
+  Duration,
+  Effect,
+  Fiber,
+  Layer,
+  ManagedRuntime,
+} from "effect";
+import { executeOperation, exportStoreSnapshot } from "./core.ts";
 import {
   DEFAULT_SHARED_STATE_FILE,
   executeOperationWithSharedState,
 } from "./persistence.ts";
-import { executeRuntimeOperation } from "./runtime-adapter.mjs";
 
 const DEFAULT_REPLAY_EVAL_MAX_PER_PROFILE = 5;
 const DEFAULT_MAX_ERROR_ENTRIES = 25;
@@ -54,7 +60,9 @@ function normalizePositiveInteger(value, fallback, fieldName) {
   return parsed;
 }
 
-async function loadSnapshotFromStateFile(stateFile = DEFAULT_SHARED_STATE_FILE) {
+async function loadSnapshotFromStateFile(
+  stateFile = DEFAULT_SHARED_STATE_FILE
+) {
   return executeOperationWithSharedState({
     operation: "doctor",
     stateFile,
@@ -68,9 +76,15 @@ function listStoreProfilePairs(snapshot) {
     return pairs;
   }
 
-  if (snapshot.stores && typeof snapshot.stores === "object" && !Array.isArray(snapshot.stores)) {
+  if (
+    snapshot.stores &&
+    typeof snapshot.stores === "object" &&
+    !Array.isArray(snapshot.stores)
+  ) {
     const stores = snapshot.stores;
-    for (const storeId of Object.keys(stores).sort((left, right) => left.localeCompare(right))) {
+    for (const storeId of Object.keys(stores).sort((left, right) =>
+      left.localeCompare(right)
+    )) {
       const storeEntry = stores[storeId];
       const profiles =
         storeEntry &&
@@ -80,15 +94,23 @@ function listStoreProfilePairs(snapshot) {
         !Array.isArray(storeEntry.profiles)
           ? storeEntry.profiles
           : {};
-      for (const profile of Object.keys(profiles).sort((left, right) => left.localeCompare(right))) {
+      for (const profile of Object.keys(profiles).sort((left, right) =>
+        left.localeCompare(right)
+      )) {
         pairs.push({ storeId, profile });
       }
     }
     return pairs;
   }
 
-  if (snapshot.profiles && typeof snapshot.profiles === "object" && !Array.isArray(snapshot.profiles)) {
-    for (const profile of Object.keys(snapshot.profiles).sort((left, right) => left.localeCompare(right))) {
+  if (
+    snapshot.profiles &&
+    typeof snapshot.profiles === "object" &&
+    !Array.isArray(snapshot.profiles)
+  ) {
+    for (const profile of Object.keys(snapshot.profiles).sort((left, right) =>
+      left.localeCompare(right)
+    )) {
       pairs.push({ storeId: DEFAULT_STORE_ID, profile });
     }
   }
@@ -101,7 +123,11 @@ function getProfileSnapshot(snapshot, storeId, profile) {
     return null;
   }
 
-  if (snapshot.stores && typeof snapshot.stores === "object" && !Array.isArray(snapshot.stores)) {
+  if (
+    snapshot.stores &&
+    typeof snapshot.stores === "object" &&
+    !Array.isArray(snapshot.stores)
+  ) {
     const storeEntry = snapshot.stores[storeId];
     if (
       storeEntry &&
@@ -111,21 +137,33 @@ function getProfileSnapshot(snapshot, storeId, profile) {
       !Array.isArray(storeEntry.profiles)
     ) {
       const profileEntry = storeEntry.profiles[profile];
-      return profileEntry && typeof profileEntry === "object" ? profileEntry : null;
+      return profileEntry && typeof profileEntry === "object"
+        ? profileEntry
+        : null;
     }
     return null;
   }
 
-  if (snapshot.profiles && typeof snapshot.profiles === "object" && !Array.isArray(snapshot.profiles)) {
+  if (
+    snapshot.profiles &&
+    typeof snapshot.profiles === "object" &&
+    !Array.isArray(snapshot.profiles)
+  ) {
     const profileEntry = snapshot.profiles[profile];
-    return profileEntry && typeof profileEntry === "object" ? profileEntry : null;
+    return profileEntry && typeof profileEntry === "object"
+      ? profileEntry
+      : null;
   }
 
   return null;
 }
 
 function listShadowCandidateIds(profileState) {
-  if (!profileState || typeof profileState !== "object" || !Array.isArray(profileState.shadowCandidates)) {
+  if (
+    !profileState ||
+    typeof profileState !== "object" ||
+    !Array.isArray(profileState.shadowCandidates)
+  ) {
     return [];
   }
   const ids = new Set();
@@ -151,10 +189,10 @@ async function runOperationWithSharedState({
   requestBody,
   stateFile = DEFAULT_SHARED_STATE_FILE,
 }) {
-  return executeRuntimeOperation({
+  return executeOperationWithSharedState({
     operation,
-    requestBody,
     stateFile,
+    executor: () => executeOperation(operation, requestBody),
   });
 }
 
@@ -165,7 +203,11 @@ function cloneJson(value) {
   return JSON.parse(JSON.stringify(value));
 }
 
-function createEmptyCycleSummary({ startedAt, stateFile, replayEvalMaxPerProfile }) {
+function createEmptyCycleSummary({
+  startedAt,
+  stateFile,
+  replayEvalMaxPerProfile,
+}) {
   return {
     startedAt,
     completedAt: null,
@@ -199,30 +241,36 @@ function createEmptyCycleSummary({ startedAt, stateFile, replayEvalMaxPerProfile
 function finalizeCycleSummary(summary) {
   const completedAt = nowIso();
   summary.completedAt = completedAt;
-  summary.durationMs = Math.max(0, Date.parse(completedAt) - Date.parse(summary.startedAt));
+  summary.durationMs = Math.max(
+    0,
+    Date.parse(completedAt) - Date.parse(summary.startedAt)
+  );
   return summary;
 }
 
 export async function runBackgroundWorkerCycle(options = {}) {
-  const stateFile = Object.prototype.hasOwnProperty.call(options, "stateFile")
+  const stateFile = Object.hasOwn(options, "stateFile")
     ? options.stateFile
     : DEFAULT_SHARED_STATE_FILE;
   const replayEvalMaxPerProfile = normalizeNonNegativeInteger(
     options.replayEvalMaxPerProfile,
     DEFAULT_REPLAY_EVAL_MAX_PER_PROFILE,
-    "replayEvalMaxPerProfile",
+    "replayEvalMaxPerProfile"
   );
   const maxErrorEntries = normalizePositiveInteger(
     options.maxErrorEntries,
     DEFAULT_MAX_ERROR_ENTRIES,
-    "maxErrorEntries",
+    "maxErrorEntries"
   );
   const runOperation =
-    typeof options.runOperation === "function" ? options.runOperation : runOperationWithSharedState;
+    typeof options.runOperation === "function"
+      ? options.runOperation
+      : runOperationWithSharedState;
   const loadSnapshot =
     typeof options.loadSnapshot === "function"
       ? options.loadSnapshot
-      : ({ stateFile: currentStateFile }) => loadSnapshotFromStateFile(currentStateFile);
+      : ({ stateFile: currentStateFile }) =>
+          loadSnapshotFromStateFile(currentStateFile);
 
   const startedAt = nowIso();
   const timestamp = normalizeNonEmptyString(options.timestamp) ?? startedAt;
@@ -235,11 +283,20 @@ export async function runBackgroundWorkerCycle(options = {}) {
   const pairs = listStoreProfilePairs(snapshot);
   summary.profileCount = pairs.length;
 
-  const appendError = ({ storeId, profile, operation, candidateId = null, error }) => {
+  const appendError = ({
+    storeId,
+    profile,
+    operation,
+    candidateId = null,
+    error,
+  }) => {
     summary.errorCount += 1;
     if (summary.errors.length < maxErrorEntries) {
       const code =
-        error && typeof error === "object" && "code" in error && typeof error.code === "string"
+        error &&
+        typeof error === "object" &&
+        "code" in error &&
+        typeof error.code === "string"
           ? error.code
           : null;
       summary.errors.push({
@@ -280,10 +337,15 @@ export async function runBackgroundWorkerCycle(options = {}) {
       });
     }
 
-    const candidateIds = listShadowCandidateIds(getProfileSnapshot(snapshot, storeId, profile));
+    const candidateIds = listShadowCandidateIds(
+      getProfileSnapshot(snapshot, storeId, profile)
+    );
     summary.replayEval.candidatesSeen += candidateIds.length;
     const selectedCandidateIds = candidateIds.slice(0, replayEvalMaxPerProfile);
-    summary.replayEval.skippedByLimit += Math.max(0, candidateIds.length - selectedCandidateIds.length);
+    summary.replayEval.skippedByLimit += Math.max(
+      0,
+      candidateIds.length - selectedCandidateIds.length
+    );
 
     for (const candidateId of selectedCandidateIds) {
       summary.replayEval.attempted += 1;
@@ -332,33 +394,34 @@ export async function runBackgroundWorkerCycle(options = {}) {
 }
 
 export function createSupervisedWorkerService(options = {}) {
-  const stateFile = Object.prototype.hasOwnProperty.call(options, "stateFile")
+  const stateFile = Object.hasOwn(options, "stateFile")
     ? options.stateFile
-    : process.env.UMS_WORKER_STATE_FILE ?? DEFAULT_SHARED_STATE_FILE;
+    : (process.env.UMS_WORKER_STATE_FILE ?? DEFAULT_SHARED_STATE_FILE);
   const intervalMs = normalizePositiveInteger(
     options.intervalMs ?? process.env.UMS_WORKER_INTERVAL_MS,
     DEFAULT_WORKER_INTERVAL_MS,
-    "intervalMs",
+    "intervalMs"
   );
   const restartLimit = normalizeNonNegativeInteger(
     options.restartLimit ?? process.env.UMS_WORKER_RESTART_LIMIT,
     DEFAULT_RESTART_LIMIT,
-    "restartLimit",
+    "restartLimit"
   );
   const restartDelayMs = normalizePositiveInteger(
     options.restartDelayMs ?? process.env.UMS_WORKER_RESTART_DELAY_MS,
     DEFAULT_RESTART_DELAY_MS,
-    "restartDelayMs",
+    "restartDelayMs"
   );
   const replayEvalMaxPerProfile = normalizeNonNegativeInteger(
-    options.replayEvalMaxPerProfile ?? process.env.UMS_WORKER_REPLAY_EVAL_MAX_PER_PROFILE,
+    options.replayEvalMaxPerProfile ??
+      process.env.UMS_WORKER_REPLAY_EVAL_MAX_PER_PROFILE,
     DEFAULT_REPLAY_EVAL_MAX_PER_PROFILE,
-    "replayEvalMaxPerProfile",
+    "replayEvalMaxPerProfile"
   );
   const maxErrorEntries = normalizePositiveInteger(
     options.maxErrorEntries ?? process.env.UMS_WORKER_MAX_ERROR_ENTRIES,
     DEFAULT_MAX_ERROR_ENTRIES,
-    "maxErrorEntries",
+    "maxErrorEntries"
   );
   const captureProcessSignals = options.captureProcessSignals !== false;
   const runCycle =
@@ -428,7 +491,9 @@ export function createSupervisedWorkerService(options = {}) {
       return;
     }
     readySignaled = true;
-    await runtime.runPromise(Deferred.fail(readySignal, error).pipe(Effect.ignore));
+    await runtime.runPromise(
+      Deferred.fail(readySignal, error).pipe(Effect.ignore)
+    );
   };
 
   const supervisorProgram = Effect.gen(function* () {
@@ -450,12 +515,14 @@ export function createSupervisedWorkerService(options = {}) {
       const cycleResult = yield* Effect.tryPromise({
         try: () => runCycle({ stateFile }),
         catch: (cause) =>
-          cause instanceof Error ? cause : new Error(`Worker cycle failed: ${toErrorMessage(cause)}`),
+          cause instanceof Error
+            ? cause
+            : new Error(`Worker cycle failed: ${toErrorMessage(cause)}`),
       }).pipe(
         Effect.match({
           onSuccess: (summary) => ({ status: "success", summary }),
           onFailure: (error) => ({ status: "failure", error }),
-        }),
+        })
       );
 
       if (cycleResult.status === "success") {
@@ -465,8 +532,12 @@ export function createSupervisedWorkerService(options = {}) {
           restartCount,
           cycleCount: nextCycleCount,
           lastCycle: {
-            startedAt: normalizeNonEmptyString(cycleResult.summary?.startedAt) ?? cycleStartedAt,
-            completedAt: normalizeNonEmptyString(cycleResult.summary?.completedAt) ?? nowIso(),
+            startedAt:
+              normalizeNonEmptyString(cycleResult.summary?.startedAt) ??
+              cycleStartedAt,
+            completedAt:
+              normalizeNonEmptyString(cycleResult.summary?.completedAt) ??
+              nowIso(),
             summary: cycleResult.summary,
           },
           lastError: null,
@@ -482,7 +553,9 @@ export function createSupervisedWorkerService(options = {}) {
 
         const pauseSignal = yield* Effect.raceFirst(
           Deferred.await(shutdownSignal).pipe(Effect.as("shutdown")),
-          Effect.sleep(Duration.millis(intervalMs)).pipe(Effect.as("next_cycle")),
+          Effect.sleep(Duration.millis(intervalMs)).pipe(
+            Effect.as("next_cycle")
+          )
         );
         if (pauseSignal === "shutdown" || shutdownRequested) {
           yield* Effect.sync(() => {
@@ -524,7 +597,7 @@ export function createSupervisedWorkerService(options = {}) {
 
       const restartSignal = yield* Effect.raceFirst(
         Deferred.await(shutdownSignal).pipe(Effect.as("shutdown")),
-        Effect.sleep(Duration.millis(restartDelayMs)).pipe(Effect.as("restart")),
+        Effect.sleep(Duration.millis(restartDelayMs)).pipe(Effect.as("restart"))
       );
       if (restartSignal === "shutdown" || shutdownRequested) {
         yield* Effect.sync(() => {
@@ -540,8 +613,8 @@ export function createSupervisedWorkerService(options = {}) {
     Effect.ensuring(
       Effect.sync(() => {
         removeSignalHandlers();
-      }),
-    ),
+      })
+    )
   );
 
   const requestShutdown = async () => {
@@ -552,18 +625,27 @@ export function createSupervisedWorkerService(options = {}) {
     if (status.phase !== "failed" && status.phase !== "stopped") {
       updateStatus({ phase: "stopping" });
     }
-    await runtime.runPromise(Deferred.succeed(shutdownSignal, true).pipe(Effect.ignore));
+    await runtime.runPromise(
+      Deferred.succeed(shutdownSignal, true).pipe(Effect.ignore)
+    );
   };
 
   const start = async () => {
     if (runtimeDisposed) {
-      throw new Error("Supervised worker service runtime has been disposed and cannot be restarted.");
+      throw new Error(
+        "Supervised worker service runtime has been disposed and cannot be restarted."
+      );
     }
     if (serviceFiber) {
       return;
     }
-    if (startAttempted && (status.phase === "stopped" || status.phase === "failed")) {
-      throw new Error("Supervised worker service runtime cannot be restarted after stop/failure.");
+    if (
+      startAttempted &&
+      (status.phase === "stopped" || status.phase === "failed")
+    ) {
+      throw new Error(
+        "Supervised worker service runtime cannot be restarted after stop/failure."
+      );
     }
 
     startAttempted = true;
@@ -592,7 +674,11 @@ export function createSupervisedWorkerService(options = {}) {
         });
       }
       if (!readySignaled) {
-        await failReadyIfPending(new Error("Supervised worker service stopped before first successful cycle."));
+        await failReadyIfPending(
+          new Error(
+            "Supervised worker service stopped before first successful cycle."
+          )
+        );
       }
       removeSignalHandlers();
       await disposeRuntime();
@@ -613,7 +699,11 @@ export function createSupervisedWorkerService(options = {}) {
       });
     }
     if (!readySignaled) {
-      await failReadyIfPending(new Error("Supervised worker service stopped before first successful cycle."));
+      await failReadyIfPending(
+        new Error(
+          "Supervised worker service stopped before first successful cycle."
+        )
+      );
     }
     await disposeRuntime();
   };
