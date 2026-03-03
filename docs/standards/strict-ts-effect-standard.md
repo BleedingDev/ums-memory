@@ -19,6 +19,17 @@ Migration note:
 - During migration, those modules are treated as compatibility shims.
 - New business/domain logic MUST be added in strict TypeScript + Effect modules, not expanded in legacy files except for shim wiring.
 
+### 0) Effect Runtime Version Policy (MUST)
+
+- Runtime policy target is the Effect v4 beta track (`4.0.0-beta.25`).
+- Until `ums-memory-cjd.5` lands with a green cutover, runtime dependency remains on the current stable pin and v4 migration work happens behind explicit beads.
+- New migration work MUST target v4-compatible APIs and avoid introducing new v3-only patterns.
+
+Pass criteria:
+
+- `docs/runbooks/effect-version-availability.md` and `docs/reports/effect-v4-compatibility-matrix.md` are current.
+- When `ums-memory-cjd.5` lands, `package.json` pin and CI verification must be updated in the same change.
+
 ## Mandatory Patterns
 
 ### 1) TypeScript Strictness (MUST)
@@ -67,6 +78,17 @@ Pass criteria:
 
 - Touched legacy entrypoint files are wiring-focused (routing/adaptation), not a long-term home for new domain logic.
 - Any temporary shim-only logic includes a follow-up bead reference in PR notes.
+
+### 2b) TS-Only Runtime Source Policy (MUST)
+
+- Runtime source in `apps/**/src` and `libs/**/src` MUST converge to TypeScript-only modules (`.ts`).
+- New runtime files in `apps/**/src` and `libs/**/src` MUST NOT be introduced as `.js` or `.mjs`.
+- Any remaining runtime `.js`/`.mjs` file in these source trees is migration debt and must be tracked by an explicit bead.
+
+Pass criteria:
+
+- No new `.js`/`.mjs` runtime source files added under `apps/**/src` or `libs/**/src`.
+- Bead references exist for every remaining legacy runtime source file.
 
 ### 3) Schema Contracts at Boundaries (MUST)
 
