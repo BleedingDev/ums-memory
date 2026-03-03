@@ -9,7 +9,7 @@ import {
 import {
   createInMemoryApiTelemetry,
   PROMETHEUS_CONTENT_TYPE,
-} from "./telemetry.mjs";
+} from "./telemetry.ts";
 
 const HOST = process.env.UMS_API_HOST ?? "127.0.0.1";
 const PORT = Number.parseInt(process.env.UMS_API_PORT ?? "8787", 10);

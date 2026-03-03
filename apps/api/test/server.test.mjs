@@ -7,7 +7,7 @@ import test from "node:test";
 
 import { resetStore } from "../src/core.mjs";
 import { startApiServer } from "../src/server.mjs";
-import { createInMemoryApiTelemetry } from "../src/telemetry.mjs";
+import { createInMemoryApiTelemetry } from "../src/telemetry.ts";
 
 const CLI_PATH = resolve(process.cwd(), "apps/cli/src/index.ts");
 
