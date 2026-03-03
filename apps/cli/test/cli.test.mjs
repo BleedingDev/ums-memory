@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import test from "node:test";
 
-import { resetStore } from "../../api/src/core.mjs";
+import { resetStore } from "../../api/src/core.ts";
 
 const CLI_PATH = resolve(process.cwd(), "apps/cli/src/index.ts");
 

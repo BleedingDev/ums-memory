@@ -1,7 +1,7 @@
 import { createReadStream, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { extname, join, relative, resolve } from "node:path";
 import { createInterface } from "node:readline";
-import { executeOperation } from "../apps/api/src/core.mjs";
+import { executeOperation } from "../apps/api/src/core.ts";
 import { DEFAULT_SHARED_STATE_FILE, executeOperationWithSharedState } from "../apps/api/src/persistence.ts";
 
 const DEFAULT_STORE_ID = "coding-agent";

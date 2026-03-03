@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import test from "node:test";
 
-import { resetStore } from "../src/core.mjs";
+import { resetStore } from "../src/core.ts";
 import { startApiServer } from "../src/server.mjs";
 import { createInMemoryApiTelemetry } from "../src/telemetry.ts";
 

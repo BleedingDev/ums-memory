@@ -17,7 +17,7 @@ import {
   resetStore,
   setPolicyPackPlugin,
   snapshotProfile,
-} from "../src/core.mjs";
+} from "../src/core.ts";
 
 test.beforeEach(() => {
   resetStore();

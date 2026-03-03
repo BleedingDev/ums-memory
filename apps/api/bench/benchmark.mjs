@@ -1,7 +1,7 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 
-import { executeOperation, resetStore } from "../src/core.mjs";
+import { executeOperation, resetStore } from "../src/core.ts";
 
 const PROFILE = "bench";
 const STORE_ID = "bench-store";

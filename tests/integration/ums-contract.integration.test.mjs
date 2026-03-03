@@ -7,7 +7,7 @@ import {
   importStoreSnapshot,
   resetStore,
   snapshotProfile,
-} from "../../apps/api/src/core.mjs";
+} from "../../apps/api/src/core.ts";
 import { createEngine } from "../support/engine-adapter.mjs";
 import { buildSyntheticEvents } from "../support/fixtures.mjs";
 

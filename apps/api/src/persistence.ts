@@ -12,7 +12,7 @@ import { dirname, resolve } from "node:path";
 import {
   exportStoreSnapshot as exportStoreSnapshotFromCore,
   importStoreSnapshot as importStoreSnapshotFromCore,
-} from "./core.mjs";
+} from "./core.ts";
 
 export const DEFAULT_SHARED_STATE_FILE =
   process.env["UMS_STATE_FILE"] ?? ".ums-state.json";
