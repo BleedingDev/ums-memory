@@ -46,6 +46,13 @@
   },
   "overrides": [
     {
+      "files": ["apps/api/src/core.ts"],
+      "rules": {
+        "typescript/no-explicit-any": "off",
+        "typescript-eslint/no-explicit-any": "off"
+      }
+    },
+    {
       "files": [
         "**/*.{test,spec}.{ts,tsx,js,jsx}",
         "**/__tests__/**/*.{ts,tsx,js,jsx}"

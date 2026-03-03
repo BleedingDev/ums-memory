@@ -6,8 +6,5 @@
     "tsBuildInfoFile": "../dist/typecheck/tests.tsbuildinfo"
   },
   "include": ["**/*.ts"],
-  "references": [
-    { "path": "../apps/api" },
-    { "path": "../libs/shared" }
-  ]
+  "references": [{ "path": "../apps/api" }, { "path": "../libs/shared" }]
 }

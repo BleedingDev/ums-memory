@@ -1,5 +1,3 @@
-// oxlint-disable-next-line typescript-eslint/ban-ts-comment
-// @ts-nocheck
 import { createHash, createHmac } from "node:crypto";
 
 import { Effect } from "effect";
@@ -251,12 +249,12 @@ const MEMORY_CONSOLE_PROVENANCE_SCALAR_KEYS = new Set([
 ]);
 const MEMORY_CONSOLE_PROVENANCE_MAX_DEPTH = 4;
 
-function stableSortObject(value) {
+function stableSortObject(value: any): any {
   if (Array.isArray(value)) {
     return value.map(stableSortObject);
   }
   if (value && typeof value === "object") {
-    const sorted = {};
+    const sorted: Record<string, unknown> = {};
     for (const key of Object.keys(value).sort()) {
       sorted[key] = stableSortObject(value[key]);
     }
@@ -265,22 +263,22 @@ function stableSortObject(value) {
   return value;
 }
 
-function stableStringify(value) {
+function stableStringify(value: any) {
   return JSON.stringify(stableSortObject(value));
 }
 
-function hash(value) {
+function hash(value: any) {
   return createHash("sha256").update(value).digest("hex");
 }
 
-function hmacSha256(value, secret) {
+function hmacSha256(value: any, secret: any) {
   return createHmac("sha256", secret).update(value).digest("hex");
 }
 
 function resolvePolicyAuditExportSigningConfig() {
   const secret =
-    typeof process.env.UMS_POLICY_AUDIT_EXPORT_SIGNING_SECRET === "string"
-      ? process.env.UMS_POLICY_AUDIT_EXPORT_SIGNING_SECRET.trim()
+    typeof process.env["UMS_POLICY_AUDIT_EXPORT_SIGNING_SECRET"] === "string"
+      ? process.env["UMS_POLICY_AUDIT_EXPORT_SIGNING_SECRET"].trim()
       : "";
   if (!secret) {
     throw new Error(
@@ -288,8 +286,8 @@ function resolvePolicyAuditExportSigningConfig() {
     );
   }
   const configuredKeyId =
-    typeof process.env.UMS_POLICY_AUDIT_EXPORT_SIGNING_KEY_ID === "string"
-      ? process.env.UMS_POLICY_AUDIT_EXPORT_SIGNING_KEY_ID.trim()
+    typeof process.env["UMS_POLICY_AUDIT_EXPORT_SIGNING_KEY_ID"] === "string"
+      ? process.env["UMS_POLICY_AUDIT_EXPORT_SIGNING_KEY_ID"].trim()
       : "";
   if (!configuredKeyId) {
     throw new Error(
@@ -303,21 +301,21 @@ function resolvePolicyAuditExportSigningConfig() {
   };
 }
 
-function opSeed(operation, storeId, profile, input) {
+function opSeed(operation: any, storeId: any, profile: any, input: any) {
   return hash(stableStringify({ operation, storeId, profile, input }));
 }
 
-function makeId(prefix, seed) {
+function makeId(prefix: any, seed: any) {
   return `${prefix}_${seed.slice(0, 12)}`;
 }
 
-function requireObject(value) {
+function requireObject(value: any) {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new Error("Request body must be a JSON object.");
   }
 }
 
-function defaultStoreId(value) {
+function defaultStoreId(value: any) {
   if (typeof value === "string" && value.trim()) {
     return value.trim();
   }
@@ -328,21 +326,26 @@ function defaultProfile() {
   return INTERNAL_PROFILE_ID;
 }
 
-function isPlainObject(value) {
+function isPlainObject(value: any) {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
-function normalizeMetadata(value) {
+function normalizeMetadata(value: any) {
   if (!isPlainObject(value)) {
     return {};
   }
   return stableSortObject(value);
 }
 
-function createNoopPolicyPackPlugin() {
+interface PolicyPackPlugin {
+  name?: string;
+  evaluatePolicyDecisionUpdate: (request: unknown) => unknown;
+}
+
+function createNoopPolicyPackPlugin(): PolicyPackPlugin {
   return {
     name: "noop-policy-pack-plugin",
-    evaluatePolicyDecisionUpdate() {
+    evaluatePolicyDecisionUpdate(_request: unknown) {
       return {
         contractVersion: POLICY_PACK_PLUGIN_CONTRACT_VERSION,
         outcome: "pass",
@@ -353,16 +356,16 @@ function createNoopPolicyPackPlugin() {
   };
 }
 
-function normalizePolicyPackPluginName(value) {
+function normalizePolicyPackPluginName(value: any) {
   if (typeof value === "string" && value.trim()) {
     return value.trim();
   }
   return "anonymous-policy-pack-plugin";
 }
 
-let policyPackPlugin = createNoopPolicyPackPlugin();
+let policyPackPlugin: PolicyPackPlugin = createNoopPolicyPackPlugin();
 
-function asSortedUniqueStrings(values) {
+function asSortedUniqueStrings(values: any) {
   if (!Array.isArray(values)) {
     return [];
   }
@@ -379,17 +382,17 @@ function asSortedUniqueStrings(values) {
     seen.add(normalized);
     result.push(normalized);
   }
-  return result.sort((left, right) => left.localeCompare(right));
+  return result.sort((left: any, right: any) => left.localeCompare(right));
 }
 
-function mergeStringLists(left, right) {
+function mergeStringLists(left: any, right: any) {
   return asSortedUniqueStrings([
     ...(Array.isArray(left) ? left : []),
     ...(Array.isArray(right) ? right : []),
   ]);
 }
 
-function clamp01(value, fallback = 0.5) {
+function clamp01(value: any, fallback: any = 0.5) {
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) {
     return fallback;
@@ -403,7 +406,7 @@ function clamp01(value, fallback = 0.5) {
   return parsed;
 }
 
-function normalizeTimestamp(value) {
+function normalizeTimestamp(value: any) {
   if (typeof value !== "string") {
     return null;
   }
@@ -411,11 +414,18 @@ function normalizeTimestamp(value) {
   return normalized || null;
 }
 
-function normalizeIsoOrDefault(value, fallback = "1970-01-01T00:00:00.000Z") {
+function normalizeIsoOrDefault(
+  value: any,
+  fallback: any = "1970-01-01T00:00:00.000Z"
+) {
   return normalizeTimestamp(value) ?? fallback;
 }
 
-function normalizeIsoTimestamp(value, fieldName, fallback = null) {
+function normalizeIsoTimestamp(
+  value: any,
+  fieldName: any,
+  fallback: any = null
+) {
   const normalized = normalizeTimestamp(value);
   if (normalized === null) {
     return fallback;
@@ -428,8 +438,8 @@ function normalizeIsoTimestamp(value, fieldName, fallback = null) {
 }
 
 function normalizeIsoTimestampOrFallback(
-  value,
-  fallback = DEFAULT_VERSION_TIMESTAMP
+  value: any,
+  fallback: any = DEFAULT_VERSION_TIMESTAMP
 ) {
   try {
     return normalizeIsoTimestamp(value, "timestamp", fallback);
@@ -438,14 +448,14 @@ function normalizeIsoTimestampOrFallback(
   }
 }
 
-function requireNonEmptyString(value, fieldName) {
+function requireNonEmptyString(value: any, fieldName: any) {
   if (typeof value !== "string" || !value.trim()) {
     throw new Error(`${fieldName} must be a non-empty string.`);
   }
   return value.trim();
 }
 
-function toPositiveInteger(value, fallback = 1) {
+function toPositiveInteger(value: any, fallback: any = 1) {
   const parsed = Number(value);
   if (!Number.isFinite(parsed) || parsed <= 0) {
     return fallback;
@@ -453,7 +463,7 @@ function toPositiveInteger(value, fallback = 1) {
   return Math.floor(parsed);
 }
 
-function toNonNegativeInteger(value, fallback = 0) {
+function toNonNegativeInteger(value: any, fallback: any = 0) {
   const parsed = Number(value);
   if (!Number.isFinite(parsed) || parsed < 0) {
     return fallback;
@@ -461,11 +471,15 @@ function toNonNegativeInteger(value, fallback = 0) {
   return Math.floor(parsed);
 }
 
-function hasOwn(input, key) {
+function hasOwn(input: any, key: any) {
   return Object.hasOwn(input, key);
 }
 
-function ensureBoundedCount(values, fieldName, maxItems = MAX_LIST_ITEMS) {
+function ensureBoundedCount(
+  values: any,
+  fieldName: any,
+  maxItems: any = MAX_LIST_ITEMS
+) {
   if (values.length > maxItems) {
     throw new Error(`${fieldName} may include at most ${maxItems} entries.`);
   }
@@ -473,9 +487,9 @@ function ensureBoundedCount(values, fieldName, maxItems = MAX_LIST_ITEMS) {
 }
 
 function normalizeBoundedString(
-  value,
-  fieldName,
-  maxLength = MAX_SIGNAL_ITEM_LENGTH
+  value: any,
+  fieldName: any,
+  maxLength: any = MAX_SIGNAL_ITEM_LENGTH
 ) {
   if (typeof value !== "string" || !value.trim()) {
     return null;
@@ -488,8 +502,8 @@ function normalizeBoundedString(
 }
 
 function normalizeBoundedStringLenient(
-  value,
-  maxLength = MAX_SIGNAL_ITEM_LENGTH
+  value: any,
+  maxLength: any = MAX_SIGNAL_ITEM_LENGTH
 ) {
   if (typeof value !== "string") {
     return null;
@@ -505,8 +519,8 @@ function normalizeBoundedStringLenient(
 }
 
 function normalizeBoundedStringArrayLenient(
-  values,
-  maxLength = MAX_SIGNAL_ITEM_LENGTH
+  values: any,
+  maxLength: any = MAX_SIGNAL_ITEM_LENGTH
 ) {
   if (!Array.isArray(values)) {
     return [];
@@ -524,14 +538,14 @@ function normalizeBoundedStringArrayLenient(
       break;
     }
   }
-  return normalized.sort((left, right) => left.localeCompare(right));
+  return normalized.sort((left: any, right: any) => left.localeCompare(right));
 }
 
 function normalizeBoundedStringArray(
-  values,
-  fieldName,
-  maxItems = MAX_LIST_ITEMS,
-  maxLength = MAX_SIGNAL_ITEM_LENGTH
+  values: any,
+  fieldName: any,
+  maxItems: any = MAX_LIST_ITEMS,
+  maxLength: any = MAX_SIGNAL_ITEM_LENGTH
 ) {
   const normalized = asSortedUniqueStrings(values);
   ensureBoundedCount(normalized, fieldName, maxItems);
@@ -546,12 +560,12 @@ function normalizeBoundedStringArray(
 }
 
 function normalizeGuardedStringArray(
-  values,
-  fieldName,
+  values: any,
+  fieldName: any,
   {
     required = false,
     requiredError = `${fieldName} requires at least one entry.`,
-  } = {}
+  }: any = {}
 ) {
   if (values === undefined || values === null) {
     if (required) {
@@ -583,7 +597,7 @@ function normalizeGuardedStringArray(
     seen.add(entry);
     normalized.push(entry);
   }
-  normalized.sort((left, right) => left.localeCompare(right));
+  normalized.sort((left: any, right: any) => left.localeCompare(right));
   ensureBoundedCount(normalized, fieldName);
   if (required && normalized.length === 0) {
     throw new Error(requiredError);
@@ -592,11 +606,11 @@ function normalizeGuardedStringArray(
 }
 
 function normalizeDeterministicEnum(
-  value,
-  fieldName,
-  operation,
-  allowedValues,
-  fallback
+  value: any,
+  fieldName: any,
+  operation: any,
+  allowedValues: any,
+  fallback: any
 ) {
   if (value === undefined || value === null) {
     return fallback;
@@ -618,7 +632,7 @@ function normalizeDeterministicEnum(
   return normalized;
 }
 
-function normalizeOptionalEmail(value) {
+function normalizeOptionalEmail(value: any) {
   const email = normalizeBoundedString(value, "email", MAX_EMAIL_LENGTH);
   if (!email) {
     return null;
@@ -629,7 +643,7 @@ function normalizeOptionalEmail(value) {
   return email;
 }
 
-function normalizeEvidencePointer(rawPointer, index) {
+function normalizeEvidencePointer(rawPointer: any, index: any) {
   const pointer = isPlainObject(rawPointer)
     ? rawPointer
     : { pointerId: rawPointer };
@@ -665,7 +679,7 @@ function normalizeEvidencePointer(rawPointer, index) {
   };
 }
 
-function normalizeEvidencePointers(values) {
+function normalizeEvidencePointers(values: any) {
   if (!Array.isArray(values)) {
     return [];
   }
@@ -693,26 +707,28 @@ function normalizeEvidencePointers(values) {
       }),
     });
   }
-  const normalizedPointers = [...pointers.values()].sort((left, right) => {
-    const kindDiff = left.kind.localeCompare(right.kind);
-    if (kindDiff !== 0) {
-      return kindDiff;
+  const normalizedPointers = [...pointers.values()].sort(
+    (left: any, right: any) => {
+      const kindDiff = left.kind.localeCompare(right.kind);
+      if (kindDiff !== 0) {
+        return kindDiff;
+      }
+      const sourceDiff = left.source.localeCompare(right.source);
+      if (sourceDiff !== 0) {
+        return sourceDiff;
+      }
+      return left.pointerId.localeCompare(right.pointerId);
     }
-    const sourceDiff = left.source.localeCompare(right.source);
-    if (sourceDiff !== 0) {
-      return sourceDiff;
-    }
-    return left.pointerId.localeCompare(right.pointerId);
-  });
+  );
   return ensureBoundedCount(normalizedPointers, "evidencePointers");
 }
 
-function normalizeEvidencePointersFromRequest(request, extras = []) {
+function normalizeEvidencePointersFromRequest(request: any, extras: any = []) {
   const eventIds = normalizeBoundedStringArray(
     request.evidenceEventIds ?? request.evidenceEpisodeIds,
     "evidenceEventIds"
   );
-  const fromEvents = eventIds.map((eventId) => ({
+  const fromEvents = eventIds.map((eventId: any) => ({
     pointerId: eventId,
     kind: "event",
     source: "event_id",
@@ -725,7 +741,7 @@ function normalizeEvidencePointersFromRequest(request, extras = []) {
   ]);
 }
 
-function normalizePolicyException(value) {
+function normalizePolicyException(value: any) {
   if (value === null || value === undefined || value === false) {
     return null;
   }
@@ -792,7 +808,7 @@ function normalizePolicyException(value) {
   };
 }
 
-function normalizeAgentName(value) {
+function normalizeAgentName(value: any) {
   if (typeof value !== "string") {
     return null;
   }
@@ -800,7 +816,7 @@ function normalizeAgentName(value) {
   return CROSS_AGENT_NAMES.has(normalized) ? normalized : null;
 }
 
-function normalizeCodexProfileSignal(rawSignal) {
+function normalizeCodexProfileSignal(rawSignal: any) {
   if (!isPlainObject(rawSignal)) {
     return null;
   }
@@ -835,7 +851,7 @@ function normalizeCodexProfileSignal(rawSignal) {
   };
 }
 
-function normalizeClaudeProfileSignal(rawSignal) {
+function normalizeClaudeProfileSignal(rawSignal: any) {
   if (!isPlainObject(rawSignal)) {
     return null;
   }
@@ -874,7 +890,7 @@ function normalizeClaudeProfileSignal(rawSignal) {
   };
 }
 
-function normalizeProfileSignalsByAgent(request) {
+function normalizeProfileSignalsByAgent(request: any) {
   const signals = [];
   const codexSignal = normalizeCodexProfileSignal(
     request.codex ?? request.codexSignal ?? request.codex_profile
@@ -940,12 +956,12 @@ function normalizeProfileSignalsByAgent(request) {
       }),
     });
   }
-  return [...merged.values()].sort((left, right) =>
+  return [...merged.values()].sort((left: any, right: any) =>
     left.agent.localeCompare(right.agent)
   );
 }
 
-function normalizeCodexIdentitySignal(rawSignal) {
+function normalizeCodexIdentitySignal(rawSignal: any) {
   if (!isPlainObject(rawSignal)) {
     return null;
   }
@@ -985,7 +1001,7 @@ function normalizeCodexIdentitySignal(rawSignal) {
   };
 }
 
-function normalizeClaudeIdentitySignal(rawSignal) {
+function normalizeClaudeIdentitySignal(rawSignal: any) {
   if (!isPlainObject(rawSignal)) {
     return null;
   }
@@ -1022,7 +1038,7 @@ function normalizeClaudeIdentitySignal(rawSignal) {
   };
 }
 
-function normalizeIdentitySignalsByAgent(request) {
+function normalizeIdentitySignalsByAgent(request: any) {
   const signals = [];
   const codexSignal = normalizeCodexIdentitySignal(
     request.codex ??
@@ -1059,10 +1075,12 @@ function normalizeIdentitySignalsByAgent(request) {
       signals.push(bySource);
     }
   }
-  return signals.sort((left, right) => left.agent.localeCompare(right.agent));
+  return signals.sort((left: any, right: any) =>
+    left.agent.localeCompare(right.agent)
+  );
 }
 
-function mergeSourceSignals(existingSignals, incomingSignals) {
+function mergeSourceSignals(existingSignals: any, incomingSignals: any) {
   const merged = new Map();
   const source = [
     ...(Array.isArray(existingSignals) ? existingSignals : []),
@@ -1084,12 +1102,12 @@ function mergeSourceSignals(existingSignals, incomingSignals) {
       metadata: normalizeMetadata(rawSignal.metadata),
     });
   }
-  return [...merged.values()].sort((left, right) =>
+  return [...merged.values()].sort((left: any, right: any) =>
     left.signalId.localeCompare(right.signalId)
   );
 }
 
-function deriveProfileId(request, storeId, profile) {
+function deriveProfileId(request: any, storeId: any, profile: any) {
   const learnerId =
     typeof request.learnerId === "string" && request.learnerId.trim()
       ? request.learnerId.trim()
@@ -1099,7 +1117,7 @@ function deriveProfileId(request, storeId, profile) {
     : makeId("lp", hash(stableStringify({ storeId, profile, learnerId })));
 }
 
-function normalizeIdentityRef(rawRef) {
+function normalizeIdentityRef(rawRef: any) {
   const ref = isPlainObject(rawRef) ? rawRef : {};
   const namespace =
     typeof ref.namespace === "string" && ref.namespace.trim()
@@ -1124,7 +1142,7 @@ function normalizeIdentityRef(rawRef) {
   };
 }
 
-function normalizeIdentityRefs(values) {
+function normalizeIdentityRefs(values: any) {
   if (!Array.isArray(values)) {
     return [];
   }
@@ -1167,7 +1185,7 @@ function normalizeIdentityRefs(values) {
     });
   }
 
-  const normalizedRefs = [...refs.values()].sort((left, right) => {
+  const normalizedRefs = [...refs.values()].sort((left: any, right: any) => {
     const namespaceDiff = left.namespace.localeCompare(right.namespace);
     if (namespaceDiff !== 0) {
       return namespaceDiff;
@@ -1177,7 +1195,7 @@ function normalizeIdentityRefs(values) {
 
   if (
     normalizedRefs.length > 0 &&
-    !normalizedRefs.some((ref) => ref.isPrimary)
+    !normalizedRefs.some((ref: any) => ref.isPrimary)
   ) {
     normalizedRefs[0] = {
       ...normalizedRefs[0],
@@ -1188,7 +1206,11 @@ function normalizeIdentityRefs(values) {
   return normalizedRefs;
 }
 
-function normalizeLearnerProfileUpdateRequest(request, storeId, profile) {
+function normalizeLearnerProfileUpdateRequest(
+  request: any,
+  storeId: any,
+  profile: any
+) {
   const sourceSignals = normalizeProfileSignalsByAgent(request);
   const learnerId =
     normalizeBoundedString(request.learnerId, "learnerId") ?? profile;
@@ -1206,7 +1228,7 @@ function normalizeLearnerProfileUpdateRequest(request, storeId, profile) {
       ? requestedIdentityRefs
       : normalizeIdentityRefs([fallbackIdentity]);
   const canonicalIdentity =
-    identityRefs.find((ref) => ref.isPrimary) ?? identityRefs[0];
+    identityRefs.find((ref: any) => ref.isPrimary) ?? identityRefs[0];
   const profileId =
     typeof request.profileId === "string" && request.profileId.trim()
       ? request.profileId.trim()
@@ -1216,22 +1238,22 @@ function normalizeLearnerProfileUpdateRequest(request, storeId, profile) {
             stableStringify({ storeId, profile, learnerId, canonicalIdentity })
           )
         );
-  const normalizedSignals = sourceSignals.map((signal) => ({
+  const normalizedSignals = sourceSignals.map((signal: any) => ({
     ...signal,
     signalId: makeId("sig", hash(stableStringify(signal))),
   }));
-  const signalGoals = normalizedSignals.flatMap((signal) => signal.goals);
+  const signalGoals = normalizedSignals.flatMap((signal: any) => signal.goals);
   const signalInterestTags = normalizedSignals.flatMap(
-    (signal) => signal.interestTags
+    (signal: any) => signal.interestTags
   );
   const signalMisconceptionIds = normalizedSignals.flatMap(
-    (signal) => signal.misconceptionIds
+    (signal: any) => signal.misconceptionIds
   );
   const signalEvidencePointers = normalizedSignals.flatMap(
-    (signal) => signal.evidencePointers
+    (signal: any) => signal.evidencePointers
   );
   const confidenceOverrides = normalizedSignals.map(
-    (signal) => signal.profileConfidence
+    (signal: any) => signal.profileConfidence
   );
   const policyException = normalizePolicyException(
     request.policyException ??
@@ -1323,11 +1345,11 @@ function normalizeLearnerProfileUpdateRequest(request, storeId, profile) {
 }
 
 function normalizeLineageEntry(
-  attribute,
-  value,
-  timestamp,
-  evidencePointers,
-  policyException
+  attribute: any,
+  value: any,
+  timestamp: any,
+  evidencePointers: any,
+  policyException: any
 ) {
   const normalizedTimestamp = normalizeIsoTimestamp(
     timestamp,
@@ -1338,7 +1360,7 @@ function normalizeLineageEntry(
   const valueDigest = hash(stableStringify(normalizedValue));
   const evidencePointerIds = normalizeBoundedStringArray(
     (Array.isArray(evidencePointers) ? evidencePointers : []).map(
-      (pointer) => pointer.pointerId
+      (pointer: any) => pointer.pointerId
     ),
     `attributeLineage.${attribute}.evidencePointerIds`
   );
@@ -1363,7 +1385,7 @@ function normalizeLineageEntry(
   };
 }
 
-function compareLineageEntries(left, right) {
+function compareLineageEntries(left: any, right: any) {
   const timestampDiff = left.timestamp.localeCompare(right.timestamp);
   if (timestampDiff !== 0) {
     return timestampDiff;
@@ -1375,17 +1397,23 @@ function compareLineageEntries(left, right) {
   return left.revisionId.localeCompare(right.revisionId);
 }
 
-function appendLineageEntry(existingEntries, entry) {
+function appendLineageEntry(existingEntries: any, entry: any) {
   const entries = Array.isArray(existingEntries) ? [...existingEntries] : [];
   if (
-    !entries.some((candidate) => candidate?.revisionId === entry.revisionId)
+    !entries.some(
+      (candidate: any) => candidate?.revisionId === entry.revisionId
+    )
   ) {
     entries.push(entry);
   }
   return entries.sort(compareLineageEntries);
 }
 
-function mergeLearnerProfile(existing, incoming, operationAction) {
+function mergeLearnerProfile(
+  existing: any,
+  incoming: any,
+  operationAction: any
+) {
   const base = {
     ...existing,
     learnerId: incoming.learnerId,
@@ -1571,7 +1599,7 @@ const INJECTION_PATTERNS = Object.freeze([
   { code: "prompt_override_execution", pattern: /<script|javascript:|eval\(/i },
 ]);
 
-function normalizeIdentityRelation(value) {
+function normalizeIdentityRelation(value: any) {
   if (typeof value !== "string") {
     return "alias_of";
   }
@@ -1582,7 +1610,11 @@ function normalizeIdentityRelation(value) {
   return IDENTITY_RELATIONS.has(normalized) ? normalized : "alias_of";
 }
 
-function normalizeIdentityGraphUpdateRequest(request, storeId, profile) {
+function normalizeIdentityGraphUpdateRequest(
+  request: any,
+  storeId: any,
+  profile: any
+) {
   const sourceSignals = normalizeIdentitySignalsByAgent(request);
   const learnerId =
     normalizeBoundedString(request.learnerId, "learnerId") ?? profile;
@@ -1610,7 +1642,7 @@ function normalizeIdentityGraphUpdateRequest(request, storeId, profile) {
     throw new Error("Identity graph edge endpoints must be distinct.");
   }
   const signalEvidence = sourceSignals.flatMap(
-    (signal) => signal.evidencePointers
+    (signal: any) => signal.evidencePointers
   );
   const evidencePointers = normalizeEvidencePointersFromRequest(
     request,
@@ -1624,9 +1656,10 @@ function normalizeIdentityGraphUpdateRequest(request, storeId, profile) {
       ),
       ...evidencePointers
         .filter(
-          (pointer) => pointer.kind === "event" || pointer.kind === "episode"
+          (pointer: any) =>
+            pointer.kind === "event" || pointer.kind === "episode"
         )
-        .map((pointer) => pointer.pointerId),
+        .map((pointer: any) => pointer.pointerId),
     ],
     "evidenceEventIds"
   );
@@ -1667,7 +1700,7 @@ function normalizeIdentityGraphUpdateRequest(request, storeId, profile) {
     confidence: clamp01(request.confidence ?? firstSignal?.confidence, 0.5),
     evidencePointers,
     evidenceEventIds,
-    sourceSignals: sourceSignals.map((signal) => ({
+    sourceSignals: sourceSignals.map((signal: any) => ({
       ...signal,
       signalId: makeId("sig", hash(stableStringify(signal))),
     })),
@@ -1677,7 +1710,7 @@ function normalizeIdentityGraphUpdateRequest(request, storeId, profile) {
   };
 }
 
-function mergeIdentityGraphEdge(existing, incoming) {
+function mergeIdentityGraphEdge(existing: any, incoming: any) {
   return {
     ...existing,
     profileId: incoming.profileId,
@@ -1708,7 +1741,11 @@ function mergeIdentityGraphEdge(existing, incoming) {
   };
 }
 
-function normalizeMisconceptionUpdateRequest(request, storeId, profile) {
+function normalizeMisconceptionUpdateRequest(
+  request: any,
+  storeId: any,
+  profile: any
+) {
   const profileId = deriveProfileId(request, storeId, profile);
   const misconceptionKey = requireNonEmptyString(
     request.misconceptionKey,
@@ -1817,7 +1854,7 @@ function normalizeMisconceptionUpdateRequest(request, storeId, profile) {
   };
 }
 
-function mergeMisconceptionRecord(existing, incoming) {
+function mergeMisconceptionRecord(existing: any, incoming: any) {
   const seenSignal = (existing.sourceSignalIds ?? []).includes(
     incoming.signalId
   );
@@ -1906,7 +1943,11 @@ function mergeMisconceptionRecord(existing, incoming) {
   };
 }
 
-function normalizeCurriculumPlanUpdateRequest(request, storeId, profile) {
+function normalizeCurriculumPlanUpdateRequest(
+  request: any,
+  storeId: any,
+  profile: any
+) {
   const profileId = deriveProfileId(request, storeId, profile);
   const objectiveId = requireNonEmptyString(request.objectiveId, "objectiveId");
   const evidenceEventIds = normalizeGuardedStringArray(
@@ -1965,7 +2006,7 @@ function normalizeCurriculumPlanUpdateRequest(request, storeId, profile) {
   };
 }
 
-function mergeCurriculumPlanItem(existing, incoming) {
+function mergeCurriculumPlanItem(existing: any, incoming: any) {
   return {
     ...existing,
     profileId: incoming.profileId,
@@ -2001,7 +2042,11 @@ function mergeCurriculumPlanItem(existing, incoming) {
   };
 }
 
-function normalizeReviewScheduleUpdateRequest(request, storeId, profile) {
+function normalizeReviewScheduleUpdateRequest(
+  request: any,
+  storeId: any,
+  profile: any
+) {
   const profileId = deriveProfileId(request, storeId, profile);
   const targetId = requireNonEmptyString(request.targetId, "targetId");
   const sourceEventIds = normalizeGuardedStringArray(
@@ -2052,7 +2097,7 @@ function normalizeReviewScheduleUpdateRequest(request, storeId, profile) {
   };
 }
 
-function mergeReviewScheduleEntry(existing, incoming) {
+function mergeReviewScheduleEntry(existing: any, incoming: any) {
   return {
     ...existing,
     profileId: incoming.profileId,
@@ -2079,7 +2124,7 @@ function mergeReviewScheduleEntry(existing, incoming) {
   };
 }
 
-function normalizePolicyPackPluginResponse(response) {
+function normalizePolicyPackPluginResponse(response: any) {
   if (!isPlainObject(response)) {
     throw new Error("policy pack plugin response must be an object.");
   }
@@ -2113,7 +2158,7 @@ function normalizePolicyPackPluginResponse(response) {
   };
 }
 
-function toPolicyPackPluginFailureMessage(error, fallback) {
+function toPolicyPackPluginFailureMessage(error: any, fallback: any) {
   if (error instanceof Error) {
     return normalizeBoundedStringLenient(error.message, 256) ?? fallback;
   }
@@ -2124,9 +2169,9 @@ function toPolicyPackPluginFailureMessage(error, fallback) {
 }
 
 function toFailClosedPolicyPackInvocation(
-  pluginName,
-  reasonCode,
-  failureMessage
+  pluginName: any,
+  reasonCode: any,
+  failureMessage: any
 ) {
   return {
     pluginName,
@@ -2140,9 +2185,11 @@ function toFailClosedPolicyPackInvocation(
   };
 }
 
-function resolvePolicyPackPluginRawResponse(rawResponse) {
+function resolvePolicyPackPluginRawResponse(rawResponse: any) {
   if (Effect.isEffect(rawResponse)) {
-    return Effect.runSync(rawResponse);
+    return Effect.runSync(
+      rawResponse as Effect.Effect<unknown, unknown, never>
+    );
   }
   if (rawResponse && typeof rawResponse.then === "function") {
     throw new Error(
@@ -2152,7 +2199,7 @@ function resolvePolicyPackPluginRawResponse(rawResponse) {
   return rawResponse;
 }
 
-function invokePolicyPackPluginForDecisionUpdate(storeId, incoming) {
+function invokePolicyPackPluginForDecisionUpdate(storeId: any, incoming: any) {
   const activePlugin = policyPackPlugin;
   const pluginName = normalizePolicyPackPluginName(activePlugin?.name);
   const request = {
@@ -2211,7 +2258,7 @@ function invokePolicyPackPluginForDecisionUpdate(storeId, incoming) {
   };
 }
 
-function applyPolicyPackInvocationToDecision(incoming, invocation) {
+function applyPolicyPackInvocationToDecision(incoming: any, invocation: any) {
   const enforcedOutcome =
     invocation.status === "fail_closed" || invocation.outcome === "deny"
       ? "deny"
@@ -2241,7 +2288,7 @@ function applyPolicyPackInvocationToDecision(incoming, invocation) {
   };
 }
 
-function toPolicyPackPluginAuditMetadata(invocation) {
+function toPolicyPackPluginAuditMetadata(invocation: any) {
   return stableSortObject({
     pluginName: invocation.pluginName,
     contractVersion: invocation.contractVersion,
@@ -2253,7 +2300,11 @@ function toPolicyPackPluginAuditMetadata(invocation) {
   });
 }
 
-function normalizePolicyDecisionUpdateRequest(request, storeId, profile) {
+function normalizePolicyDecisionUpdateRequest(
+  request: any,
+  storeId: any,
+  profile: any
+) {
   const profileId = deriveProfileId(request, storeId, profile);
   const policyKey = requireNonEmptyString(request.policyKey, "policyKey");
   const action =
@@ -2321,12 +2372,30 @@ function normalizePolicyDecisionUpdateRequest(request, storeId, profile) {
   };
 }
 
-function mergePolicyDecision(existing, incoming) {
-  const severity = { allow: 1, review: 2, deny: 3 };
+function mergePolicyDecision(existing: any, incoming: any) {
+  const severity = {
+    allow: 1,
+    review: 2,
+    deny: 3,
+  } as const;
+  const existingOutcome =
+    normalizeBoundedStringLenient(existing.outcome, 16)?.toLowerCase() ??
+    "review";
+  const incomingOutcome =
+    normalizeBoundedStringLenient(incoming.outcome, 16)?.toLowerCase() ??
+    "review";
+  const normalizedExistingOutcome =
+    existingOutcome in severity
+      ? (existingOutcome as keyof typeof severity)
+      : "review";
+  const normalizedIncomingOutcome =
+    incomingOutcome in severity
+      ? (incomingOutcome as keyof typeof severity)
+      : "review";
   const outcome =
-    severity[existing.outcome] >= severity[incoming.outcome]
-      ? existing.outcome
-      : incoming.outcome;
+    severity[normalizedExistingOutcome] >= severity[normalizedIncomingOutcome]
+      ? normalizedExistingOutcome
+      : normalizedIncomingOutcome;
 
   return {
     ...existing,
@@ -2353,7 +2422,7 @@ function mergePolicyDecision(existing, incoming) {
   };
 }
 
-function getStoreProfiles(storeId) {
+function getStoreProfiles(storeId: any) {
   const existing = stores.get(storeId);
   if (existing) {
     return existing;
@@ -2363,7 +2432,7 @@ function getStoreProfiles(storeId) {
   return created;
 }
 
-function getProfileState(storeId, profile) {
+function getProfileState(storeId: any, profile: any) {
   const profiles = getStoreProfiles(storeId);
   const existing = profiles.get(profile);
   if (existing) {
@@ -2430,7 +2499,7 @@ function getProfileState(storeId, profile) {
   return created;
 }
 
-function normalizeEvent(raw, index) {
+function normalizeEvent(raw: any, index: any) {
   const event = raw && typeof raw === "object" ? raw : {};
   const material = stableStringify({
     source: event.source ?? "unknown",
@@ -2451,7 +2520,7 @@ function normalizeEvent(raw, index) {
   };
 }
 
-function normalizeRuleCandidate(raw) {
+function normalizeRuleCandidate(raw: any) {
   const candidate = raw && typeof raw === "object" ? raw : {};
   const statement =
     typeof candidate.statement === "string" ? candidate.statement.trim() : "";
@@ -2472,11 +2541,11 @@ function normalizeRuleCandidate(raw) {
 }
 
 function normalizeShadowCandidate(
-  rawCandidate,
-  request,
-  storeId,
-  profile,
-  timestamp
+  rawCandidate: any,
+  request: any,
+  storeId: any,
+  profile: any,
+  timestamp: any
 ) {
   const candidate = isPlainObject(rawCandidate) ? rawCandidate : {};
   const statement =
@@ -2599,7 +2668,7 @@ function normalizeShadowCandidate(
   };
 }
 
-function buildShadowWriteAppliedEntry(candidate, action) {
+function buildShadowWriteAppliedEntry(candidate: any, action: any) {
   return {
     action,
     candidateId: candidate?.candidateId ?? null,
@@ -2617,12 +2686,12 @@ function buildShadowWriteAppliedEntry(candidate, action) {
   };
 }
 
-function resolveMemoryCandidate(state, candidateId) {
+function resolveMemoryCandidate(state: any, candidateId: any) {
   const candidates = Array.isArray(state.shadowCandidates)
     ? state.shadowCandidates
     : [];
   const candidateIndex = candidates.findIndex(
-    (candidate) => candidate?.candidateId === candidateId
+    (candidate: any) => candidate?.candidateId === candidateId
   );
   if (candidateIndex === -1) {
     return { candidateIndex: -1, candidate: null };
@@ -2634,9 +2703,9 @@ function resolveMemoryCandidate(state, candidateId) {
 }
 
 function resolveDemotionTargetCandidateIds(
-  state,
-  targetRuleIds = [],
-  targetCandidateIds = []
+  state: any,
+  targetRuleIds: any = [],
+  targetCandidateIds: any = []
 ) {
   const normalizedRuleIds = asSortedUniqueStrings(targetRuleIds);
   const normalizedCandidateIds = asSortedUniqueStrings(targetCandidateIds);
@@ -2666,9 +2735,9 @@ function resolveDemotionTargetCandidateIds(
 }
 
 function applyCandidateDemotion(
-  state,
-  resolved,
-  { demotedAt, reasonCodes = [] }
+  state: any,
+  resolved: any,
+  { demotedAt, reasonCodes = [] }: any
 ) {
   const normalizedReasonCodes = asSortedUniqueStrings(reasonCodes);
   const existingCandidate = resolved?.candidate ?? null;
@@ -2697,7 +2766,7 @@ function applyCandidateDemotion(
 
   let removedRuleId = null;
   const existingRuleIndex = state.rules.findIndex(
-    (rule) => rule.ruleId === existingCandidate.ruleId
+    (rule: any) => rule.ruleId === existingCandidate.ruleId
   );
   if (existingRuleIndex !== -1) {
     removedRuleId = state.rules.splice(existingRuleIndex, 1)[0]?.ruleId ?? null;
@@ -2711,7 +2780,10 @@ function applyCandidateDemotion(
   };
 }
 
-function computeTrailingNegativeNetValueStreak(replayEvaluations, candidateId) {
+function computeTrailingNegativeNetValueStreak(
+  replayEvaluations: any,
+  candidateId: any
+) {
   if (!Array.isArray(replayEvaluations) || !candidateId) {
     return 0;
   }
@@ -2730,7 +2802,7 @@ function computeTrailingNegativeNetValueStreak(replayEvaluations, candidateId) {
   return streak;
 }
 
-function normalizeAddWeightRequest(request, storeId, profile) {
+function normalizeAddWeightRequest(request: any, storeId: any, profile: any) {
   const candidateId = requireNonEmptyString(request.candidateId, "candidateId");
   const parsedDelta = Number(
     request.delta ??
@@ -2822,27 +2894,29 @@ function normalizeAddWeightRequest(request, storeId, profile) {
   };
 }
 
-function findExistingAddWeightAuditEvent(state, adjustmentId) {
+function findExistingAddWeightAuditEvent(state: any, adjustmentId: any) {
   const auditTrail = Array.isArray(state.policyAuditTrail)
     ? state.policyAuditTrail
     : [];
   return (
     auditTrail.find(
-      (entry) =>
+      (entry: any) =>
         entry?.operation === "addweight" &&
         entry?.details?.adjustmentId === adjustmentId
     ) ?? null
   );
 }
 
-function findWeightAdjustmentLedgerEntry(state, adjustmentId) {
+function findWeightAdjustmentLedgerEntry(state: any, adjustmentId: any) {
   const ledger = Array.isArray(state.weightAdjustmentLedger)
     ? state.weightAdjustmentLedger
     : [];
-  return ledger.find((entry) => entry?.adjustmentId === adjustmentId) ?? null;
+  return (
+    ledger.find((entry: any) => entry?.adjustmentId === adjustmentId) ?? null
+  );
 }
 
-function upsertWeightAdjustmentLedgerEntry(state, rawEntry) {
+function upsertWeightAdjustmentLedgerEntry(state: any, rawEntry: any) {
   const entry = isPlainObject(rawEntry) ? rawEntry : {};
   const adjustmentId =
     normalizeBoundedString(
@@ -2879,7 +2953,7 @@ function upsertWeightAdjustmentLedgerEntry(state, rawEntry) {
     ? state.weightAdjustmentLedger
     : [];
   const existingIndex = ledger.findIndex(
-    (candidate) => candidate?.adjustmentId === adjustmentId
+    (candidate: any) => candidate?.adjustmentId === adjustmentId
   );
   if (existingIndex !== -1) {
     const existing = ledger[existingIndex];
@@ -2908,7 +2982,7 @@ function upsertWeightAdjustmentLedgerEntry(state, rawEntry) {
   return nextEntry;
 }
 
-function normalizeReplayEvalMetrics(request) {
+function normalizeReplayEvalMetrics(request: any) {
   return {
     successRateDelta: stableScore(
       request.successRateDelta ?? request.success_rate_delta,
@@ -2937,7 +3011,7 @@ function normalizeReplayEvalMetrics(request) {
   };
 }
 
-function normalizeReplayEvalCanaryMetrics(request) {
+function normalizeReplayEvalCanaryMetrics(request: any) {
   return {
     successRateDelta: stableScore(
       request.canarySuccessRateDelta ?? request.canary_success_rate_delta,
@@ -2964,7 +3038,7 @@ function normalizeReplayEvalCanaryMetrics(request) {
   };
 }
 
-function computeReplayEvalScoreBreakdown(metrics, canaryMetrics) {
+function computeReplayEvalScoreBreakdown(metrics: any, canaryMetrics: any) {
   const components = {
     replaySuccessReward: roundNumber(metrics.successRateDelta * 100, 6),
     replayReopenPenalty: roundNumber(metrics.reopenRateDelta * -80, 6),
@@ -2992,7 +3066,7 @@ function computeReplayEvalScoreBreakdown(metrics, canaryMetrics) {
   };
   const total = roundNumber(
     Object.values(components).reduce(
-      (accumulator, value) => accumulator + stableScore(value, 0),
+      (accumulator: any, value: any) => accumulator + stableScore(value, 0),
       0
     ),
     6
@@ -3004,10 +3078,10 @@ function computeReplayEvalScoreBreakdown(metrics, canaryMetrics) {
 }
 
 function computeReplayEvalSafetyDeltas(
-  metrics,
-  canaryMetrics,
-  replayThreshold,
-  canaryThreshold
+  metrics: any,
+  canaryMetrics: any,
+  replayThreshold: any,
+  canaryThreshold: any
 ) {
   const replaySafetyDeltas = {
     policyViolationsDelta: roundNumber(metrics.policyViolationsDelta, 6),
@@ -3022,19 +3096,19 @@ function computeReplayEvalSafetyDeltas(
     errorRateDelta: roundNumber(canaryMetrics.errorRateDelta, 6),
   };
   const replayRegressionCount = Object.values(replaySafetyDeltas).filter(
-    (delta) => stableScore(delta, 0) > replayThreshold
+    (delta: any) => stableScore(delta, 0) > replayThreshold
   ).length;
   const canaryRegressionCount = Object.values(canarySafetyDeltas).filter(
-    (delta) => stableScore(delta, 0) > canaryThreshold
+    (delta: any) => stableScore(delta, 0) > canaryThreshold
   ).length;
   const safetyDeltaScore = roundNumber(
     Object.values(replaySafetyDeltas).reduce(
-      (accumulator, delta) =>
+      (accumulator: any, delta: any) =>
         accumulator + Math.max(0, stableScore(delta, 0) - replayThreshold),
       0
     ) +
       Object.values(canarySafetyDeltas).reduce(
-        (accumulator, delta) =>
+        (accumulator: any, delta: any) =>
           accumulator + Math.max(0, stableScore(delta, 0) - canaryThreshold),
         0
       ),
@@ -3061,7 +3135,7 @@ function computeReplayEvalSafetyDeltas(
   };
 }
 
-function normalizeRequest(operation, request) {
+function normalizeRequest(operation: any, request: any) {
   requireObject(request);
   const storeId = defaultStoreId(request.storeId ?? request.store);
   const profile = defaultProfile();
@@ -3077,14 +3151,16 @@ function normalizeRequest(operation, request) {
   };
 }
 
-function findByDigestPrefix(items, digestPrefix, field) {
+function findByDigestPrefix(items: any, digestPrefix: any, field: any) {
   if (typeof digestPrefix !== "string" || !digestPrefix) {
     return null;
   }
-  return items.find((item) => item[field].startsWith(digestPrefix)) ?? null;
+  return (
+    items.find((item: any) => item[field].startsWith(digestPrefix)) ?? null
+  );
 }
 
-function buildMeta(operation, storeId, profile, input) {
+function buildMeta(operation: any, storeId: any, profile: any, input: any) {
   const seed = opSeed(operation, storeId, profile, input);
   return {
     operation,
@@ -3095,7 +3171,11 @@ function buildMeta(operation, storeId, profile, input) {
   };
 }
 
-function deterministicLatencyMs(requestDigest, min = 4, max = 40) {
+function deterministicLatencyMs(
+  requestDigest: any,
+  min: any = 4,
+  max: any = 40
+) {
   const seed = Number.parseInt(
     typeof requestDigest === "string" ? requestDigest.slice(0, 8) : "",
     16
@@ -3106,7 +3186,7 @@ function deterministicLatencyMs(requestDigest, min = 4, max = 40) {
   return min + (seed % (max - min + 1));
 }
 
-function latencyBucket(latencyMs) {
+function latencyBucket(latencyMs: any) {
   if (latencyMs <= 10) {
     return "le_10ms";
   }
@@ -3119,7 +3199,11 @@ function latencyBucket(latencyMs) {
   return "gt_30ms";
 }
 
-function buildSloObservability(requestDigest, operation, targetP95Ms) {
+function buildSloObservability(
+  requestDigest: any,
+  operation: any,
+  targetP95Ms: any
+) {
   const observedLatencyMs = deterministicLatencyMs(requestDigest);
   const budgetDeltaMs = observedLatencyMs - targetP95Ms;
   const withinBudget = budgetDeltaMs <= 0;
@@ -3137,15 +3221,21 @@ function buildSloObservability(requestDigest, operation, targetP95Ms) {
 }
 
 function buildLifecycleCandidateThroughputMetric(
-  state,
-  { processedCount = 0, mutatedCount = 0, actionCounts = null } = {}
+  state: any,
+  { processedCount = 0, mutatedCount = 0, actionCounts = null }: any = {}
 ) {
   const totalCandidates = Array.isArray(state.shadowCandidates)
     ? state.shadowCandidates.length
     : 0;
   const normalizedProcessedCount = toNonNegativeInteger(processedCount, 0);
   const normalizedMutatedCount = toNonNegativeInteger(mutatedCount, 0);
-  const throughput = {
+  const throughput: {
+    processedCount: number;
+    mutatedCount: number;
+    mutationRate: number;
+    totalCandidates: number;
+    actionCounts?: Record<string, unknown>;
+  } = {
     processedCount: normalizedProcessedCount,
     mutatedCount: normalizedMutatedCount,
     mutationRate:
@@ -3160,14 +3250,14 @@ function buildLifecycleCandidateThroughputMetric(
   return throughput;
 }
 
-function buildLifecycleGatePassRateMetric(state, candidateIds = []) {
+function buildLifecycleGatePassRateMetric(state: any, candidateIds: any = []) {
   const scopedCandidateIds = asSortedUniqueStrings(candidateIds);
   const scopedCandidateIdSet =
     scopedCandidateIds.length > 0 ? new Set(scopedCandidateIds) : null;
   const replayEvaluations = Array.isArray(state.replayEvaluations)
     ? state.replayEvaluations
     : [];
-  const relevantEvaluations = replayEvaluations.filter((evaluation) => {
+  const relevantEvaluations = replayEvaluations.filter((evaluation: any) => {
     if (!evaluation || typeof evaluation !== "object") {
       return false;
     }
@@ -3180,7 +3270,7 @@ function buildLifecycleGatePassRateMetric(state, candidateIds = []) {
     return evaluation.pass === true || evaluation.pass === false;
   });
   const passCount = relevantEvaluations.reduce(
-    (count, evaluation) => count + (evaluation.pass === true ? 1 : 0),
+    (count: any, evaluation: any) => count + (evaluation.pass === true ? 1 : 0),
     0
   );
   const totalCount = relevantEvaluations.length;
@@ -3194,12 +3284,15 @@ function buildLifecycleGatePassRateMetric(state, candidateIds = []) {
   };
 }
 
-function buildLifecycleDemotionReasonsMetric(state, reasonCodes = []) {
+function buildLifecycleDemotionReasonsMetric(
+  state: any,
+  reasonCodes: any = []
+) {
   const normalizedReasonCodes = asSortedUniqueStrings(reasonCodes);
   const candidates = Array.isArray(state.shadowCandidates)
     ? state.shadowCandidates
     : [];
-  const profileCounts = {};
+  const profileCounts: Record<string, number> = {};
   for (const candidate of candidates) {
     const candidateReasonCodes = asSortedUniqueStrings(
       candidate?.latestDemotionReasonCodes
@@ -3209,12 +3302,12 @@ function buildLifecycleDemotionReasonsMetric(state, reasonCodes = []) {
         toNonNegativeInteger(profileCounts[reasonCode], 0) + 1;
     }
   }
-  const operationEventCounts = {};
+  const operationEventCounts: Record<string, number> = {};
   for (const reasonCode of normalizedReasonCodes) {
     operationEventCounts[reasonCode] =
       toNonNegativeInteger(operationEventCounts[reasonCode], 0) + 1;
   }
-  const operationReasonHistoryCounts = {};
+  const operationReasonHistoryCounts: Record<string, number> = {};
   const operationReasonHistory = Array.isArray(state.policyAuditTrail)
     ? state.policyAuditTrail
     : [];
@@ -3244,7 +3337,7 @@ function buildLifecycleDemotionReasonsMetric(state, reasonCodes = []) {
   };
 }
 
-function buildLifecycleLatencyMetric(requestDigest) {
+function buildLifecycleLatencyMetric(requestDigest: any) {
   const observedLatencyMs = deterministicLatencyMs(requestDigest);
   return {
     observedLatencyMs,
@@ -3253,7 +3346,7 @@ function buildLifecycleLatencyMetric(requestDigest) {
 }
 
 function buildLifecycleObservabilityMetrics(
-  state,
+  state: any,
   {
     requestDigest,
     candidateIds = [],
@@ -3261,7 +3354,7 @@ function buildLifecycleObservabilityMetrics(
     mutatedCount = 0,
     actionCounts = null,
     demotionReasonCodes = [],
-  } = {}
+  }: any = {}
 ) {
   const scopedCandidateIds = asSortedUniqueStrings(candidateIds);
   return stableSortObject({
@@ -3282,8 +3375,8 @@ function buildLifecycleObservabilityMetrics(
 }
 
 function buildLifecycleTrace(
-  meta,
-  { action = "noop", candidateIds = [], metrics = {}, details = {} } = {}
+  meta: any,
+  { action = "noop", candidateIds = [], metrics = {}, details = {} }: any = {}
 ) {
   const payload = stableSortObject({
     operation: meta.operation,
@@ -3320,10 +3413,10 @@ function buildLifecycleTrace(
 }
 
 function compareByIsoTimestampThenId(
-  leftTimestamp,
-  leftId,
-  rightTimestamp,
-  rightId
+  leftTimestamp: any,
+  leftId: any,
+  rightTimestamp: any,
+  rightId: any
 ) {
   const timestampDiff = String(leftTimestamp ?? "").localeCompare(
     String(rightTimestamp ?? "")
@@ -3334,8 +3427,8 @@ function compareByIsoTimestampThenId(
   return String(leftId ?? "").localeCompare(String(rightId ?? ""));
 }
 
-function sortByTimestampAndId(values, timestampField, idField) {
-  return [...values].sort((left, right) =>
+function sortByTimestampAndId(values: any, timestampField: any, idField: any) {
+  return [...values].sort((left: any, right: any) =>
     compareByIsoTimestampThenId(
       left?.[timestampField],
       left?.[idField],
@@ -3345,7 +3438,7 @@ function sortByTimestampAndId(values, timestampField, idField) {
   );
 }
 
-function getOrCreateSchedulerClocks(state) {
+function getOrCreateSchedulerClocks(state: any) {
   const current = isPlainObject(state.schedulerClocks)
     ? state.schedulerClocks
     : {};
@@ -3392,7 +3485,7 @@ function getOrCreateSchedulerClocks(state) {
   return normalized;
 }
 
-function getOrCreateReviewArchivalTiers(state) {
+function getOrCreateReviewArchivalTiers(state: any) {
   const current = isPlainObject(state.reviewArchivalTiers)
     ? state.reviewArchivalTiers
     : {};
@@ -3426,8 +3519,8 @@ function getOrCreateReviewArchivalTiers(state) {
     archivedRecords: Array.isArray(current.archivedRecords)
       ? sortByTimestampAndId(
           current.archivedRecords
-            .filter((record) => isPlainObject(record))
-            .map((record) => ({
+            .filter((record: any) => isPlainObject(record))
+            .map((record: any) => ({
               archiveRecordId:
                 normalizeBoundedString(
                   record.archiveRecordId,
@@ -3482,7 +3575,11 @@ function getOrCreateReviewArchivalTiers(state) {
   return normalized;
 }
 
-function getOrCreateRecallAllowlistPolicy(state, storeId, profile) {
+function getOrCreateRecallAllowlistPolicy(
+  state: any,
+  storeId: any,
+  profile: any
+) {
   const current = isPlainObject(state.recallAllowlistPolicy)
     ? state.recallAllowlistPolicy
     : {};
@@ -3507,14 +3604,14 @@ function getOrCreateRecallAllowlistPolicy(state, storeId, profile) {
 }
 
 function ensureRecallAuthorizationForOperation(
-  state,
+  state: any,
   {
     storeId,
     profile,
     requesterStoreId,
     operation,
     timestamp = DEFAULT_VERSION_TIMESTAMP,
-  }
+  }: any
 ) {
   const requester =
     normalizeBoundedString(requesterStoreId, "requesterStoreId", 128) ??
@@ -3555,7 +3652,7 @@ function ensureRecallAuthorizationForOperation(
   if (!authorized) {
     const error = new Error(
       `${CROSS_SPACE_ALLOWLIST_DENY_ERROR} requesterStoreId=${requester} targetStoreId=${storeId}`
-    );
+    ) as Error & { code?: string; policyAuditEventId?: string };
     error.code = "PERSONALIZATION_POLICY_DENY";
     error.policyAuditEventId = auditEvent.auditEventId;
     throw error;
@@ -3569,7 +3666,7 @@ function ensureRecallAuthorizationForOperation(
   };
 }
 
-function appendPolicyAuditTrail(state, rawEvent) {
+function appendPolicyAuditTrail(state: any, rawEvent: any) {
   const event = isPlainObject(rawEvent) ? rawEvent : {};
   const timestamp = normalizeIsoTimestampOrFallback(
     event.timestamp,
@@ -3612,7 +3709,7 @@ function appendPolicyAuditTrail(state, rawEvent) {
   const existing = Array.isArray(state.policyAuditTrail)
     ? state.policyAuditTrail
     : [];
-  if (existing.some((entry) => entry?.auditEventId === auditEventId)) {
+  if (existing.some((entry: any) => entry?.auditEventId === auditEventId)) {
     state.policyAuditTrail = sortByTimestampAndId(
       existing,
       "timestamp",
@@ -3629,7 +3726,7 @@ function appendPolicyAuditTrail(state, rawEvent) {
   return nextEvent;
 }
 
-function addDaysToIso(baseIso, days) {
+function addDaysToIso(baseIso: any, days: any) {
   const parsed = Date.parse(baseIso);
   if (!Number.isFinite(parsed)) {
     return baseIso;
@@ -3640,7 +3737,7 @@ function addDaysToIso(baseIso, days) {
   ).toISOString();
 }
 
-function addHoursToIso(baseIso, hours) {
+function addHoursToIso(baseIso: any, hours: any) {
   const parsed = Date.parse(baseIso);
   if (!Number.isFinite(parsed)) {
     return baseIso;
@@ -3651,7 +3748,7 @@ function addHoursToIso(baseIso, hours) {
   ).toISOString();
 }
 
-function detectPromptInjection(statement) {
+function detectPromptInjection(statement: any) {
   const normalized = typeof statement === "string" ? statement.trim() : "";
   if (!normalized) {
     return [];
@@ -3662,10 +3759,10 @@ function detectPromptInjection(statement) {
       matches.push(rule.code);
     }
   }
-  return matches.sort((left, right) => left.localeCompare(right));
+  return matches.sort((left: any, right: any) => left.localeCompare(right));
 }
 
-function stableScore(value, fallback = 0) {
+function stableScore(value: any, fallback: any = 0) {
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) {
     return fallback;
@@ -3673,7 +3770,7 @@ function stableScore(value, fallback = 0) {
   return parsed;
 }
 
-function roundNumber(value, decimals = 6) {
+function roundNumber(value: any, decimals: any = 6) {
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) {
     return 0;
@@ -3684,7 +3781,7 @@ function roundNumber(value, decimals = 6) {
   return Math.round(parsed * factor) / factor;
 }
 
-function toFiniteNumber(value, fallback = 0) {
+function toFiniteNumber(value: any, fallback: any = 0) {
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) {
     return fallback;
@@ -3692,7 +3789,7 @@ function toFiniteNumber(value, fallback = 0) {
   return parsed;
 }
 
-function normalizeRecommendationWeights(value) {
+function normalizeRecommendationWeights(value: any) {
   const candidate = isPlainObject(value) ? value : {};
   const raw = {
     interest: Math.max(
@@ -3727,6 +3824,7 @@ function normalizeRecommendationWeights(value) {
   }
   const normalized = {
     interest: Number((raw.interest / total).toFixed(6)),
+    masteryGap: 0,
     due: Number((raw.due / total).toFixed(6)),
     evidence: Number((raw.evidence / total).toFixed(6)),
   };
@@ -3739,7 +3837,7 @@ function normalizeRecommendationWeights(value) {
   return stableSortObject(normalized);
 }
 
-function isoAgeDays(referenceAt, targetAt) {
+function isoAgeDays(referenceAt: any, targetAt: any) {
   const referenceMs = Date.parse(referenceAt);
   const targetMs = Date.parse(targetAt);
   if (!Number.isFinite(referenceMs) || !Number.isFinite(targetMs)) {
@@ -3752,10 +3850,10 @@ function isoAgeDays(referenceAt, targetAt) {
 }
 
 function buildFreshnessAndDecayMetadata(
-  planItem,
-  referenceAt,
-  freshnessWarningDays,
-  decayWarningDays
+  planItem: any,
+  referenceAt: any,
+  freshnessWarningDays: any,
+  decayWarningDays: any
 ) {
   const referencePoint = normalizeIsoTimestampOrFallback(
     planItem.updatedAt ?? planItem.dueAt ?? planItem.createdAt,
@@ -3777,14 +3875,19 @@ function buildFreshnessAndDecayMetadata(
     ageDays,
     stale,
     decayed,
-    warningCodes: warningCodes.sort((left, right) => left.localeCompare(right)),
+    warningCodes: warningCodes.sort((left: any, right: any) =>
+      left.localeCompare(right)
+    ),
     freshnessWarningDays,
     decayWarningDays,
     decayPenalty,
   };
 }
 
-function estimateRecommendationTokenCost(planItem, provenancePointers) {
+function estimateRecommendationTokenCost(
+  planItem: any,
+  provenancePointers: any
+) {
   const objectiveText = String(planItem?.objectiveId ?? "");
   const metadataLength = stableStringify(planItem?.metadata ?? {}).length;
   const estimate =
@@ -3795,32 +3898,48 @@ function estimateRecommendationTokenCost(planItem, provenancePointers) {
   return Math.max(24, estimate);
 }
 
-function resolveMisconceptionDecayStage(harmfulSignalCount) {
+function resolveMisconceptionDecayStage(harmfulSignalCount: any) {
   const count = toNonNegativeInteger(harmfulSignalCount, 0);
-  if (count < MISCONCEPTION_DECAY_STAGE_THRESHOLDS[0]) {
+  if (
+    count <
+    (MISCONCEPTION_DECAY_STAGE_THRESHOLDS[0] ?? Number.POSITIVE_INFINITY)
+  ) {
     return 0;
   }
-  if (count < MISCONCEPTION_DECAY_STAGE_THRESHOLDS[1]) {
+  if (
+    count <
+    (MISCONCEPTION_DECAY_STAGE_THRESHOLDS[1] ?? Number.POSITIVE_INFINITY)
+  ) {
     return 1;
   }
-  if (count < MISCONCEPTION_DECAY_STAGE_THRESHOLDS[2]) {
+  if (
+    count <
+    (MISCONCEPTION_DECAY_STAGE_THRESHOLDS[2] ?? Number.POSITIVE_INFINITY)
+  ) {
     return 2;
   }
-  if (count < MISCONCEPTION_DECAY_STAGE_THRESHOLDS[3]) {
+  if (
+    count <
+    (MISCONCEPTION_DECAY_STAGE_THRESHOLDS[3] ?? Number.POSITIVE_INFINITY)
+  ) {
     return 3;
   }
   return 4;
 }
 
 function resolveMisconceptionConfidenceShift(
-  signal,
-  harmfulSignalCount,
-  severity
+  signal: any,
+  harmfulSignalCount: any,
+  severity: any
 ) {
   const decayStage = resolveMisconceptionDecayStage(harmfulSignalCount);
   if (signal !== "harmful") {
+    const nonHarmfulSignal: keyof typeof MISCONCEPTION_SIGNAL_BASE_DELTA =
+      signal === "helpful" || signal === "correction" || signal === "harmful"
+        ? signal
+        : "harmful";
     return {
-      delta: MISCONCEPTION_SIGNAL_BASE_DELTA[signal] ?? 0,
+      delta: MISCONCEPTION_SIGNAL_BASE_DELTA[nonHarmfulSignal] ?? 0,
       stage: decayStage,
       accelerated: false,
       accelerationMultiplier: 1,
@@ -3845,7 +3964,7 @@ function resolveMisconceptionConfidenceShift(
   };
 }
 
-function buildMisconceptionAntiPatterns(record) {
+function buildMisconceptionAntiPatterns(record: any) {
   const harmfulSignalCount = toNonNegativeInteger(
     record?.harmfulSignalCount,
     0
@@ -3867,7 +3986,8 @@ function buildMisconceptionAntiPatterns(record) {
     index < MISCONCEPTION_ANTI_PATTERN_THRESHOLDS.length;
     index += 1
   ) {
-    const threshold = MISCONCEPTION_ANTI_PATTERN_THRESHOLDS[index];
+    const threshold =
+      MISCONCEPTION_ANTI_PATTERN_THRESHOLDS[index] ?? Number.POSITIVE_INFINITY;
     if (harmfulSignalCount < threshold) {
       continue;
     }
@@ -3895,7 +4015,7 @@ function buildMisconceptionAntiPatterns(record) {
       ),
     });
   }
-  return antiPatterns.sort((left, right) =>
+  return antiPatterns.sort((left: any, right: any) =>
     compareByIsoTimestampThenId(
       left.activatedAt,
       left.antiPatternId,
@@ -3905,7 +4025,7 @@ function buildMisconceptionAntiPatterns(record) {
   );
 }
 
-function summarizeCurriculumConflictChanges(previous, next) {
+function summarizeCurriculumConflictChanges(previous: any, next: any) {
   const watchedFields = [
     "status",
     "recommendationRank",
@@ -3922,14 +4042,16 @@ function summarizeCurriculumConflictChanges(previous, next) {
       changedFields.push(field);
     }
   }
-  return changedFields.sort((left, right) => left.localeCompare(right));
+  return changedFields.sort((left: any, right: any) =>
+    left.localeCompare(right)
+  );
 }
 
-function appendCurriculumConflictNote(state, conflictNote) {
+function appendCurriculumConflictNote(state: any, conflictNote: any) {
   const existing = Array.isArray(state.curriculumConflictHistory)
     ? state.curriculumConflictHistory
     : [];
-  if (existing.some((entry) => entry?.noteId === conflictNote.noteId)) {
+  if (existing.some((entry: any) => entry?.noteId === conflictNote.noteId)) {
     state.curriculumConflictHistory = sortByTimestampAndId(
       existing,
       "timestamp",
@@ -3945,7 +4067,7 @@ function appendCurriculumConflictNote(state, conflictNote) {
   return conflictNote;
 }
 
-function summarizeMisconceptionChanges(previous, next) {
+function summarizeMisconceptionChanges(previous: any, next: any) {
   const watchedFields = [
     "status",
     "signal",
@@ -3963,14 +4085,16 @@ function summarizeMisconceptionChanges(previous, next) {
       changedFields.push(field);
     }
   }
-  return changedFields.sort((left, right) => left.localeCompare(right));
+  return changedFields.sort((left: any, right: any) =>
+    left.localeCompare(right)
+  );
 }
 
-function appendMisconceptionChronologyNote(state, chronologyNote) {
+function appendMisconceptionChronologyNote(state: any, chronologyNote: any) {
   const existing = Array.isArray(state.misconceptionChronologyHistory)
     ? state.misconceptionChronologyHistory
     : [];
-  if (existing.some((entry) => entry?.noteId === chronologyNote.noteId)) {
+  if (existing.some((entry: any) => entry?.noteId === chronologyNote.noteId)) {
     state.misconceptionChronologyHistory = sortByTimestampAndId(
       existing,
       "timestamp",
@@ -3986,7 +4110,7 @@ function appendMisconceptionChronologyNote(state, chronologyNote) {
   return chronologyNote;
 }
 
-function createEmptyLearnerProfileSeed(incoming) {
+function createEmptyLearnerProfileSeed(incoming: any) {
   return {
     profileId: incoming.profileId,
     learnerId: incoming.learnerId,
@@ -4013,15 +4137,15 @@ function createEmptyLearnerProfileSeed(incoming) {
 }
 
 function upsertDeterministicRecord(
-  records,
-  idField,
-  record,
-  timestampField = "createdAt"
+  records: any,
+  idField: any,
+  record: any,
+  timestampField: any = "createdAt"
 ) {
   const source = Array.isArray(records) ? records : [];
   const identifier = record?.[idField];
   const existingIndex = source.findIndex(
-    (entry) => entry?.[idField] === identifier
+    (entry: any) => entry?.[idField] === identifier
   );
   if (existingIndex !== -1) {
     const existing = source[existingIndex];
@@ -4051,7 +4175,11 @@ function upsertDeterministicRecord(
   };
 }
 
-function normalizePainSignalIngestRequest(request, storeId, profile) {
+function normalizePainSignalIngestRequest(
+  request: any,
+  storeId: any,
+  profile: any
+) {
   const misconceptionKey = requireNonEmptyString(
     request.misconceptionKey ?? request.targetId ?? request.targetRuleId,
     "misconceptionKey"
@@ -4129,7 +4257,11 @@ function normalizePainSignalIngestRequest(request, storeId, profile) {
   };
 }
 
-function normalizeFailureSignalIngestRequest(request, storeId, profile) {
+function normalizeFailureSignalIngestRequest(
+  request: any,
+  storeId: any,
+  profile: any
+) {
   const misconceptionKey = requireNonEmptyString(
     request.misconceptionKey ?? request.targetId ?? request.targetRuleId,
     "misconceptionKey"
@@ -4156,7 +4288,9 @@ function normalizeFailureSignalIngestRequest(request, storeId, profile) {
   );
   const severity = clamp01(
     request.severity,
-    FAILURE_SIGNAL_DEFAULT_SEVERITY[failureType] ?? 0.75
+    FAILURE_SIGNAL_DEFAULT_SEVERITY[
+      failureType as keyof typeof FAILURE_SIGNAL_DEFAULT_SEVERITY
+    ] ?? 0.75
   );
   const pressureDelta = Number(
     (severity * Math.max(1, failureCount) * 0.2).toFixed(4)
@@ -4211,7 +4345,11 @@ function normalizeFailureSignalIngestRequest(request, storeId, profile) {
   };
 }
 
-function normalizeIncidentEscalationSignalRequest(request, storeId, profile) {
+function normalizeIncidentEscalationSignalRequest(
+  request: any,
+  storeId: any,
+  profile: any
+) {
   const severity = normalizeDeterministicEnum(
     request.severity ?? request.escalationSeverity ?? request.level,
     "severity",
@@ -4326,7 +4464,11 @@ function normalizeIncidentEscalationSignalRequest(request, storeId, profile) {
   };
 }
 
-function normalizeManualQuarantineOverrideRequest(request, storeId, profile) {
+function normalizeManualQuarantineOverrideRequest(
+  request: any,
+  storeId: any,
+  profile: any
+) {
   const overrideAction = normalizeDeterministicEnum(
     request.action ?? request.overrideAction ?? request.controlAction,
     "action",
@@ -4431,7 +4573,7 @@ function normalizeManualQuarantineOverrideRequest(request, storeId, profile) {
   };
 }
 
-function normalizeCurriculumRecommendationRequest(request) {
+function normalizeCurriculumRecommendationRequest(request: any) {
   const referenceAt = normalizeIsoTimestamp(
     request.referenceAt ?? request.timestamp ?? request.generatedAt,
     "curriculum_recommendation.referenceAt",
@@ -4495,7 +4637,7 @@ function normalizeCurriculumRecommendationRequest(request) {
   };
 }
 
-function normalizeReviewScheduleClockRequest(request) {
+function normalizeReviewScheduleClockRequest(request: any) {
   const mode = normalizeDeterministicEnum(
     request.mode ?? request.clockMode,
     "mode",
@@ -4551,7 +4693,7 @@ function normalizeReviewScheduleClockRequest(request) {
   };
 }
 
-function normalizeReviewSetRebalanceRequest(request) {
+function normalizeReviewSetRebalanceRequest(request: any) {
   const activeLimit = Math.min(
     Math.max(
       toPositiveInteger(
@@ -4573,7 +4715,7 @@ function normalizeReviewSetRebalanceRequest(request) {
   };
 }
 
-function normalizeRecallAuthorizationRequest(request, storeId) {
+function normalizeRecallAuthorizationRequest(request: any, storeId: any) {
   const mode = normalizeDeterministicEnum(
     request.mode,
     "mode",
@@ -4609,7 +4751,7 @@ function normalizeRecallAuthorizationRequest(request, storeId) {
   };
 }
 
-function normalizeTutorDegradedRequest(request) {
+function normalizeTutorDegradedRequest(request: any) {
   const query =
     typeof request.query === "string" ? request.query.trim().toLowerCase() : "";
   const maxSuggestions = Math.min(
@@ -4634,7 +4776,7 @@ function normalizeTutorDegradedRequest(request) {
   };
 }
 
-function intersectionCount(left, right) {
+function intersectionCount(left: any, right: any) {
   const rightSet = new Set(Array.isArray(right) ? right : []);
   let count = 0;
   for (const value of Array.isArray(left) ? left : []) {
@@ -4645,7 +4787,7 @@ function intersectionCount(left, right) {
   return count;
 }
 
-function runIngest(request) {
+function runIngest(request: any) {
   const { storeId, profile, input } = normalizeRequest("ingest", request);
   const state = getProfileState(storeId, profile);
   const events = Array.isArray(request.events) ? request.events : [];
@@ -4675,7 +4817,7 @@ function runIngest(request) {
   }
 
   const ledgerDigest = hash(
-    stableStringify(state.events.map((event) => event.digest))
+    stableStringify(state.events.map((event: any) => event.digest))
   );
 
   return {
@@ -4687,7 +4829,7 @@ function runIngest(request) {
   };
 }
 
-function runContext(request) {
+function runContext(request: any) {
   const { storeId, profile, input } = normalizeRequest("context", request);
   const state = getProfileState(storeId, profile);
   const requestTimestamp = normalizeIsoTimestamp(
@@ -4721,15 +4863,15 @@ function runContext(request) {
   );
 
   const matched = state.events
-    .map((event) => {
+    .map((event: any) => {
       const content =
         `${event.type} ${event.source} ${event.content}`.toLowerCase();
       const match = query ? content.includes(query) : true;
       return { event, match };
     })
-    .filter((item) => item.match)
+    .filter((item: any) => item.match)
     .slice(0, limit)
-    .map((item) => ({
+    .map((item: any) => ({
       eventId: item.event.eventId,
       type: item.event.type,
       source: item.event.source,
@@ -4743,7 +4885,7 @@ function runContext(request) {
         "noteId"
       )
     : [];
-  const scoredChronology = chronologyHistory.map((note) => {
+  const scoredChronology = chronologyHistory.map((note: any) => {
     const searchable =
       `${note.misconceptionKey ?? ""} ${(note.changedFields ?? []).join(" ")}`.toLowerCase();
     const relevance =
@@ -4757,7 +4899,7 @@ function runContext(request) {
     };
   });
   const prioritizedChronology = scoredChronology
-    .sort((left, right) => {
+    .sort((left: any, right: any) => {
       if (right.relevance !== left.relevance) {
         return right.relevance - left.relevance;
       }
@@ -4772,7 +4914,7 @@ function runContext(request) {
       );
     })
     .slice(0, chronologyLimit)
-    .map((entry) => ({
+    .map((entry: any) => ({
       noteId: entry.note.noteId,
       misconceptionId: entry.note.misconceptionId,
       misconceptionKey: entry.note.misconceptionKey,
@@ -4792,7 +4934,7 @@ function runContext(request) {
     "noteId"
   );
   const chronologyFormatting = orderedChronology.map(
-    (note, index) =>
+    (note: any, index: any) =>
       `${index + 1}. ${note.timestamp} ${note.misconceptionKey} -> ${note.changedFields.join("|")}`
   );
 
@@ -4808,7 +4950,7 @@ function runContext(request) {
         }
       : null,
     matches: matched,
-    rules: state.rules.slice(0, 5).map((rule) => ({
+    rules: state.rules.slice(0, 5).map((rule: any) => ({
       ruleId: rule.ruleId,
       statement: rule.statement,
       confidence: rule.confidence,
@@ -4827,14 +4969,14 @@ function runContext(request) {
   };
 }
 
-function runReflect(request) {
+function runReflect(request: any) {
   const { storeId, profile, input } = normalizeRequest("reflect", request);
   const state = getProfileState(storeId, profile);
   const max =
     Number.isInteger(request.maxCandidates) && request.maxCandidates > 0
       ? request.maxCandidates
       : 3;
-  const candidates = state.events.slice(-max).map((event) => {
+  const candidates = state.events.slice(-max).map((event: any) => {
     const statement = `Prefer source=${event.source} for type=${event.type}`;
     const normalized = normalizeRuleCandidate({
       statement,
@@ -4851,17 +4993,18 @@ function runReflect(request) {
   };
 }
 
-function runValidate(request) {
+function runValidate(request: any) {
   const { storeId, profile, input } = normalizeRequest("validate", request);
   const state = getProfileState(storeId, profile);
   const rawCandidates = Array.isArray(request.candidates)
     ? request.candidates
     : [];
   const candidates = rawCandidates.map(normalizeRuleCandidate);
-  const validations = candidates.map((candidate) => {
+  const validations = candidates.map((candidate: any) => {
     const evidence =
-      state.events.find((event) => event.eventId === candidate.sourceEventId) ??
-      null;
+      state.events.find(
+        (event: any) => event.eventId === candidate.sourceEventId
+      ) ?? null;
     return {
       candidateId: candidate.candidateId,
       valid: Boolean(evidence && candidate.statement),
@@ -4877,7 +5020,7 @@ function runValidate(request) {
   };
 }
 
-function runCurate(request) {
+function runCurate(request: any) {
   const { storeId, profile, input } = normalizeRequest("curate", request);
   const state = getProfileState(storeId, profile);
   const rawCandidates = Array.isArray(request.candidates)
@@ -4896,7 +5039,7 @@ function runCurate(request) {
       continue;
     }
     const existing = state.rules.find(
-      (rule) => rule.ruleId === candidate.candidateId
+      (rule: any) => rule.ruleId === candidate.candidateId
     );
     if (existing) {
       existing.statement = candidate.statement;
@@ -4927,7 +5070,7 @@ function runCurate(request) {
   };
 }
 
-function runShadowWrite(request) {
+function runShadowWrite(request: any) {
   const { storeId, profile, input } = normalizeRequest("shadow_write", request);
   const state = getProfileState(storeId, profile);
   const timestamp = normalizeIsoTimestamp(
@@ -5014,15 +5157,17 @@ function runShadowWrite(request) {
     "candidateId"
   );
   const createdCount = applied.filter(
-    (entry) => entry.action === "created"
+    (entry: any) => entry.action === "created"
   ).length;
   const updatedCount = applied.filter(
-    (entry) => entry.action === "updated"
+    (entry: any) => entry.action === "updated"
   ).length;
-  const noopCount = applied.filter((entry) => entry.action === "noop").length;
+  const noopCount = applied.filter(
+    (entry: any) => entry.action === "noop"
+  ).length;
   const meta = buildMeta("shadow_write", storeId, profile, input);
   const lifecycleCandidateIds = asSortedUniqueStrings(
-    applied.map((entry) => entry?.candidateId).filter(Boolean)
+    applied.map((entry: any) => entry?.candidateId).filter(Boolean)
   );
   const lifecycleMutatedCount = createdCount + updatedCount;
   const lifecycleAction =
@@ -5080,7 +5225,7 @@ function runShadowWrite(request) {
   };
 }
 
-function runReplayEval(request) {
+function runReplayEval(request: any) {
   const { storeId, profile, input } = normalizeRequest("replay_eval", request);
   const state = getProfileState(storeId, profile);
   const candidateId = requireNonEmptyString(request.candidateId, "candidateId");
@@ -5183,7 +5328,7 @@ function runReplayEval(request) {
     metadata: normalizeMetadata(request.metadata),
   };
   const existingIndex = state.replayEvaluations.findIndex(
-    (entry) => entry?.replayEvalId === replayEvalId
+    (entry: any) => entry?.replayEvalId === replayEvalId
   );
   let action = "created";
   if (existingIndex !== -1) {
@@ -5323,7 +5468,7 @@ function runReplayEval(request) {
   };
 }
 
-function runPromote(request) {
+function runPromote(request: any) {
   const { storeId, profile, input } = normalizeRequest("promote", request);
   const state = getProfileState(storeId, profile);
   const candidateId = requireNonEmptyString(request.candidateId, "candidateId");
@@ -5337,10 +5482,13 @@ function runPromote(request) {
     : [];
   const latestEvaluation =
     replayEvaluations.find(
-      (entry) => entry?.replayEvalId === resolved.candidate.latestReplayEvalId
+      (entry: any) =>
+        entry?.replayEvalId === resolved.candidate.latestReplayEvalId
     ) ??
     sortByTimestampAndId(
-      replayEvaluations.filter((entry) => entry?.candidateId === candidateId),
+      replayEvaluations.filter(
+        (entry: any) => entry?.candidateId === candidateId
+      ),
       "evaluatedAt",
       "replayEvalId"
     ).at(-1) ??
@@ -5386,7 +5534,13 @@ function runPromote(request) {
     evidenceNotExpired &&
     freshEvidenceAgeDays <= freshEvidenceWindowDays;
   if (!freshEvidencePass) {
-    const error = new Error(PROMOTE_FRESH_EVIDENCE_CONTRACT_ERROR);
+    const error = new Error(PROMOTE_FRESH_EVIDENCE_CONTRACT_ERROR) as Error & {
+      code?: string;
+      freshEvidenceWindowDays?: number;
+      freshEvidenceAgeDays?: number;
+      evidenceNotExpired?: boolean;
+      hasEvidenceLinks?: boolean;
+    };
     error.code = "PROMOTE_FRESH_EVIDENCE_STALE";
     error.freshEvidenceWindowDays = freshEvidenceWindowDays;
     error.freshEvidenceAgeDays = freshEvidenceAgeDays;
@@ -5428,7 +5582,7 @@ function runPromote(request) {
     updatedAt: promotedAt,
   };
   const existingRuleIndex = state.rules.findIndex(
-    (rule) => rule.ruleId === nextRule.ruleId
+    (rule: any) => rule.ruleId === nextRule.ruleId
   );
   let ruleAction = "created";
   if (existingRuleIndex !== -1) {
@@ -5502,7 +5656,7 @@ function runPromote(request) {
   };
 }
 
-function runDemote(request) {
+function runDemote(request: any) {
   const { storeId, profile, input } = normalizeRequest("demote", request);
   const state = getProfileState(storeId, profile);
   const candidateId = requireNonEmptyString(request.candidateId, "candidateId");
@@ -5661,7 +5815,7 @@ function runDemote(request) {
   };
 }
 
-function runAddWeight(request) {
+function runAddWeight(request: any) {
   const { storeId, profile, input } = normalizeRequest("addweight", request);
   const state = getProfileState(storeId, profile);
   const normalized = normalizeAddWeightRequest(request, storeId, profile);
@@ -5798,7 +5952,7 @@ function runAddWeight(request) {
   let ruleAction = "skipped";
   if (Array.isArray(state.rules)) {
     const existingRuleIndex = state.rules.findIndex(
-      (rule) => rule.ruleId === resolved.candidate.ruleId
+      (rule: any) => rule.ruleId === resolved.candidate.ruleId
     );
     if (existingRuleIndex !== -1) {
       const existingRule = state.rules[existingRuleIndex];
@@ -5878,7 +6032,7 @@ function runAddWeight(request) {
   };
 }
 
-function runLearnerProfileUpdate(request) {
+function runLearnerProfileUpdate(request: any) {
   const { storeId, profile, input } = normalizeRequest(
     "learner_profile_update",
     request
@@ -5891,7 +6045,7 @@ function runLearnerProfileUpdate(request) {
   );
   const meta = buildMeta("learner_profile_update", storeId, profile, input);
   const existingIndex = state.learnerProfiles.findIndex(
-    (learnerProfile) => learnerProfile.profileId === incoming.profileId
+    (learnerProfile: any) => learnerProfile.profileId === incoming.profileId
   );
   let action = "created";
   let next = mergeLearnerProfile(
@@ -5921,7 +6075,7 @@ function runLearnerProfileUpdate(request) {
   const lineageRevisionCount = Object.values(
     next.attributeLineage ?? {}
   ).reduce(
-    (accumulator, entries) =>
+    (accumulator: any, entries: any) =>
       accumulator + (Array.isArray(entries) ? entries.length : 0),
     0
   );
@@ -5949,7 +6103,7 @@ function runLearnerProfileUpdate(request) {
   };
 }
 
-function runIdentityGraphUpdate(request) {
+function runIdentityGraphUpdate(request: any) {
   const { storeId, profile, input } = normalizeRequest(
     "identity_graph_update",
     request
@@ -5962,7 +6116,7 @@ function runIdentityGraphUpdate(request) {
   );
   const meta = buildMeta("identity_graph_update", storeId, profile, input);
   const existingIndex = state.identityGraphEdges.findIndex(
-    (edge) => edge.edgeId === incoming.edgeId
+    (edge: any) => edge.edgeId === incoming.edgeId
   );
   let action = "created";
   let next = incoming;
@@ -6006,7 +6160,7 @@ function runIdentityGraphUpdate(request) {
   };
 }
 
-function runMisconceptionUpdate(request) {
+function runMisconceptionUpdate(request: any) {
   const { storeId, profile, input } = normalizeRequest(
     "misconception_update",
     request
@@ -6019,7 +6173,7 @@ function runMisconceptionUpdate(request) {
   );
   const meta = buildMeta("misconception_update", storeId, profile, input);
   const existingIndex = state.misconceptions.findIndex(
-    (record) => record.misconceptionId === incoming.misconceptionId
+    (record: any) => record.misconceptionId === incoming.misconceptionId
   );
   let action = "created";
   let next = incoming;
@@ -6101,12 +6255,12 @@ function runMisconceptionUpdate(request) {
         : 0,
       antiPatternEvidenceCount: new Set(
         (Array.isArray(next?.antiPatterns) ? next.antiPatterns : []).flatMap(
-          (entry) => entry.evidenceEventIds ?? []
+          (entry: any) => entry.evidenceEventIds ?? []
         )
       ).size,
       chronologyCount: Array.isArray(state.misconceptionChronologyHistory)
         ? state.misconceptionChronologyHistory.filter(
-            (entry) => entry.misconceptionId === next.misconceptionId
+            (entry: any) => entry.misconceptionId === next.misconceptionId
           ).length
         : 0,
       storeIsolationEnforced: true,
@@ -6119,7 +6273,7 @@ function runMisconceptionUpdate(request) {
   };
 }
 
-function runCurriculumPlanUpdate(request) {
+function runCurriculumPlanUpdate(request: any) {
   const { storeId, profile, input } = normalizeRequest(
     "curriculum_plan_update",
     request
@@ -6132,7 +6286,7 @@ function runCurriculumPlanUpdate(request) {
   );
   const meta = buildMeta("curriculum_plan_update", storeId, profile, input);
   const existingIndex = state.curriculumPlanItems.findIndex(
-    (item) => item.planItemId === incoming.planItemId
+    (item: any) => item.planItemId === incoming.planItemId
   );
   let action = "created";
   let next = incoming;
@@ -6204,7 +6358,7 @@ function runCurriculumPlanUpdate(request) {
       boundedRecommendationRank: next.recommendationRank,
       conflictChronologyCount: Array.isArray(state.curriculumConflictHistory)
         ? state.curriculumConflictHistory.filter(
-            (entry) => entry.planItemId === next.planItemId
+            (entry: any) => entry.planItemId === next.planItemId
           ).length
         : 0,
       slo: buildSloObservability(
@@ -6216,7 +6370,7 @@ function runCurriculumPlanUpdate(request) {
   };
 }
 
-function runReviewScheduleUpdate(request) {
+function runReviewScheduleUpdate(request: any) {
   const { storeId, profile, input } = normalizeRequest(
     "review_schedule_update",
     request
@@ -6229,7 +6383,7 @@ function runReviewScheduleUpdate(request) {
   );
   const meta = buildMeta("review_schedule_update", storeId, profile, input);
   const existingIndex = state.reviewScheduleEntries.findIndex(
-    (entry) => entry.scheduleEntryId === incoming.scheduleEntryId
+    (entry: any) => entry.scheduleEntryId === incoming.scheduleEntryId
   );
   let action = "created";
   let next = incoming;
@@ -6269,7 +6423,7 @@ function runReviewScheduleUpdate(request) {
   };
 }
 
-function runPolicyDecisionUpdate(request) {
+function runPolicyDecisionUpdate(request: any) {
   const { storeId, profile, input } = normalizeRequest(
     "policy_decision_update",
     request
@@ -6290,7 +6444,7 @@ function runPolicyDecisionUpdate(request) {
   );
   const meta = buildMeta("policy_decision_update", storeId, profile, input);
   const existingIndex = state.policyDecisions.findIndex(
-    (decision) => decision.decisionId === pluginAwareIncoming.decisionId
+    (decision: any) => decision.decisionId === pluginAwareIncoming.decisionId
   );
   let action = "created";
   let next = pluginAwareIncoming;
@@ -6349,7 +6503,7 @@ function runPolicyDecisionUpdate(request) {
   };
 }
 
-function runPainSignalIngest(request) {
+function runPainSignalIngest(request: any) {
   const { storeId, profile, input } = normalizeRequest(
     "pain_signal_ingest",
     request
@@ -6447,7 +6601,7 @@ function runPainSignalIngest(request) {
   };
 }
 
-function runFailureSignalIngest(request) {
+function runFailureSignalIngest(request: any) {
   const { storeId, profile, input } = normalizeRequest(
     "failure_signal_ingest",
     request
@@ -6564,14 +6718,14 @@ function runFailureSignalIngest(request) {
 }
 
 function applyManualPromotionOverride(
-  state,
+  state: any,
   {
     overrideControlId,
     reasonCodes = [],
     targetCandidateIds = [],
     targetRuleIds = [],
     recordedAt = DEFAULT_VERSION_TIMESTAMP,
-  } = {}
+  }: any = {}
 ) {
   const normalizedReasonCodes = mergeStringLists(reasonCodes, [
     "manual_override_promote",
@@ -6635,7 +6789,7 @@ function applyManualPromotionOverride(
 
     let ruleAction = "created";
     const existingRuleIndex = state.rules.findIndex(
-      (rule) => rule?.ruleId === nextCandidate.ruleId
+      (rule: any) => rule?.ruleId === nextCandidate.ruleId
     );
     if (existingRuleIndex !== -1) {
       const existingRule = state.rules[existingRuleIndex];
@@ -6714,7 +6868,7 @@ function applyManualPromotionOverride(
 }
 
 function applyIncidentEscalationQuarantine(
-  state,
+  state: any,
   {
     escalationSignalId,
     severity,
@@ -6723,7 +6877,7 @@ function applyIncidentEscalationQuarantine(
     targetRuleIds = [],
     triggerReasonCode = "incident_quarantine_triggered",
     recordedAt = DEFAULT_VERSION_TIMESTAMP,
-  } = {}
+  }: any = {}
 ) {
   const normalizedReasonCodes = mergeStringLists(reasonCodes, [
     triggerReasonCode,
@@ -6789,7 +6943,7 @@ function applyIncidentEscalationQuarantine(
       continue;
     }
     const existingRuleIndex = state.rules.findIndex(
-      (rule) => rule?.ruleId === ruleId
+      (rule: any) => rule?.ruleId === ruleId
     );
     if (existingRuleIndex === -1) {
       missingRuleIds.push(ruleId);
@@ -6847,7 +7001,7 @@ function applyIncidentEscalationQuarantine(
   };
 }
 
-function runManualQuarantineOverride(request) {
+function runManualQuarantineOverride(request: any) {
   const { storeId, profile, input } = normalizeRequest(
     "manual_quarantine_override",
     request
@@ -6886,7 +7040,7 @@ function runManualQuarantineOverride(request) {
       ? "manual_override_promote"
       : "manual_override_suppress",
   ]);
-  const overrideExecution =
+  const overrideExecution: any =
     normalized.overrideAction === "promote"
       ? applyManualPromotionOverride(state, {
           overrideControlId: normalized.overrideControlId,
@@ -7005,7 +7159,7 @@ function runManualQuarantineOverride(request) {
   };
 }
 
-function runIncidentEscalationSignal(request) {
+function runIncidentEscalationSignal(request: any) {
   const { storeId, profile, input } = normalizeRequest(
     "incident_escalation_signal",
     request
@@ -7152,7 +7306,7 @@ function runIncidentEscalationSignal(request) {
   };
 }
 
-function runCurriculumRecommendation(request) {
+function runCurriculumRecommendation(request: any) {
   const { storeId, profile, input } = normalizeRequest(
     "curriculum_recommendation",
     request
@@ -7174,11 +7328,14 @@ function runCurriculumRecommendation(request) {
     sortByTimestampAndId(state.learnerProfiles, "updatedAt", "profileId").at(
       -1
     ) ?? null;
-  const misconceptionsById = new Map(
-    state.misconceptions.map((record) => [
+  const misconceptionsById = new Map<
+    string,
+    { status: string; confidence: number; harmfulSignalCount: number }
+  >(
+    state.misconceptions.map((record: any) => [
       record.misconceptionId,
       {
-        status: record.status,
+        status: normalizeBoundedStringLenient(record.status, 32) ?? "active",
         confidence: clamp01(record.confidence, 0.5),
         harmfulSignalCount: toNonNegativeInteger(record.harmfulSignalCount, 0),
       },
@@ -7196,7 +7353,7 @@ function runCurriculumRecommendation(request) {
     1
   );
 
-  const planCandidates = state.curriculumPlanItems.filter((item) => {
+  const planCandidates = state.curriculumPlanItems.filter((item: any) => {
     if (
       !Array.isArray(item?.evidenceEventIds) ||
       item.evidenceEventIds.length === 0
@@ -7212,20 +7369,20 @@ function runCurriculumRecommendation(request) {
     return true;
   });
 
-  const scoredRecommendations = planCandidates.map((item) => {
+  const scoredRecommendations = planCandidates.map((item: any) => {
     const dueLinkedEntries = state.reviewScheduleEntries.filter(
-      (entry) =>
+      (entry: any) =>
         entry.targetId === item.objectiveId ||
         entry.targetId === item.planItemId
     );
     const dueScore = dueLinkedEntries.reduce(
-      (score, entry) =>
+      (score: any, entry: any) =>
         score +
         (entry.status === "due" ? 12 : entry.status === "scheduled" ? 4 : 0),
       0
     );
     const misconceptionLinks = (item.sourceMisconceptionIds ?? [])
-      .map((misconceptionId) => {
+      .map((misconceptionId: any) => {
         const linked = misconceptionsById.get(misconceptionId);
         if (!linked) {
           return null;
@@ -7246,7 +7403,7 @@ function runCurriculumRecommendation(request) {
     const masteryGapRaw =
       misconceptionLinks.length === 0
         ? 0.4
-        : misconceptionLinks.reduce((score, linked) => {
+        : misconceptionLinks.reduce((score: any, linked: any) => {
             const statusMultiplier = linked.status === "resolved" ? 0.45 : 1;
             const harmfulBoost =
               1 + Math.min(linked.harmfulSignalCount, 5) * 0.12;
@@ -7295,17 +7452,17 @@ function runCurriculumRecommendation(request) {
     );
 
     const provenancePointers = normalizeEvidencePointers([
-      ...(item.evidenceEventIds ?? []).map((pointerId) => ({
+      ...(item.evidenceEventIds ?? []).map((pointerId: any) => ({
         pointerId,
         kind: "event",
         source: "curriculum_plan_item",
       })),
-      ...(item.provenanceSignalIds ?? []).map((pointerId) => ({
+      ...(item.provenanceSignalIds ?? []).map((pointerId: any) => ({
         pointerId,
         kind: "signal",
         source: "curriculum_plan_item",
       })),
-      ...(item.sourceMisconceptionIds ?? []).map((pointerId) => ({
+      ...(item.sourceMisconceptionIds ?? []).map((pointerId: any) => ({
         pointerId,
         kind: "artifact",
         source: "misconception",
@@ -7313,12 +7470,12 @@ function runCurriculumRecommendation(request) {
     ]);
     const conflictChronology = conflictHistory
       .filter(
-        (entry) =>
+        (entry: any) =>
           entry.planItemId === item.planItemId &&
           entry.profileId === item.profileId
       )
       .slice(-normalized.maxConflictNotes)
-      .map((entry) => ({
+      .map((entry: any) => ({
         noteId: entry.noteId,
         timestamp: entry.timestamp,
         profileId: entry.profileId,
@@ -7375,7 +7532,7 @@ function runCurriculumRecommendation(request) {
         score,
         provenancePointers,
         freshness,
-        conflictNoteIds: conflictChronology.map((entry) => entry.noteId),
+        conflictNoteIds: conflictChronology.map((entry: any) => entry.noteId),
         rationale,
       })
     );
@@ -7407,7 +7564,7 @@ function runCurriculumRecommendation(request) {
   });
 
   const orderedRecommendations = [...scoredRecommendations].sort(
-    (left, right) => {
+    (left: any, right: any) => {
       const scoreDiff =
         stableScore(right.score, 0) - stableScore(left.score, 0);
       if (scoreDiff !== 0) {
@@ -7435,11 +7592,11 @@ function runCurriculumRecommendation(request) {
   }
   const conflictChronology = sortByTimestampAndId(
     recommendations
-      .flatMap((recommendation) => recommendation.conflictChronology)
+      .flatMap((recommendation: any) => recommendation.conflictChronology)
       .filter(
-        (entry, index, entries) =>
+        (entry: any, index: any, entries: any) =>
           entries.findIndex(
-            (candidate) => candidate.noteId === entry.noteId
+            (candidate: any) => candidate.noteId === entry.noteId
           ) === index
       ),
     "timestamp",
@@ -7454,7 +7611,7 @@ function runCurriculumRecommendation(request) {
         referenceAt: normalized.referenceAt,
         maxRecommendations: normalized.maxRecommendations,
         recommendationDigests: recommendations.map(
-          (recommendation) => recommendation.digest
+          (recommendation: any) => recommendation.digest
         ),
       })
     )
@@ -7464,7 +7621,7 @@ function runCurriculumRecommendation(request) {
     generatedAt: normalized.referenceAt,
     requestDigest: meta.requestDigest,
     recommendationIds: recommendations.map(
-      (recommendation) => recommendation.recommendationId
+      (recommendation: any) => recommendation.recommendationId
     ),
     recommendations,
     metadata: stableSortObject({
@@ -7544,7 +7701,7 @@ function runCurriculumRecommendation(request) {
       candidateCount: scoredRecommendations.length,
       returnedCount: recommendations.length,
       evidenceBackedCount: recommendations.filter(
-        (recommendation) => recommendation.provenancePointers.length > 0
+        (recommendation: any) => recommendation.provenancePointers.length > 0
       ).length,
       boundedBy: normalized.maxRecommendations,
       boundedByTokenBudget: skippedByTokenBudget > 0,
@@ -7554,7 +7711,7 @@ function runCurriculumRecommendation(request) {
       freshnessWarningDays: normalized.freshnessWarningDays,
       decayWarningDays: normalized.decayWarningDays,
       warningCount: recommendations.reduce(
-        (count, recommendation) =>
+        (count: any, recommendation: any) =>
           count + recommendation.freshness.warningCodes.length,
         0
       ),
@@ -7570,10 +7727,10 @@ function runCurriculumRecommendation(request) {
 }
 
 function rebalanceReviewSet(
-  state,
-  storeId,
-  profile,
-  { activeLimit, timestamp }
+  state: any,
+  storeId: any,
+  profile: any,
+  { activeLimit, timestamp }: any
 ) {
   const previousEntriesDigest = hash(
     stableStringify(state.reviewScheduleEntries)
@@ -7583,7 +7740,7 @@ function rebalanceReviewSet(
   );
   const tiers = getOrCreateReviewArchivalTiers(state);
   const orderedEntries = [...state.reviewScheduleEntries].sort(
-    (left, right) => {
+    (left: any, right: any) => {
       const dueDiff = String(left?.dueAt ?? "").localeCompare(
         String(right?.dueAt ?? "")
       );
@@ -7603,16 +7760,16 @@ function rebalanceReviewSet(
   );
 
   const activeCandidates = orderedEntries.filter(
-    (entry) => entry.status === "due" || entry.status === "scheduled"
+    (entry: any) => entry.status === "due" || entry.status === "scheduled"
   );
   const activeReviewIds = activeCandidates
     .slice(0, activeLimit)
-    .map((entry) => entry.scheduleEntryId);
+    .map((entry: any) => entry.scheduleEntryId);
   const activeIdSet = new Set(activeReviewIds);
   const overflow = orderedEntries.filter(
-    (entry) => !activeIdSet.has(entry.scheduleEntryId)
+    (entry: any) => !activeIdSet.has(entry.scheduleEntryId)
   );
-  const tieredIds = {
+  const tieredIds: Record<"warm" | "cold" | "frozen", string[]> = {
     warm: [],
     cold: [],
     frozen: [],
@@ -7626,7 +7783,7 @@ function rebalanceReviewSet(
       Number.isFinite(now) && Number.isFinite(dueMs)
         ? Math.floor((now - dueMs) / (24 * 60 * 60 * 1000))
         : 0;
-    let tier = "warm";
+    let tier: keyof typeof tieredIds = "warm";
     if (entry.status === "completed" || ageDays >= 90) {
       tier = "cold";
     }
@@ -7663,33 +7820,39 @@ function rebalanceReviewSet(
     });
   }
 
-  state.reviewScheduleEntries = state.reviewScheduleEntries.map((entry) => {
-    const archivalTier = activeIdSet.has(entry.scheduleEntryId)
-      ? "active"
-      : tieredIds.warm.includes(entry.scheduleEntryId)
-        ? "warm"
-        : tieredIds.cold.includes(entry.scheduleEntryId)
-          ? "cold"
-          : tieredIds.frozen.includes(entry.scheduleEntryId)
-            ? "frozen"
-            : "warm";
-    return {
-      ...entry,
-      metadata: stableSortObject({
-        ...entry.metadata,
-        archivalTier,
-        activeReview: activeIdSet.has(entry.scheduleEntryId),
-        rebalancedAt: timestamp,
-      }),
-    };
-  });
+  state.reviewScheduleEntries = state.reviewScheduleEntries.map(
+    (entry: any) => {
+      const archivalTier = activeIdSet.has(entry.scheduleEntryId)
+        ? "active"
+        : tieredIds.warm.includes(entry.scheduleEntryId)
+          ? "warm"
+          : tieredIds.cold.includes(entry.scheduleEntryId)
+            ? "cold"
+            : tieredIds.frozen.includes(entry.scheduleEntryId)
+              ? "frozen"
+              : "warm";
+      return {
+        ...entry,
+        metadata: stableSortObject({
+          ...entry.metadata,
+          archivalTier,
+          activeReview: activeIdSet.has(entry.scheduleEntryId),
+          rebalancedAt: timestamp,
+        }),
+      };
+    }
+  );
 
   tiers.activeLimit = activeLimit;
   tiers.activeReviewIds = activeReviewIds;
   tiers.tiers = {
-    warm: [...tieredIds.warm].sort((left, right) => left.localeCompare(right)),
-    cold: [...tieredIds.cold].sort((left, right) => left.localeCompare(right)),
-    frozen: [...tieredIds.frozen].sort((left, right) =>
+    warm: [...tieredIds.warm].sort((left: any, right: any) =>
+      left.localeCompare(right)
+    ),
+    cold: [...tieredIds.cold].sort((left: any, right: any) =>
+      left.localeCompare(right)
+    ),
+    frozen: [...tieredIds.frozen].sort((left: any, right: any) =>
       left.localeCompare(right)
     ),
   };
@@ -7729,10 +7892,10 @@ function buildTemporalCandidateTickSummary() {
     unchangedCount: 0,
     floorReachedCount: 0,
     totalConfidenceDelta: 0,
-    decayedCandidateIds: [],
-    demotedCandidateIds: [],
-    expiredCandidateIds: [],
-    reasonCodes: [],
+    decayedCandidateIds: [] as string[],
+    demotedCandidateIds: [] as string[],
+    expiredCandidateIds: [] as string[],
+    reasonCodes: [] as string[],
     decayRatePerDay: SHADOW_CANDIDATE_CONFIDENCE_DECAY_PER_DAY,
     confidenceFloor: SHADOW_CANDIDATE_CONFIDENCE_FLOOR,
     deterministic: true,
@@ -7740,7 +7903,7 @@ function buildTemporalCandidateTickSummary() {
   };
 }
 
-function runTemporalCandidateMaintenanceTick(state, timestamp) {
+function runTemporalCandidateMaintenanceTick(state: any, timestamp: any) {
   const summary = buildTemporalCandidateTickSummary();
   const candidates = Array.isArray(state.shadowCandidates)
     ? state.shadowCandidates
@@ -7750,10 +7913,13 @@ function runTemporalCandidateMaintenanceTick(state, timestamp) {
     "updatedAt",
     "candidateId"
   )
-    .map((candidate) =>
+    .map((candidate: any) =>
       normalizeBoundedStringLenient(candidate?.candidateId, 64)
     )
-    .filter(Boolean);
+    .filter(
+      (candidateId: string | null): candidateId is string =>
+        typeof candidateId === "string" && candidateId.length > 0
+    );
   const visited = new Set();
 
   for (const candidateId of orderedCandidateIds) {
@@ -7898,7 +8064,7 @@ function runTemporalCandidateMaintenanceTick(state, timestamp) {
   };
 }
 
-function runReviewScheduleClock(request) {
+function runReviewScheduleClock(request: any) {
   const { storeId, profile, input } = normalizeRequest(
     "review_schedule_clock",
     request
@@ -7908,7 +8074,7 @@ function runReviewScheduleClock(request) {
   const meta = buildMeta("review_schedule_clock", storeId, profile, input);
   const clocks = getOrCreateSchedulerClocks(state);
   const previousClocksDigest = hash(stableStringify(clocks));
-  const transitions = [];
+  const transitions: Array<Record<string, unknown>> = [];
 
   clocks.sleepThreshold = normalized.sleepThreshold;
   clocks.fatigueThreshold = normalized.fatigueThreshold;
@@ -7961,44 +8127,46 @@ function runReviewScheduleClock(request) {
   }
   clocks.updatedAt = normalized.timestamp;
 
-  state.reviewScheduleEntries = state.reviewScheduleEntries.map((entry) => {
-    let next = entry;
-    if (
-      entry.status === "scheduled" &&
-      String(entry.dueAt ?? "") <= normalized.timestamp
-    ) {
-      next = {
-        ...next,
-        status: "due",
-        updatedAt: normalized.timestamp,
-      };
-      transitions.push({
-        scheduleEntryId: entry.scheduleEntryId,
-        transition: "scheduled_to_due",
-      });
+  state.reviewScheduleEntries = state.reviewScheduleEntries.map(
+    (entry: any) => {
+      let next = entry;
+      if (
+        entry.status === "scheduled" &&
+        String(entry.dueAt ?? "") <= normalized.timestamp
+      ) {
+        next = {
+          ...next,
+          status: "due",
+          updatedAt: normalized.timestamp,
+        };
+        transitions.push({
+          scheduleEntryId: entry.scheduleEntryId,
+          transition: "scheduled_to_due",
+        });
+      }
+      if (consolidationTriggered && next.status === "completed") {
+        const nextDueAt = addDaysToIso(
+          normalizeIsoTimestampOrFallback(
+            normalized.timestamp,
+            DEFAULT_VERSION_TIMESTAMP
+          ),
+          toPositiveInteger(next.intervalDays, 1)
+        );
+        next = {
+          ...next,
+          status: "scheduled",
+          dueAt: nextDueAt,
+          updatedAt: normalized.timestamp,
+        };
+        transitions.push({
+          scheduleEntryId: entry.scheduleEntryId,
+          transition: "sleep_reschedule_completed_entry",
+          cause: consolidationCause,
+        });
+      }
+      return next;
     }
-    if (consolidationTriggered && next.status === "completed") {
-      const nextDueAt = addDaysToIso(
-        normalizeIsoTimestampOrFallback(
-          normalized.timestamp,
-          DEFAULT_VERSION_TIMESTAMP
-        ),
-        toPositiveInteger(next.intervalDays, 1)
-      );
-      next = {
-        ...next,
-        status: "scheduled",
-        dueAt: nextDueAt,
-        updatedAt: normalized.timestamp,
-      };
-      transitions.push({
-        scheduleEntryId: entry.scheduleEntryId,
-        transition: "sleep_reschedule_completed_entry",
-        cause: consolidationCause,
-      });
-    }
-    return next;
-  });
+  );
 
   const temporalCandidateMaintenance = runTemporalCandidateMaintenanceTick(
     state,
@@ -8104,7 +8272,7 @@ function runReviewScheduleClock(request) {
   };
 }
 
-function runReviewSetRebalance(request) {
+function runReviewSetRebalance(request: any) {
   const { storeId, profile, input } = normalizeRequest(
     "review_set_rebalance",
     request
@@ -8161,7 +8329,7 @@ function runReviewSetRebalance(request) {
   };
 }
 
-function runCurateGuarded(request) {
+function runCurateGuarded(request: any) {
   const { storeId, profile, input } = normalizeRequest(
     "curate_guarded",
     request
@@ -8235,7 +8403,7 @@ function runCurateGuarded(request) {
     }
     const validation = validationByCandidateId.get(candidate.candidateId);
     const hasEventEvidence = state.events.some(
-      (event) => event.eventId === candidate.sourceEventId
+      (event: any) => event.eventId === candidate.sourceEventId
     );
     const hasValidationEvidence = Boolean(
       validation?.valid && validation?.evidenceEventId
@@ -8263,8 +8431,8 @@ function runCurateGuarded(request) {
         : "noop";
   const guardDigest = hash(
     stableStringify({
-      appliedRuleIds: curateResult.applied.map((entry) => entry.ruleId),
-      quarantinedIds: quarantined.map((entry) => entry.quarantineId),
+      appliedRuleIds: curateResult.applied.map((entry: any) => entry.ruleId),
+      quarantinedIds: quarantined.map((entry: any) => entry.quarantineId),
       rejected,
     })
   );
@@ -8280,10 +8448,10 @@ function runCurateGuarded(request) {
     reasonCodes:
       quarantined.length > 0
         ? asSortedUniqueStrings(
-            quarantined.flatMap((entry) => entry.reasonCodes)
+            quarantined.flatMap((entry: any) => entry.reasonCodes)
           )
         : rejected.some(
-              (entry) => entry.reason === "missing_validation_evidence"
+              (entry: any) => entry.reason === "missing_validation_evidence"
             )
           ? ["missing_validation_evidence"]
           : ["curation_allowed"],
@@ -8318,7 +8486,7 @@ function runCurateGuarded(request) {
   };
 }
 
-function runRecallAuthorization(request) {
+function runRecallAuthorization(request: any) {
   const { storeId, profile, input } = normalizeRequest(
     "recall_authorization",
     request
@@ -8339,7 +8507,7 @@ function runRecallAuthorization(request) {
     nextAllowedStoreIds = mergeStringLists([storeId], normalized.allowStoreIds);
   } else if (normalized.mode === "revoke") {
     const removed = new Set(normalized.allowStoreIds);
-    nextAllowedStoreIds = nextAllowedStoreIds.filter((allowedStoreId) => {
+    nextAllowedStoreIds = nextAllowedStoreIds.filter((allowedStoreId: any) => {
       if (allowedStoreId === storeId) {
         return true;
       }
@@ -8391,7 +8559,7 @@ function runRecallAuthorization(request) {
   if (!authorized && normalized.failClosed) {
     const error = new Error(
       `${CROSS_SPACE_ALLOWLIST_DENY_ERROR} requesterStoreId=${normalized.requesterStoreId} targetStoreId=${storeId}`
-    );
+    ) as Error & { code?: string };
     error.code = "PERSONALIZATION_POLICY_DENY";
     throw error;
   }
@@ -8433,7 +8601,7 @@ function runRecallAuthorization(request) {
   };
 }
 
-function runTutorDegraded(request) {
+function runTutorDegraded(request: any) {
   const { storeId, profile, input } = normalizeRequest(
     "tutor_degraded",
     request
@@ -8464,7 +8632,7 @@ function runTutorDegraded(request) {
   }
 
   const orderedReviewEntries = [...state.reviewScheduleEntries].sort(
-    (left, right) => {
+    (left: any, right: any) => {
       const dueDiff = String(left?.dueAt ?? "").localeCompare(
         String(right?.dueAt ?? "")
       );
@@ -8477,7 +8645,7 @@ function runTutorDegraded(request) {
     }
   );
   const orderedMisconceptions = [...state.misconceptions].sort(
-    (left, right) => {
+    (left: any, right: any) => {
       const leftScore = toNonNegativeInteger(left?.harmfulSignalCount, 0);
       const rightScore = toNonNegativeInteger(right?.harmfulSignalCount, 0);
       if (leftScore !== rightScore) {
@@ -8488,17 +8656,19 @@ function runTutorDegraded(request) {
       );
     }
   );
-  const orderedPlans = [...state.curriculumPlanItems].sort((left, right) => {
-    const rankDiff =
-      toPositiveInteger(left?.recommendationRank, 1) -
-      toPositiveInteger(right?.recommendationRank, 1);
-    if (rankDiff !== 0) {
-      return rankDiff;
+  const orderedPlans = [...state.curriculumPlanItems].sort(
+    (left: any, right: any) => {
+      const rankDiff =
+        toPositiveInteger(left?.recommendationRank, 1) -
+        toPositiveInteger(right?.recommendationRank, 1);
+      if (rankDiff !== 0) {
+        return rankDiff;
+      }
+      return String(left?.planItemId ?? "").localeCompare(
+        String(right?.planItemId ?? "")
+      );
     }
-    return String(left?.planItemId ?? "").localeCompare(
-      String(right?.planItemId ?? "")
-    );
-  });
+  );
 
   const suggestions = [];
   for (const entry of orderedReviewEntries) {
@@ -8533,12 +8703,12 @@ function runTutorDegraded(request) {
       priority: entry.status === "due" ? "high" : "medium",
       dueAt: entry.dueAt,
       evidencePointers: normalizeEvidencePointers([
-        ...(entry.sourceEventIds ?? []).map((pointerId) => ({
+        ...(entry.sourceEventIds ?? []).map((pointerId: any) => ({
           pointerId,
           kind: "event",
           source: "review_schedule",
         })),
-        ...(entry.evidenceEventIds ?? []).map((pointerId) => ({
+        ...(entry.evidenceEventIds ?? []).map((pointerId: any) => ({
           pointerId,
           kind: "event",
           source: "review_schedule",
@@ -8579,7 +8749,7 @@ function runTutorDegraded(request) {
       priority: misconception.status === "active" ? "high" : "medium",
       dueAt: normalized.timestamp,
       evidencePointers: normalizeEvidencePointers(
-        (misconception.evidenceEventIds ?? []).map((pointerId) => ({
+        (misconception.evidenceEventIds ?? []).map((pointerId: any) => ({
           pointerId,
           kind: "event",
           source: "misconception",
@@ -8623,12 +8793,12 @@ function runTutorDegraded(request) {
       priority: "medium",
       dueAt: planItem.dueAt,
       evidencePointers: normalizeEvidencePointers([
-        ...(planItem.evidenceEventIds ?? []).map((pointerId) => ({
+        ...(planItem.evidenceEventIds ?? []).map((pointerId: any) => ({
           pointerId,
           kind: "event",
           source: "curriculum_plan",
         })),
-        ...(planItem.provenanceSignalIds ?? []).map((pointerId) => ({
+        ...(planItem.provenanceSignalIds ?? []).map((pointerId: any) => ({
           pointerId,
           kind: "signal",
           source: "curriculum_plan",
@@ -8638,7 +8808,7 @@ function runTutorDegraded(request) {
     });
   }
 
-  const deterministicWarnings = [...warnings].sort((left, right) =>
+  const deterministicWarnings = [...warnings].sort((left: any, right: any) =>
     left.localeCompare(right)
   );
   const responseText =
@@ -8646,7 +8816,7 @@ function runTutorDegraded(request) {
       ? "No evidence-backed tutoring suggestions are currently available in degraded mode."
       : suggestions
           .map(
-            (suggestion, index) =>
+            (suggestion: any, index: any) =>
               `${index + 1}. ${suggestion.type}:${suggestion.targetId} (${suggestion.priority})`
           )
           .join("\n");
@@ -8660,7 +8830,9 @@ function runTutorDegraded(request) {
         timestamp: normalized.timestamp,
         degradedMode,
         warnings: deterministicWarnings,
-        suggestionIds: suggestions.map((suggestion) => suggestion.suggestionId),
+        suggestionIds: suggestions.map(
+          (suggestion: any) => suggestion.suggestionId
+        ),
       })
     )
   );
@@ -8674,7 +8846,9 @@ function runTutorDegraded(request) {
       indexAvailable: normalized.indexAvailable,
     },
     warnings: deterministicWarnings,
-    suggestionIds: suggestions.map((suggestion) => suggestion.suggestionId),
+    suggestionIds: suggestions.map(
+      (suggestion: any) => suggestion.suggestionId
+    ),
     responseDigest: hash(stableStringify({ responseText, suggestions })),
   };
   const sessionUpsert = upsertDeterministicRecord(
@@ -8734,7 +8908,7 @@ function runTutorDegraded(request) {
   };
 }
 
-function runPolicyAuditExport(request) {
+function runPolicyAuditExport(request: any) {
   const { storeId, profile, input } = normalizeRequest(
     "policy_audit_export",
     request
@@ -8765,7 +8939,7 @@ function runPolicyAuditExport(request) {
     "decisionId"
   )
     .slice(-limit)
-    .map((decision) => ({
+    .map((decision: any) => ({
       decisionId: decision.decisionId,
       policyKey: decision.policyKey,
       outcome: decision.outcome,
@@ -8776,7 +8950,7 @@ function runPolicyAuditExport(request) {
     }));
   const auditTrail = sortByTimestampAndId(
     (state.policyAuditTrail ?? []).filter(
-      (entry) => entry?.operation !== "policy_audit_export"
+      (entry: any) => entry?.operation !== "policy_audit_export"
     ),
     "timestamp",
     "auditEventId"
@@ -8795,8 +8969,8 @@ function runPolicyAuditExport(request) {
     },
     {
       checkId: "prompt_injection_quarantine_visibility",
-      status: auditTrail.some((entry) =>
-        (entry.reasonCodes ?? []).some((reasonCode) =>
+      status: auditTrail.some((entry: any) =>
+        (entry.reasonCodes ?? []).some((reasonCode: any) =>
           reasonCode.startsWith("prompt_override_")
         )
       )
@@ -8835,9 +9009,9 @@ function runPolicyAuditExport(request) {
         generatedAt,
         format: exportFormat,
         policyDecisionIds: policyDecisions.map(
-          (decision) => decision.decisionId
+          (decision: any) => decision.decisionId
         ),
-        auditEventIds: auditTrail.map((entry) => entry.auditEventId),
+        auditEventIds: auditTrail.map((entry: any) => entry.auditEventId),
       })
     )
   );
@@ -8853,7 +9027,7 @@ function runPolicyAuditExport(request) {
     exportFormat
   );
   const recordChecksum = hash(
-    stableStringify(records.map((record) => record.recordDigest))
+    stableStringify(records.map((record: any) => record.recordDigest))
   );
   const sectionChecksums = {
     policyDecisions: hash(stableStringify(payload.policyDecisions)),
@@ -8924,7 +9098,7 @@ function runPolicyAuditExport(request) {
       decisionCount: policyDecisions.length,
       auditEventCount: auditTrail.length,
       checklistStatus: incidentChecklist.map(
-        (entry) => `${entry.checkId}:${entry.status}`
+        (entry: any) => `${entry.checkId}:${entry.status}`
       ),
       exportFormat,
       payloadChecksum: integrity.payload.checksum,
@@ -8959,7 +9133,11 @@ function runPolicyAuditExport(request) {
   };
 }
 
-function buildPolicyAuditExportRecords({ exportId, payload, payloadDigest }) {
+function buildPolicyAuditExportRecords({
+  exportId,
+  payload,
+  payloadDigest,
+}: any) {
   const records = [
     {
       recordType: "manifest",
@@ -8984,7 +9162,7 @@ function buildPolicyAuditExportRecords({ exportId, payload, payloadDigest }) {
         checklistCount: payload.incidentChecklist.length,
       },
     },
-    ...payload.policyDecisions.map((decision) => ({
+    ...payload.policyDecisions.map((decision: any) => ({
       recordType: "policy_decision",
       recordId: decision.decisionId,
       storeId: payload.storeId,
@@ -9000,7 +9178,7 @@ function buildPolicyAuditExportRecords({ exportId, payload, payloadDigest }) {
         decisionDigest: decision.digest,
       },
     })),
-    ...payload.auditTrail.map((entry) => ({
+    ...payload.auditTrail.map((entry: any) => ({
       recordType: "policy_audit_event",
       recordId: entry.auditEventId,
       storeId: payload.storeId,
@@ -9018,7 +9196,7 @@ function buildPolicyAuditExportRecords({ exportId, payload, payloadDigest }) {
         details: entry.details,
       },
     })),
-    ...payload.incidentChecklist.map((checklistEntry) => ({
+    ...payload.incidentChecklist.map((checklistEntry: any) => ({
       recordType: "incident_check",
       recordId: checklistEntry.checkId,
       storeId: payload.storeId,
@@ -9033,7 +9211,7 @@ function buildPolicyAuditExportRecords({ exportId, payload, payloadDigest }) {
       details: checklistEntry.details,
     })),
   ];
-  return records.map((record) => {
+  return records.map((record: any) => {
     const canonicalRecord = stableSortObject(record);
     return {
       ...canonicalRecord,
@@ -9042,11 +9220,11 @@ function buildPolicyAuditExportRecords({ exportId, payload, payloadDigest }) {
   });
 }
 
-function serializePolicyAuditExport(payload, records, format) {
+function serializePolicyAuditExport(payload: any, records: any, format: any) {
   if (format === "ndjson") {
     return {
       contentType: "application/x-ndjson",
-      content: records.map((record) => stableStringify(record)).join("\n"),
+      content: records.map((record: any) => stableStringify(record)).join("\n"),
       lineCount: records.length,
     };
   }
@@ -9054,7 +9232,7 @@ function serializePolicyAuditExport(payload, records, format) {
     const rows = [POLICY_AUDIT_EXPORT_CSV_COLUMNS.join(",")];
     for (const record of records) {
       rows.push(
-        POLICY_AUDIT_EXPORT_CSV_COLUMNS.map((columnName) =>
+        POLICY_AUDIT_EXPORT_CSV_COLUMNS.map((columnName: any) =>
           escapeCsvCellValue(record[columnName] ?? null)
         ).join(",")
       );
@@ -9072,7 +9250,7 @@ function serializePolicyAuditExport(payload, records, format) {
   };
 }
 
-function escapeCsvCellValue(value) {
+function escapeCsvCellValue(value: any) {
   if (value === null || value === undefined) {
     return "";
   }
@@ -9091,7 +9269,11 @@ function escapeCsvCellValue(value) {
   return normalizedRaw;
 }
 
-function findPolicyAuditTrailByOperationEntity(state, operation, entityId) {
+function findPolicyAuditTrailByOperationEntity(
+  state: any,
+  operation: any,
+  entityId: any
+) {
   const existing = Array.isArray(state.policyAuditTrail)
     ? state.policyAuditTrail
     : [];
@@ -9104,7 +9286,7 @@ function findPolicyAuditTrailByOperationEntity(state, operation, entityId) {
   return null;
 }
 
-function resolveUtilitySignalScore(entity) {
+function resolveUtilitySignalScore(entity: any) {
   const metadataScore = toFiniteNumber(
     entity?.metadata?.utilitySignal?.score,
     Number.NaN
@@ -9116,7 +9298,7 @@ function resolveUtilitySignalScore(entity) {
 }
 
 function applyUtilitySignalToCandidatesAndRules(
-  state,
+  state: any,
   {
     targetRuleIds = [],
     targetCandidateIds = [],
@@ -9127,7 +9309,7 @@ function applyUtilitySignalToCandidatesAndRules(
     note,
     actor,
     timestamp,
-  }
+  }: any
 ) {
   const normalizedRuleIds = asSortedUniqueStrings(targetRuleIds);
   const normalizedCandidateIds = asSortedUniqueStrings(targetCandidateIds);
@@ -9245,7 +9427,7 @@ function applyUtilitySignalToCandidatesAndRules(
   };
 }
 
-function runFeedback(request) {
+function runFeedback(request: any) {
   const { storeId, profile, input } = normalizeRequest("feedback", request);
   const state = getProfileState(storeId, profile);
   const targetRuleId =
@@ -9296,7 +9478,7 @@ function runFeedback(request) {
     metadata,
   };
   const existingIndex = state.feedback.findIndex(
-    (entry) => entry?.feedbackId === feedbackId
+    (entry: any) => entry?.feedbackId === feedbackId
   );
   let action = "created";
   if (existingIndex !== -1) {
@@ -9430,7 +9612,7 @@ function runFeedback(request) {
   };
 }
 
-function runOutcome(request) {
+function runOutcome(request: any) {
   const { storeId, profile, input } = normalizeRequest("outcome", request);
   const state = getProfileState(storeId, profile);
   const outcome = request.outcome === "failure" ? "failure" : "success";
@@ -9478,7 +9660,7 @@ function runOutcome(request) {
     metadata,
   };
   const existingIndex = state.outcomes.findIndex(
-    (entry) => entry?.outcomeId === outcomeId
+    (entry: any) => entry?.outcomeId === outcomeId
   );
   let action = "created";
   if (existingIndex !== -1) {
@@ -9573,7 +9755,7 @@ function runOutcome(request) {
   };
 }
 
-function getReadonlyProfileState(storeId, profile) {
+function getReadonlyProfileState(storeId: any, profile: any) {
   const profiles = stores.get(storeId);
   if (!(profiles instanceof Map)) {
     return null;
@@ -9582,8 +9764,8 @@ function getReadonlyProfileState(storeId, profile) {
 }
 
 function normalizeMemoryConsoleLimit(
-  value,
-  fallback = DEFAULT_MEMORY_CONSOLE_LIMIT
+  value: any,
+  fallback: any = DEFAULT_MEMORY_CONSOLE_LIMIT
 ) {
   return Math.min(
     Math.max(toPositiveInteger(value, fallback), 1),
@@ -9591,7 +9773,7 @@ function normalizeMemoryConsoleLimit(
   );
 }
 
-function flattenMemoryConsoleFilterValues(value, target = []) {
+function flattenMemoryConsoleFilterValues(value: any, target: any = []) {
   if (Array.isArray(value)) {
     for (const entry of value) {
       flattenMemoryConsoleFilterValues(entry, target);
@@ -9605,9 +9787,9 @@ function flattenMemoryConsoleFilterValues(value, target = []) {
 }
 
 function normalizeMemoryConsoleStringFilters(
-  values,
-  fieldName,
-  { allowedValues = null, maxLength = 64, lowerCase = true } = {}
+  values: any,
+  fieldName: any,
+  { allowedValues = null, maxLength = 64, lowerCase = true }: any = {}
 ) {
   const rawEntries = flattenMemoryConsoleFilterValues(values, []);
   if (rawEntries.length === 0) {
@@ -9638,10 +9820,10 @@ function normalizeMemoryConsoleStringFilters(
       normalized.push(candidate);
     }
   }
-  return normalized.sort((left, right) => left.localeCompare(right));
+  return normalized.sort((left: any, right: any) => left.localeCompare(right));
 }
 
-function normalizeMemoryConsoleTypeFilters(request, operationName) {
+function normalizeMemoryConsoleTypeFilters(request: any, operationName: any) {
   return normalizeMemoryConsoleStringFilters(
     [request.type, request.types, request.entityType, request.entityTypes],
     `${operationName}.types`,
@@ -9653,7 +9835,10 @@ function normalizeMemoryConsoleTypeFilters(request, operationName) {
   );
 }
 
-function normalizeMemoryConsoleTimestampRange(request, operationName) {
+function normalizeMemoryConsoleTimestampRange(
+  request: any,
+  operationName: any
+) {
   const since = normalizeIsoTimestamp(
     request.since ?? request.startAt ?? request.from,
     `${operationName}.since`,
@@ -9672,7 +9857,7 @@ function normalizeMemoryConsoleTimestampRange(request, operationName) {
   return { since, until };
 }
 
-function parseMemoryConsoleEntityRef(rawRef, fieldName) {
+function parseMemoryConsoleEntityRef(rawRef: any, fieldName: any) {
   if (typeof rawRef === "string") {
     const compact = normalizeBoundedString(rawRef, fieldName, 256);
     if (!compact) {
@@ -9736,12 +9921,12 @@ function parseMemoryConsoleEntityRef(rawRef, fieldName) {
   };
 }
 
-function normalizeMemoryConsoleEntityRefs(request) {
+function normalizeMemoryConsoleEntityRefs(request: any) {
   const rawRefs = request.entityRefs ?? request.entities ?? request.references;
-  const normalizedRefs = [];
+  const normalizedRefs: Array<{ entityType: string; entityId: string }> = [];
   const seen = new Set();
 
-  const appendRef = (rawRef, fieldName) => {
+  const appendRef = (rawRef: any, fieldName: any) => {
     const nextRef = parseMemoryConsoleEntityRef(rawRef, fieldName);
     const key = `${nextRef.entityType}:${nextRef.entityId}`;
     if (seen.has(key)) {
@@ -9781,7 +9966,7 @@ function normalizeMemoryConsoleEntityRefs(request) {
   }
 
   ensureBoundedCount(normalizedRefs, "memory_console_provenance.entityRefs");
-  return normalizedRefs.sort((left, right) => {
+  return normalizedRefs.sort((left: any, right: any) => {
     const typeDiff = left.entityType.localeCompare(right.entityType);
     if (typeDiff !== 0) {
       return typeDiff;
@@ -9790,10 +9975,10 @@ function normalizeMemoryConsoleEntityRefs(request) {
   });
 }
 
-function collectMemoryConsoleLinkedSourceIds(record) {
-  const collected = [];
+function collectMemoryConsoleLinkedSourceIds(record: any) {
+  const collected: string[] = [];
   const visited = new Set();
-  const visit = (value, depth = 0) => {
+  const visit = (value: any, depth: any = 0) => {
     if (!value || depth > MEMORY_CONSOLE_PROVENANCE_MAX_DEPTH) {
       return;
     }
@@ -9878,10 +10063,10 @@ function collectMemoryConsoleLinkedSourceIds(record) {
   return asSortedUniqueStrings(collected);
 }
 
-function collectMemoryConsoleProvenancePointers(record) {
+function collectMemoryConsoleProvenancePointers(record: any) {
   const pointers = new Map();
   const visited = new Set();
-  const visit = (value, depth = 0) => {
+  const visit = (value: any, depth: any = 0) => {
     if (!value || depth > MEMORY_CONSOLE_PROVENANCE_MAX_DEPTH) {
       return;
     }
@@ -9963,7 +10148,7 @@ function collectMemoryConsoleProvenancePointers(record) {
   };
 
   visit(record);
-  return [...pointers.values()].sort((left, right) => {
+  return [...pointers.values()].sort((left: any, right: any) => {
     const kindDiff = left.kind.localeCompare(right.kind);
     if (kindDiff !== 0) {
       return kindDiff;
@@ -9976,11 +10161,11 @@ function collectMemoryConsoleProvenancePointers(record) {
   });
 }
 
-function toMemoryConsoleTimestamp(value) {
+function toMemoryConsoleTimestamp(value: any) {
   return normalizeIsoTimestampOrFallback(value, DEFAULT_VERSION_TIMESTAMP);
 }
 
-function summarizeMemoryConsoleParts(values, fallback) {
+function summarizeMemoryConsoleParts(values: any, fallback: any) {
   const summaryParts = [];
   for (const value of values) {
     const compact = normalizeBoundedStringLenient(value, 160);
@@ -9998,7 +10183,7 @@ function makeMemoryConsoleEntityRow({
   summaryParts = [],
   searchParts = [],
   record = null,
-}) {
+}: any) {
   const normalizedType =
     normalizeBoundedStringLenient(
       typeof entityType === "string" ? entityType.toLowerCase() : entityType,
@@ -10024,14 +10209,14 @@ function makeMemoryConsoleEntityRow({
     summary,
     ...searchParts,
     ...sourceIds,
-    ...provenancePointers.flatMap((pointer) => [
+    ...provenancePointers.flatMap((pointer: any) => [
       pointer.pointerId,
       pointer.kind,
       pointer.source,
     ]),
   ];
   const searchableText = searchableParts
-    .map((part) => normalizeBoundedStringLenient(part, 512))
+    .map((part: any) => normalizeBoundedStringLenient(part, 512))
     .filter(Boolean)
     .join(" ")
     .toLowerCase();
@@ -10047,7 +10232,7 @@ function makeMemoryConsoleEntityRow({
   };
 }
 
-function compareMemoryConsoleRows(left, right) {
+function compareMemoryConsoleRows(left: any, right: any) {
   const timestampDiff = String(right?.timestamp ?? "").localeCompare(
     String(left?.timestamp ?? "")
   );
@@ -10065,12 +10250,12 @@ function compareMemoryConsoleRows(left, right) {
   );
 }
 
-function buildMemoryConsoleEntityRows(state) {
+function buildMemoryConsoleEntityRows(state: any) {
   if (!state || typeof state !== "object") {
     return [];
   }
-  const rows = [];
-  const appendRow = (row) => {
+  const rows: any[] = [];
+  const appendRow = (row: any) => {
     if (row) {
       rows.push(row);
     }
@@ -10085,7 +10270,7 @@ function buildMemoryConsoleEntityRows(state) {
     const identityRefSummary = identityRefs
       .slice(0, 3)
       .map(
-        (identityRef) =>
+        (identityRef: any) =>
           `${normalizeBoundedStringLenient(identityRef?.namespace, 64) ?? "unknown"}:${
             normalizeBoundedStringLenient(identityRef?.value, 128) ?? "unknown"
           }`
@@ -10546,7 +10731,7 @@ function buildMemoryConsoleEntityRows(state) {
   return rows.sort(compareMemoryConsoleRows);
 }
 
-function scoreMemoryConsoleSearchRow(row, query) {
+function scoreMemoryConsoleSearchRow(row: any, query: any) {
   if (!query) {
     return 0;
   }
@@ -10562,10 +10747,12 @@ function scoreMemoryConsoleSearchRow(row, query) {
   if (summaryLower.includes(queryLower)) {
     score += 80;
   }
-  if (row.sourceIds.some((sourceId) => sourceId.toLowerCase() === queryLower)) {
+  if (
+    row.sourceIds.some((sourceId: any) => sourceId.toLowerCase() === queryLower)
+  ) {
     score += 70;
   } else if (
-    row.sourceIds.some((sourceId) =>
+    row.sourceIds.some((sourceId: any) =>
       sourceId.toLowerCase().includes(queryLower)
     )
   ) {
@@ -10577,23 +10764,23 @@ function scoreMemoryConsoleSearchRow(row, query) {
   return score;
 }
 
-function hasMatchingReasonCode(reasonCodes, reasonCodeFilters) {
+function hasMatchingReasonCode(reasonCodes: any, reasonCodeFilters: any) {
   if (reasonCodeFilters.length === 0) {
     return true;
   }
   const normalizedCodes = new Set(
-    asSortedUniqueStrings(reasonCodes).map((reasonCode) =>
+    asSortedUniqueStrings(reasonCodes).map((reasonCode: any) =>
       reasonCode.toLowerCase()
     )
   );
-  return reasonCodeFilters.some((reasonCode) =>
+  return reasonCodeFilters.some((reasonCode: any) =>
     normalizedCodes.has(reasonCode)
   );
 }
 
 function isTimestampWithinRange(
-  timestamp,
-  { since = null, until = null, includeUntil = true } = {}
+  timestamp: any,
+  { since = null, until = null, includeUntil = true }: any = {}
 ) {
   if (since && timestamp.localeCompare(since) < 0) {
     return false;
@@ -10612,10 +10799,10 @@ function isTimestampWithinRange(
 }
 
 function filterEventsByWindow(
-  events,
-  { since = null, until = null, includeUntil = true } = {}
+  events: any,
+  { since = null, until = null, includeUntil = true }: any = {}
 ) {
-  return (Array.isArray(events) ? events : []).filter((entry) =>
+  return (Array.isArray(events) ? events : []).filter((entry: any) =>
     isTimestampWithinRange(toMemoryConsoleTimestamp(entry?.timestamp), {
       since,
       until,
@@ -10624,7 +10811,7 @@ function filterEventsByWindow(
   );
 }
 
-function resolveAnomalyWindow(request, latestTimestamp) {
+function resolveAnomalyWindow(request: any, latestTimestamp: any) {
   const operationName = "memory_console_anomaly_alerts";
   const { since: requestedSince, until: requestedUntil } =
     normalizeMemoryConsoleTimestampRange(request, operationName);
@@ -10658,8 +10845,12 @@ function resolveAnomalyWindow(request, latestTimestamp) {
   };
 }
 
-function countEventsByField(events, fieldName, fallback = "unknown") {
-  const counts = {};
+function countEventsByField(
+  events: any,
+  fieldName: any,
+  fallback: any = "unknown"
+) {
+  const counts: Record<string, number> = {};
   for (const event of Array.isArray(events) ? events : []) {
     const key =
       normalizeBoundedStringLenient(event?.[fieldName], 128) ??
@@ -10669,7 +10860,7 @@ function countEventsByField(events, fieldName, fallback = "unknown") {
   return stableSortObject(counts);
 }
 
-function evaluateAnomalyRule(events, window, rule) {
+function evaluateAnomalyRule(events: any, window: any, rule: any) {
   const baselineEvents = filterEventsByWindow(events, {
     since: window.baseline.since,
     until: window.baseline.until,
@@ -10712,38 +10903,48 @@ function evaluateAnomalyRule(events, window, rule) {
   };
 }
 
-function takeAnomalyEvidenceIds(events) {
+function takeAnomalyEvidenceIds(events: any) {
   return asSortedUniqueStrings(
     (Array.isArray(events) ? events : [])
       .slice(-MAX_ANOMALY_EVIDENCE_IDS)
-      .map((event) => normalizeBoundedStringLenient(event?.eventId, 128))
+      .map((event: any) => normalizeBoundedStringLenient(event?.eventId, 128))
       .filter(Boolean)
   );
 }
 
-function sortAnomalyAlerts(alerts) {
+function sortAnomalyAlerts(alerts: any) {
   const severityOrder = {
     critical: 2,
     warn: 1,
     none: 0,
-  };
-  return [...(Array.isArray(alerts) ? alerts : [])].sort((left, right) => {
-    const severityDiff =
-      toNonNegativeInteger(severityOrder[right?.severity], 0) -
-      toNonNegativeInteger(severityOrder[left?.severity], 0);
-    if (severityDiff !== 0) {
-      return severityDiff;
+  } as const;
+  return [...(Array.isArray(alerts) ? alerts : [])].sort(
+    (left: any, right: any) => {
+      const rightSeverity =
+        typeof right?.severity === "string" && right.severity in severityOrder
+          ? (right.severity as keyof typeof severityOrder)
+          : "none";
+      const leftSeverity =
+        typeof left?.severity === "string" && left.severity in severityOrder
+          ? (left.severity as keyof typeof severityOrder)
+          : "none";
+      const severityDiff =
+        toNonNegativeInteger(severityOrder[rightSeverity], 0) -
+        toNonNegativeInteger(severityOrder[leftSeverity], 0);
+      if (severityDiff !== 0) {
+        return severityDiff;
+      }
+      const typeDiff = String(left?.type ?? "").localeCompare(
+        String(right?.type ?? "")
+      );
+      if (typeDiff !== 0) {
+        return typeDiff;
+      }
+      return String(left?.alertId ?? "").localeCompare(
+        String(right?.alertId ?? "")
+      );
     }
-    const typeDiff = String(left?.type ?? "").localeCompare(
-      String(right?.type ?? "")
-    );
-    if (typeDiff !== 0) {
-      return typeDiff;
-    }
-    return String(left?.alertId ?? "").localeCompare(
-      String(right?.alertId ?? "")
-    );
-  });
+  );
 }
 
 function buildAnomalyAlertRecord({
@@ -10756,7 +10957,7 @@ function buildAnomalyAlertRecord({
   evidenceEventIds,
   details = {},
   stats,
-}) {
+}: any) {
   const material = stableSortObject({
     type,
     severity,
@@ -10792,7 +10993,7 @@ function buildAnomalyAlertRecord({
   };
 }
 
-function collectHarmfulSignalEvents(state) {
+function collectHarmfulSignalEvents(state: any) {
   const events = [];
   for (const signal of Array.isArray(state?.painSignals)
     ? state.painSignals
@@ -10855,7 +11056,7 @@ function collectHarmfulSignalEvents(state) {
   return sortByTimestampAndId(events, "timestamp", "eventId");
 }
 
-function collectUnauthorizedAccessEvents(state) {
+function collectUnauthorizedAccessEvents(state: any) {
   const events = [];
   for (const entry of Array.isArray(state?.policyAuditTrail)
     ? state.policyAuditTrail
@@ -10867,7 +11068,7 @@ function collectUnauthorizedAccessEvents(state) {
       continue;
     }
     const reasonCodes = asSortedUniqueStrings(entry?.reasonCodes).map(
-      (reasonCode) => reasonCode.toLowerCase()
+      (reasonCode: any) => reasonCode.toLowerCase()
     );
     if (!reasonCodes.includes("allowlist_denied")) {
       continue;
@@ -10889,13 +11090,13 @@ function collectUnauthorizedAccessEvents(state) {
   return sortByTimestampAndId(events, "timestamp", "eventId");
 }
 
-function collectPolicyDriftIndicatorEvents(state) {
+function collectPolicyDriftIndicatorEvents(state: any) {
   const policyAuditEvents = sortByTimestampAndId(
     (Array.isArray(state?.policyAuditTrail)
       ? state.policyAuditTrail
       : []
     ).filter(
-      (entry) =>
+      (entry: any) =>
         normalizeBoundedStringLenient(entry?.operation, 64)?.toLowerCase() ===
         "policy_decision_update"
     ),
@@ -10935,7 +11136,7 @@ function collectPolicyDriftIndicatorEvents(state) {
   return sortByTimestampAndId(indicators, "timestamp", "eventId");
 }
 
-function latestAnomalyTimestamp(eventGroups) {
+function latestAnomalyTimestamp(eventGroups: any) {
   let latest = DEFAULT_VERSION_TIMESTAMP;
   for (const group of Array.isArray(eventGroups) ? eventGroups : []) {
     for (const event of Array.isArray(group) ? group : []) {
@@ -10948,7 +11149,7 @@ function latestAnomalyTimestamp(eventGroups) {
   return latest;
 }
 
-function runMemoryConsoleAnomalyAlerts(request) {
+function runMemoryConsoleAnomalyAlerts(request: any) {
   const { storeId, profile, input } = normalizeRequest(
     "memory_console_anomaly_alerts",
     request
@@ -11011,7 +11212,7 @@ function runMemoryConsoleAnomalyAlerts(request) {
     "unknown"
   );
   const policyTransitions = asSortedUniqueStrings(
-    policyDriftStats.observationEvents.map((event) =>
+    policyDriftStats.observationEvents.map((event: any) =>
       normalizeBoundedStringLenient(
         `${event.policyKey}:${event.previousOutcome}->${event.nextOutcome}`,
         256
@@ -11079,10 +11280,10 @@ function runMemoryConsoleAnomalyAlerts(request) {
 
   const orderedAlerts = sortAnomalyAlerts(alerts);
   const criticalAlertCount = orderedAlerts.filter(
-    (alert) => alert.severity === "critical"
+    (alert: any) => alert.severity === "critical"
   ).length;
   const warningAlertCount = orderedAlerts.filter(
-    (alert) => alert.severity === "warn"
+    (alert: any) => alert.severity === "warn"
   ).length;
 
   return {
@@ -11142,13 +11343,13 @@ function runMemoryConsoleAnomalyAlerts(request) {
       criticalAlerts: criticalAlertCount,
       warningAlerts: warningAlertCount,
       categoriesTriggered: asSortedUniqueStrings(
-        orderedAlerts.map((alert) => alert.type)
+        orderedAlerts.map((alert: any) => alert.type)
       ),
     },
   };
 }
 
-function runMemoryConsoleSearch(request) {
+function runMemoryConsoleSearch(request: any) {
   const { storeId, profile, input } = normalizeRequest(
     "memory_console_search",
     request
@@ -11169,7 +11370,7 @@ function runMemoryConsoleSearch(request) {
     "memory_console_search"
   );
   const rows = buildMemoryConsoleEntityRows(state);
-  const matches = rows.filter((row) => {
+  const matches = rows.filter((row: any) => {
     if (typeFilters.length > 0 && !typeFilters.includes(row.entityType)) {
       return false;
     }
@@ -11179,11 +11380,11 @@ function runMemoryConsoleSearch(request) {
     return true;
   });
   const results = matches
-    .map((row) => ({
+    .map((row: any) => ({
       row,
       score: scoreMemoryConsoleSearchRow(row, queryLower),
     }))
-    .sort((left, right) => {
+    .sort((left: any, right: any) => {
       const scoreDiff = right.score - left.score;
       if (scoreDiff !== 0) {
         return scoreDiff;
@@ -11191,7 +11392,7 @@ function runMemoryConsoleSearch(request) {
       return compareMemoryConsoleRows(left.row, right.row);
     })
     .slice(0, limit)
-    .map(({ row }) => ({
+    .map(({ row }: any) => ({
       entityType: row.entityType,
       entityId: row.entityId,
       timestamp: row.timestamp,
@@ -11212,7 +11413,7 @@ function runMemoryConsoleSearch(request) {
   };
 }
 
-function runMemoryConsoleTimeline(request) {
+function runMemoryConsoleTimeline(request: any) {
   const { storeId, profile, input } = normalizeRequest(
     "memory_console_timeline",
     request
@@ -11231,7 +11432,7 @@ function runMemoryConsoleTimeline(request) {
     "memory_console_timeline"
   );
   const rows = buildMemoryConsoleEntityRows(state);
-  const matches = rows.filter((row) => {
+  const matches = rows.filter((row: any) => {
     if (typeFilters.length > 0 && !typeFilters.includes(row.entityType)) {
       return false;
     }
@@ -11243,7 +11444,7 @@ function runMemoryConsoleTimeline(request) {
     }
     return true;
   });
-  const events = matches.slice(0, limit).map((row) => ({
+  const events = matches.slice(0, limit).map((row: any) => ({
     eventType: row.entityType,
     entityType: row.entityType,
     entityId: row.entityId,
@@ -11266,7 +11467,7 @@ function runMemoryConsoleTimeline(request) {
   };
 }
 
-function runMemoryConsoleProvenance(request) {
+function runMemoryConsoleProvenance(request: any) {
   const { storeId, profile, input } = normalizeRequest(
     "memory_console_provenance",
     request
@@ -11276,9 +11477,9 @@ function runMemoryConsoleProvenance(request) {
   const refs = normalizeMemoryConsoleEntityRefs(request).slice(0, limit);
   const rows = buildMemoryConsoleEntityRows(state);
   const index = new Map(
-    rows.map((row) => [`${row.entityType}:${row.entityId}`, row])
+    rows.map((row: any) => [`${row.entityType}:${row.entityId}`, row])
   );
-  const entities = refs.map((ref) => {
+  const entities = refs.map((ref: any) => {
     const key = `${ref.entityType}:${ref.entityId}`;
     const row = index.get(key);
     if (!row) {
@@ -11303,11 +11504,11 @@ function runMemoryConsoleProvenance(request) {
     };
   });
   const resolvedCount = entities.reduce(
-    (count, entity) => count + (entity.found ? 1 : 0),
+    (count: any, entity: any) => count + (entity.found ? 1 : 0),
     0
   );
   const linkedSourceIds = asSortedUniqueStrings(
-    entities.flatMap((entity) => entity.linkedSourceIds)
+    entities.flatMap((entity: any) => entity.linkedSourceIds)
   );
 
   return {
@@ -11327,7 +11528,7 @@ function runMemoryConsoleProvenance(request) {
   };
 }
 
-function runMemoryConsolePolicyAudit(request) {
+function runMemoryConsolePolicyAudit(request: any) {
   const { storeId, profile, input } = normalizeRequest(
     "memory_console_policy_audit",
     request
@@ -11379,7 +11580,7 @@ function runMemoryConsolePolicyAudit(request) {
     "decisionId"
   )
     .reverse()
-    .filter((decision) => {
+    .filter((decision: any) => {
       const timestamp = toMemoryConsoleTimestamp(
         decision?.updatedAt ?? decision?.createdAt
       );
@@ -11415,7 +11616,7 @@ function runMemoryConsolePolicyAudit(request) {
     "auditEventId"
   )
     .reverse()
-    .filter((entry) => {
+    .filter((entry: any) => {
       const timestamp = toMemoryConsoleTimestamp(entry?.timestamp);
       if (since && timestamp.localeCompare(since) < 0) {
         return false;
@@ -11454,7 +11655,7 @@ function runMemoryConsolePolicyAudit(request) {
       return true;
     });
 
-  const decisionRows = decisions.slice(0, limit).map((decision) => ({
+  const decisionRows = decisions.slice(0, limit).map((decision: any) => ({
     decisionId: decision.decisionId,
     policyKey: decision.policyKey,
     outcome: decision.outcome,
@@ -11464,7 +11665,7 @@ function runMemoryConsolePolicyAudit(request) {
       decision.updatedAt ?? decision.createdAt
     ),
   }));
-  const auditRows = auditTrail.slice(0, limit).map((entry) => ({
+  const auditRows = auditTrail.slice(0, limit).map((entry: any) => ({
     auditEventId: entry.auditEventId,
     operation: entry.operation,
     entityId: entry.entityId ?? null,
@@ -11485,17 +11686,17 @@ function runMemoryConsolePolicyAudit(request) {
     allow: 0,
     review: 0,
     deny: 0,
-  };
+  } as Record<"allow" | "review" | "deny", number>;
   for (const decision of decisions) {
     const outcome = normalizeBoundedStringLenient(
       decision?.outcome,
       16
     )?.toLowerCase();
     if (outcome && hasOwn(decisionOutcomeCounts, outcome)) {
-      decisionOutcomeCounts[outcome] += 1;
+      decisionOutcomeCounts[outcome as keyof typeof decisionOutcomeCounts] += 1;
     }
   }
-  const auditOperationCounts = {};
+  const auditOperationCounts: Record<string, number> = {};
   for (const entry of auditTrail) {
     const operation =
       normalizeBoundedStringLenient(entry?.operation, 64)?.toLowerCase() ??
@@ -11503,7 +11704,7 @@ function runMemoryConsolePolicyAudit(request) {
     auditOperationCounts[operation] =
       toNonNegativeInteger(auditOperationCounts[operation], 0) + 1;
   }
-  const reasonCodeCounts = {};
+  const reasonCodeCounts: Record<string, number> = {};
   for (const decision of decisions) {
     for (const reasonCode of asSortedUniqueStrings(decision?.reasonCodes)) {
       reasonCodeCounts[reasonCode] =
@@ -11542,7 +11743,7 @@ function runMemoryConsolePolicyAudit(request) {
   };
 }
 
-function runAudit(request) {
+function runAudit(request: any) {
   const { storeId, profile, input } = normalizeRequest("audit", request);
   const state = getProfileState(storeId, profile);
   const duplicateStatements = new Set();
@@ -11576,14 +11777,14 @@ function runAudit(request) {
   };
 }
 
-function runExport(request) {
+function runExport(request: any) {
   const { storeId, profile, input } = normalizeRequest("export", request);
   const state = getProfileState(storeId, profile);
   const topRules = state.rules.slice(0, 5);
   const topAntiPatterns = state.feedback
-    .filter((entry) => entry.signal === "harmful")
+    .filter((entry: any) => entry.signal === "harmful")
     .slice(0, 5)
-    .map((entry) => entry.note || entry.targetRuleId);
+    .map((entry: any) => entry.note || entry.targetRuleId);
   const agentsMdLines = [
     "# UMS Memory Export",
     "",
@@ -11592,11 +11793,11 @@ function runExport(request) {
     "",
     "## Top Rules",
     ...topRules.map(
-      (rule) => `- ${rule.statement} (confidence=${rule.confidence})`
+      (rule: any) => `- ${rule.statement} (confidence=${rule.confidence})`
     ),
     "",
     "## Anti-pattern Signals",
-    ...topAntiPatterns.map((line) => `- ${line}`),
+    ...topAntiPatterns.map((line: any) => `- ${line}`),
   ];
 
   return {
@@ -11612,7 +11813,7 @@ function runExport(request) {
   };
 }
 
-function runDoctor(request) {
+function runDoctor(request: any) {
   const { storeId, profile, input } = normalizeRequest("doctor", request);
   const state = getProfileState(storeId, profile);
   const status = {
@@ -11662,7 +11863,7 @@ function runDoctor(request) {
   };
 }
 
-const runners = {
+const runners: Record<string, (request: any) => any> = {
   ingest: runIngest,
   context: runContext,
   reflect: runReflect,
@@ -11727,12 +11928,14 @@ const runners = {
   doctor: runDoctor,
 };
 
-export function executeOperation(operation, request) {
+export function executeOperation(operation: any, request: any): any {
   const op =
     typeof operation === "string" ? operation.trim().toLowerCase() : "";
   const runner = runners[op];
   if (!runner) {
-    const error = new Error(`Unsupported operation: ${operation}`);
+    const error = new Error(`Unsupported operation: ${operation}`) as Error & {
+      code?: string;
+    };
     error.code = "UNSUPPORTED_OPERATION";
     throw error;
   }
@@ -11743,21 +11946,21 @@ export function listOperations() {
   return [...OPS];
 }
 
-function cloneStable(value, fallback) {
+function cloneStable(value: any, fallback: any) {
   if (value === undefined) {
     return fallback;
   }
   return JSON.parse(stableStringify(value));
 }
 
-function cloneIdentityRefRecord(identityRef) {
+function cloneIdentityRefRecord(identityRef: any) {
   return {
     ...identityRef,
     metadata: cloneStable(identityRef?.metadata ?? {}, {}),
   };
 }
 
-function cloneLearnerProfileRecord(learnerProfile) {
+function cloneLearnerProfileRecord(learnerProfile: any) {
   return {
     ...learnerProfile,
     identityRefs: (learnerProfile?.identityRefs ?? []).map(
@@ -11776,7 +11979,7 @@ function cloneLearnerProfileRecord(learnerProfile) {
   };
 }
 
-function cloneIdentityGraphEdgeRecord(edge) {
+function cloneIdentityGraphEdgeRecord(edge: any) {
   return {
     ...edge,
     fromRef: cloneIdentityRefRecord(edge?.fromRef),
@@ -11788,61 +11991,60 @@ function cloneIdentityGraphEdgeRecord(edge) {
 }
 
 export function snapshotProfile(
-  profile = INTERNAL_PROFILE_ID,
-  storeId = DEFAULT_STORE_ID
+  profile: any = INTERNAL_PROFILE_ID,
+  storeId: any = DEFAULT_STORE_ID
 ) {
-  const state = getProfileState(
-    defaultStoreId(storeId),
-    defaultProfile(profile)
-  );
+  const state = getProfileState(defaultStoreId(storeId), defaultProfile());
   return {
-    events: state.events.map((event) => ({ ...event })),
-    rules: state.rules.map((rule) => ({ ...rule })),
-    feedback: state.feedback.map((entry) => ({ ...entry })),
-    outcomes: state.outcomes.map((entry) => ({ ...entry })),
+    events: state.events.map((event: any) => ({ ...event })),
+    rules: state.rules.map((rule: any) => ({ ...rule })),
+    feedback: state.feedback.map((entry: any) => ({ ...entry })),
+    outcomes: state.outcomes.map((entry: any) => ({ ...entry })),
     learnerProfiles: state.learnerProfiles.map(cloneLearnerProfileRecord),
     identityGraphEdges: state.identityGraphEdges.map(
       cloneIdentityGraphEdgeRecord
     ),
-    misconceptions: state.misconceptions.map((record) => ({
+    misconceptions: state.misconceptions.map((record: any) => ({
       ...record,
       metadata: { ...record.metadata },
     })),
-    curriculumPlanItems: state.curriculumPlanItems.map((item) => ({
+    curriculumPlanItems: state.curriculumPlanItems.map((item: any) => ({
       ...item,
       metadata: { ...item.metadata },
     })),
     curriculumRecommendationSnapshots:
-      state.curriculumRecommendationSnapshots.map((snapshot) => ({
+      state.curriculumRecommendationSnapshots.map((snapshot: any) => ({
         ...snapshot,
         recommendations: cloneStable(snapshot.recommendations ?? [], []),
         metadata: cloneStable(snapshot.metadata ?? {}, {}),
       })),
-    reviewScheduleEntries: state.reviewScheduleEntries.map((entry) => ({
+    reviewScheduleEntries: state.reviewScheduleEntries.map((entry: any) => ({
       ...entry,
       metadata: { ...entry.metadata },
     })),
-    painSignals: state.painSignals.map((signal) => ({
+    painSignals: state.painSignals.map((signal: any) => ({
       ...signal,
       metadata: cloneStable(signal.metadata ?? {}, {}),
     })),
-    failureSignals: state.failureSignals.map((signal) => ({
+    failureSignals: state.failureSignals.map((signal: any) => ({
       ...signal,
       metadata: cloneStable(signal.metadata ?? {}, {}),
     })),
-    incidentEscalations: state.incidentEscalations.map((escalation) => ({
+    incidentEscalations: state.incidentEscalations.map((escalation: any) => ({
       ...escalation,
       metadata: cloneStable(escalation.metadata ?? {}, {}),
     })),
-    manualOverrideControls: state.manualOverrideControls.map((control) => ({
-      ...control,
-      metadata: cloneStable(control.metadata ?? {}, {}),
-    })),
+    manualOverrideControls: state.manualOverrideControls.map(
+      (control: any) => ({
+        ...control,
+        metadata: cloneStable(control.metadata ?? {}, {}),
+      })
+    ),
     schedulerClocks: cloneStable(state.schedulerClocks ?? {}, {}),
     reviewArchivalTiers: cloneStable(state.reviewArchivalTiers ?? {}, {}),
     recallAllowlistPolicy: cloneStable(state.recallAllowlistPolicy ?? {}, {}),
     degradedTutorSessions: cloneStable(state.degradedTutorSessions ?? [], []),
-    policyDecisions: state.policyDecisions.map((decision) => ({
+    policyDecisions: state.policyDecisions.map((decision: any) => ({
       ...decision,
       metadata: { ...decision.metadata },
     })),
@@ -11853,55 +12055,57 @@ export function snapshotProfile(
   };
 }
 
-function serializeState(state) {
+function serializeState(state: any) {
   return {
-    events: state.events.map((event) => ({ ...event })),
-    rules: state.rules.map((rule) => ({ ...rule })),
-    feedback: state.feedback.map((entry) => ({ ...entry })),
-    outcomes: state.outcomes.map((entry) => ({ ...entry })),
+    events: state.events.map((event: any) => ({ ...event })),
+    rules: state.rules.map((rule: any) => ({ ...rule })),
+    feedback: state.feedback.map((entry: any) => ({ ...entry })),
+    outcomes: state.outcomes.map((entry: any) => ({ ...entry })),
     learnerProfiles: state.learnerProfiles.map(cloneLearnerProfileRecord),
     identityGraphEdges: state.identityGraphEdges.map(
       cloneIdentityGraphEdgeRecord
     ),
-    misconceptions: state.misconceptions.map((record) => ({
+    misconceptions: state.misconceptions.map((record: any) => ({
       ...record,
       metadata: { ...record.metadata },
     })),
-    curriculumPlanItems: state.curriculumPlanItems.map((item) => ({
+    curriculumPlanItems: state.curriculumPlanItems.map((item: any) => ({
       ...item,
       metadata: { ...item.metadata },
     })),
     curriculumRecommendationSnapshots:
-      state.curriculumRecommendationSnapshots.map((snapshot) => ({
+      state.curriculumRecommendationSnapshots.map((snapshot: any) => ({
         ...snapshot,
         recommendations: cloneStable(snapshot.recommendations ?? [], []),
         metadata: cloneStable(snapshot.metadata ?? {}, {}),
       })),
-    reviewScheduleEntries: state.reviewScheduleEntries.map((entry) => ({
+    reviewScheduleEntries: state.reviewScheduleEntries.map((entry: any) => ({
       ...entry,
       metadata: { ...entry.metadata },
     })),
-    painSignals: state.painSignals.map((signal) => ({
+    painSignals: state.painSignals.map((signal: any) => ({
       ...signal,
       metadata: cloneStable(signal.metadata ?? {}, {}),
     })),
-    failureSignals: state.failureSignals.map((signal) => ({
+    failureSignals: state.failureSignals.map((signal: any) => ({
       ...signal,
       metadata: cloneStable(signal.metadata ?? {}, {}),
     })),
-    incidentEscalations: state.incidentEscalations.map((escalation) => ({
+    incidentEscalations: state.incidentEscalations.map((escalation: any) => ({
       ...escalation,
       metadata: cloneStable(escalation.metadata ?? {}, {}),
     })),
-    manualOverrideControls: state.manualOverrideControls.map((control) => ({
-      ...control,
-      metadata: cloneStable(control.metadata ?? {}, {}),
-    })),
+    manualOverrideControls: state.manualOverrideControls.map(
+      (control: any) => ({
+        ...control,
+        metadata: cloneStable(control.metadata ?? {}, {}),
+      })
+    ),
     schedulerClocks: cloneStable(state.schedulerClocks ?? {}, {}),
     reviewArchivalTiers: cloneStable(state.reviewArchivalTiers ?? {}, {}),
     recallAllowlistPolicy: cloneStable(state.recallAllowlistPolicy ?? {}, {}),
     degradedTutorSessions: cloneStable(state.degradedTutorSessions ?? [], []),
-    policyDecisions: state.policyDecisions.map((decision) => ({
+    policyDecisions: state.policyDecisions.map((decision: any) => ({
       ...decision,
       metadata: { ...decision.metadata },
     })),
@@ -11913,11 +12117,12 @@ function serializeState(state) {
 }
 
 export function exportStoreSnapshot() {
-  const storesPayload = {};
+  const storesPayload: Record<string, { profiles: Record<string, unknown> }> =
+    {};
 
   for (const storeId of [...stores.keys()].sort()) {
     const profiles = stores.get(storeId) ?? new Map();
-    const profilesPayload = {};
+    const profilesPayload: Record<string, unknown> = {};
     for (const profile of [...profiles.keys()].sort()) {
       profilesPayload[profile] = serializeState(profiles.get(profile));
     }
@@ -11927,8 +12132,66 @@ export function exportStoreSnapshot() {
   return { stores: storesPayload };
 }
 
-function normalizeState(rawState) {
-  const state = rawState && typeof rawState === "object" ? rawState : {};
+interface RawSchedulerClocksInput {
+  interactionTick?: unknown;
+  sleepTick?: unknown;
+  fatigueLoad?: unknown;
+  sleepThreshold?: unknown;
+  consolidationCount?: unknown;
+  lastInteractionAt?: unknown;
+  lastSleepAt?: unknown;
+  lastConsolidatedAt?: unknown;
+  updatedAt?: unknown;
+}
+
+interface RawReviewArchivalTiersInput {
+  activeLimit?: unknown;
+  activeReviewIds?: unknown;
+  tiers?: {
+    warm?: unknown;
+    cold?: unknown;
+    frozen?: unknown;
+  };
+  archivedRecords?: unknown;
+  updatedAt?: unknown;
+}
+
+interface RawRecallAllowlistPolicyInput {
+  policyId?: unknown;
+  allowedStoreIds?: unknown;
+  updatedAt?: unknown;
+  metadata?: unknown;
+}
+
+interface RawStateInput {
+  events?: unknown;
+  rules?: unknown;
+  feedback?: unknown;
+  outcomes?: unknown;
+  learnerProfiles?: unknown;
+  identityGraphEdges?: unknown;
+  misconceptions?: unknown;
+  curriculumPlanItems?: unknown;
+  curriculumRecommendationSnapshots?: unknown;
+  reviewScheduleEntries?: unknown;
+  painSignals?: unknown;
+  failureSignals?: unknown;
+  incidentEscalations?: unknown;
+  manualOverrideControls?: unknown;
+  degradedTutorSessions?: unknown;
+  policyDecisions?: unknown;
+  policyAuditTrail?: unknown;
+  weightAdjustmentLedger?: unknown;
+  shadowCandidates?: unknown;
+  replayEvaluations?: unknown;
+  schedulerClocks?: RawSchedulerClocksInput;
+  reviewArchivalTiers?: RawReviewArchivalTiersInput;
+  recallAllowlistPolicy?: RawRecallAllowlistPolicyInput;
+}
+
+function normalizeState(rawState: any) {
+  const state: RawStateInput =
+    rawState && typeof rawState === "object" ? (rawState as RawStateInput) : {};
   const events = Array.isArray(state.events) ? state.events : [];
   const rules = Array.isArray(state.rules) ? state.rules : [];
   const feedback = Array.isArray(state.feedback) ? state.feedback : [];
@@ -11983,18 +12246,18 @@ function normalizeState(rawState) {
     : [];
   const eventDigests = new Set(
     events
-      .map((event) =>
+      .map((event: any) =>
         event && typeof event === "object" ? event.digest : null
       )
-      .filter((digest) => typeof digest === "string" && digest)
+      .filter((digest: any) => typeof digest === "string" && digest)
   );
 
   return {
-    events: events.map((event) => ({ ...event })),
+    events: events.map((event: any) => ({ ...event })),
     eventDigests,
-    rules: rules.map((rule) => ({ ...rule })),
+    rules: rules.map((rule: any) => ({ ...rule })),
     feedback: sortByTimestampAndId(
-      feedback.map((entry) => ({
+      feedback.map((entry: any) => ({
         ...entry,
         feedbackId:
           normalizeBoundedStringLenient(entry?.feedbackId, 64) ??
@@ -12022,7 +12285,7 @@ function normalizeState(rawState) {
       "feedbackId"
     ),
     outcomes: sortByTimestampAndId(
-      outcomes.map((entry) => ({
+      outcomes.map((entry: any) => ({
         ...entry,
         outcomeId:
           normalizeBoundedStringLenient(entry?.outcomeId, 64) ??
@@ -12045,10 +12308,10 @@ function normalizeState(rawState) {
       "recordedAt",
       "outcomeId"
     ),
-    learnerProfiles: learnerProfiles.map((learnerProfile) => ({
+    learnerProfiles: learnerProfiles.map((learnerProfile: any) => ({
       ...learnerProfile,
       identityRefs: Array.isArray(learnerProfile?.identityRefs)
-        ? learnerProfile.identityRefs.map((identityRef) => ({
+        ? learnerProfile.identityRefs.map((identityRef: any) => ({
             ...identityRef,
             metadata: isPlainObject(identityRef?.metadata)
               ? { ...identityRef.metadata }
@@ -12087,7 +12350,7 @@ function normalizeState(rawState) {
         ? stableSortObject(learnerProfile.attributeTruth)
         : {},
     })),
-    identityGraphEdges: identityGraphEdges.map((edge) => ({
+    identityGraphEdges: identityGraphEdges.map((edge: any) => ({
       ...edge,
       fromRef: isPlainObject(edge?.fromRef)
         ? {
@@ -12124,16 +12387,16 @@ function normalizeState(rawState) {
         )
       ),
     })),
-    misconceptions: misconceptions.map((record) => ({
+    misconceptions: misconceptions.map((record: any) => ({
       ...record,
       metadata: isPlainObject(record?.metadata) ? { ...record.metadata } : {},
     })),
-    curriculumPlanItems: curriculumPlanItems.map((item) => ({
+    curriculumPlanItems: curriculumPlanItems.map((item: any) => ({
       ...item,
       metadata: isPlainObject(item?.metadata) ? { ...item.metadata } : {},
     })),
     curriculumRecommendationSnapshots: curriculumRecommendationSnapshots.map(
-      (snapshot) => ({
+      (snapshot: any) => ({
         ...snapshot,
         recommendationSetId:
           normalizeBoundedString(
@@ -12162,12 +12425,12 @@ function normalizeState(rawState) {
           : {},
       })
     ),
-    reviewScheduleEntries: reviewScheduleEntries.map((entry) => ({
+    reviewScheduleEntries: reviewScheduleEntries.map((entry: any) => ({
       ...entry,
       metadata: isPlainObject(entry?.metadata) ? { ...entry.metadata } : {},
     })),
     painSignals: sortByTimestampAndId(
-      painSignals.map((signal) => ({
+      painSignals.map((signal: any) => ({
         ...signal,
         painSignalId:
           normalizeBoundedString(
@@ -12185,7 +12448,7 @@ function normalizeState(rawState) {
       "painSignalId"
     ),
     failureSignals: sortByTimestampAndId(
-      failureSignals.map((signal) => ({
+      failureSignals.map((signal: any) => ({
         ...signal,
         failureSignalId:
           normalizeBoundedString(
@@ -12203,7 +12466,7 @@ function normalizeState(rawState) {
       "failureSignalId"
     ),
     incidentEscalations: sortByTimestampAndId(
-      incidentEscalations.map((escalation) => ({
+      incidentEscalations.map((escalation: any) => ({
         ...escalation,
         escalationSignalId:
           normalizeBoundedString(
@@ -12238,7 +12501,7 @@ function normalizeState(rawState) {
       "escalationSignalId"
     ),
     manualOverrideControls: sortByTimestampAndId(
-      manualOverrideControls.map((control) => {
+      manualOverrideControls.map((control: any) => {
         const overrideControlId =
           normalizeBoundedString(
             control?.overrideControlId,
@@ -12249,9 +12512,11 @@ function normalizeState(rawState) {
           control?.overrideAction,
           32
         );
-        const overrideAction = MANUAL_OVERRIDE_ACTIONS.has(overrideActionRaw)
-          ? overrideActionRaw
-          : "suppress";
+        const overrideAction =
+          overrideActionRaw !== null &&
+          MANUAL_OVERRIDE_ACTIONS.has(overrideActionRaw)
+            ? overrideActionRaw
+            : "suppress";
         const actor =
           normalizeBoundedStringLenient(control?.actor, 128) ??
           "human_unspecified";
@@ -12318,7 +12583,7 @@ function normalizeState(rawState) {
       "overrideControlId"
     ),
     shadowCandidates: sortByTimestampAndId(
-      shadowCandidates.map((candidate) => {
+      shadowCandidates.map((candidate: any) => {
         const candidateId =
           normalizeBoundedString(
             candidate?.candidateId,
@@ -12374,7 +12639,7 @@ function normalizeState(rawState) {
       "candidateId"
     ),
     replayEvaluations: sortByTimestampAndId(
-      replayEvaluations.map((evaluation) => ({
+      replayEvaluations.map((evaluation: any) => ({
         ...evaluation,
         replayEvalId:
           normalizeBoundedString(
@@ -12468,7 +12733,7 @@ function normalizeState(rawState) {
       },
       archivedRecords: Array.isArray(state.reviewArchivalTiers?.archivedRecords)
         ? sortByTimestampAndId(
-            state.reviewArchivalTiers.archivedRecords.map((record) => ({
+            state.reviewArchivalTiers.archivedRecords.map((record: any) => ({
               ...record,
               archiveRecordId:
                 normalizeBoundedString(
@@ -12513,11 +12778,16 @@ function normalizeState(rawState) {
         DEFAULT_VERSION_TIMESTAMP
       ),
       metadata: isPlainObject(state.recallAllowlistPolicy?.metadata)
-        ? { ...state.recallAllowlistPolicy.metadata }
+        ? {
+            ...(state.recallAllowlistPolicy?.metadata as Record<
+              string,
+              unknown
+            >),
+          }
         : {},
     },
     degradedTutorSessions: sortByTimestampAndId(
-      degradedTutorSessions.map((session) => ({
+      degradedTutorSessions.map((session: any) => ({
         ...session,
         sessionId:
           normalizeBoundedString(
@@ -12533,14 +12803,14 @@ function normalizeState(rawState) {
       "timestamp",
       "sessionId"
     ),
-    policyDecisions: policyDecisions.map((decision) => ({
+    policyDecisions: policyDecisions.map((decision: any) => ({
       ...decision,
       metadata: isPlainObject(decision?.metadata)
         ? { ...decision.metadata }
         : {},
     })),
     policyAuditTrail: sortByTimestampAndId(
-      policyAuditTrail.map((entry) => ({
+      policyAuditTrail.map((entry: any) => ({
         ...entry,
         auditEventId:
           normalizeBoundedString(
@@ -12558,7 +12828,7 @@ function normalizeState(rawState) {
       "auditEventId"
     ),
     weightAdjustmentLedger: sortByTimestampAndId(
-      weightAdjustmentLedger.map((entry) => {
+      weightAdjustmentLedger.map((entry: any) => {
         const adjustmentId =
           normalizeBoundedString(
             entry?.adjustmentId,
@@ -12608,17 +12878,20 @@ function normalizeState(rawState) {
   };
 }
 
-function importProfiles(storeId, profiles) {
+function importProfiles(storeId: any, profiles: any) {
   const normalizedStore = defaultStoreId(storeId);
   const profileMap = getStoreProfiles(normalizedStore);
-  const source = profiles && typeof profiles === "object" ? profiles : {};
+  const source: Record<string, unknown> =
+    profiles && typeof profiles === "object"
+      ? (profiles as Record<string, unknown>)
+      : {};
 
   for (const profile of Object.keys(source).sort()) {
-    profileMap.set(defaultProfile(profile), normalizeState(source[profile]));
+    profileMap.set(defaultProfile(), normalizeState(source[profile]));
   }
 }
 
-export function importStoreSnapshot(snapshot) {
+export function importStoreSnapshot(snapshot: any) {
   stores.clear();
   if (!snapshot || typeof snapshot !== "object") {
     return;
@@ -12648,7 +12921,7 @@ export function importStoreSnapshot(snapshot) {
   }
 }
 
-function normalizeConfiguredPolicyPackPlugin(plugin) {
+function normalizeConfiguredPolicyPackPlugin(plugin: any) {
   if (typeof plugin === "function") {
     return {
       name: normalizePolicyPackPluginName(plugin.name),
@@ -12677,7 +12950,7 @@ function normalizeConfiguredPolicyPackPlugin(plugin) {
   );
 }
 
-export function setPolicyPackPlugin(plugin) {
+export function setPolicyPackPlugin(plugin: any) {
   policyPackPlugin = normalizeConfiguredPolicyPackPlugin(plugin);
 }
 
@@ -12691,13 +12964,10 @@ export function resetStore() {
 }
 
 export function findRuleByDigestPrefix(
-  profile,
-  digestPrefix,
-  storeId = DEFAULT_STORE_ID
+  profile: any,
+  digestPrefix: any,
+  storeId: any = DEFAULT_STORE_ID
 ) {
-  const state = getProfileState(
-    defaultStoreId(storeId),
-    defaultProfile(profile)
-  );
+  const state = getProfileState(defaultStoreId(storeId), defaultProfile());
   return findByDigestPrefix(state.rules, digestPrefix, "ruleId");
 }
