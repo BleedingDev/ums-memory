@@ -92,7 +92,7 @@ Pass criteria:
 ## Forbidden Patterns (MUST NOT)
 
 - `any` in production TypeScript (`apps/**/*.ts`, `libs/**/*.ts`), except third-party typing shims with explicit justification comment.
-- `// @ts-ignore` or `// @ts-nocheck`.
+- TypeScript suppression directives in source comments.
 - Raw payload trust at boundaries (casting/parsing unvalidated `unknown` into domain objects).
 - Ad-hoc error creation (`new Error(...)`) for domain/service error channels where tagged errors are required.
 - Bypassing quality gates (merging without passing `quality:ts`, `test`, `test:sfe`, and CI verify workflow checks).

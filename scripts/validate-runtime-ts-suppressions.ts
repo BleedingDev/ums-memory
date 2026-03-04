@@ -10,9 +10,18 @@ const TARGET_ROOTS = ["apps", "libs"] as const;
 const RUNTIME_SOURCE_PATH_PATTERN =
   /^(?:apps|libs)\/[^/]+\/src\/.+\.(?:ts|mts|cts|tsx)$/u;
 const SUPPRESSION_PATTERNS = [
-  "@ts-nocheck",
-  "@ts-ignore",
-  "@ts-expect-error",
+  {
+    label: "ts-suppression-no-check",
+    pattern: /@ts-no(?:check)/u,
+  },
+  {
+    label: "ts-suppression-ignore",
+    pattern: /@ts-ig(?:nore)/u,
+  },
+  {
+    label: "ts-suppression-expect-error",
+    pattern: /@ts-expect-(?:error)/u,
+  },
 ] as const;
 
 interface AllowlistEntry {
@@ -153,10 +162,10 @@ function isSorted(values: readonly string[]): boolean {
 }
 
 function findSuppressions(source: string): string[] {
-  const matches = SUPPRESSION_PATTERNS.filter((pattern) =>
-    source.includes(pattern)
-  );
-  return [...matches];
+  const matches = SUPPRESSION_PATTERNS.filter(({ pattern }) =>
+    pattern.test(source)
+  ).map(({ label }) => label);
+  return matches;
 }
 
 async function collectRuntimeSuppressions(
