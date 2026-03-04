@@ -8,8 +8,6 @@ import test from "node:test";
 const ROOT = process.cwd();
 const BUN_AVAILABLE =
   spawnSync("bun", ["--version"], { encoding: "utf8" }).status === 0;
-const CURL_AVAILABLE =
-  spawnSync("curl", ["--version"], { encoding: "utf8" }).status === 0;
 
 let buildDir: string | null = null;
 let apiBinaryPath: string | null = null;
@@ -114,32 +112,21 @@ async function stopBinaryServer(proc: ChildProcess | undefined): Promise<void> {
   });
 }
 
-function requestJson(
+async function requestJson(
   url: string,
   { method = "GET", headers = {}, body = null }: JsonRequestOptions = {}
 ) {
-  const args = ["-sS", "-X", method];
-  for (const [key, value] of Object.entries(headers)) {
-    args.push("-H", `${key}: ${value}`);
-  }
+  const requestInit: RequestInit = {
+    method,
+    headers,
+  };
   if (body !== null && body !== undefined) {
-    args.push("--data", body);
+    requestInit.body = body;
   }
-  args.push("-w", "\n%{http_code}", url);
-  const result = spawnSync("curl", args, { cwd: ROOT, encoding: "utf8" });
-  if (result.status !== 0) {
-    throw new Error(
-      `curl request failed (status=${result.status}): ${result.stderr || result.stdout}`
-    );
-  }
-  const output = result.stdout ?? "";
-  const newlineIndex = output.lastIndexOf("\n");
-  const rawBody = newlineIndex !== -1 ? output.slice(0, newlineIndex) : "";
-  const statusCodeRaw =
-    newlineIndex !== -1 ? output.slice(newlineIndex + 1).trim() : "0";
-  const status = Number.parseInt(statusCodeRaw, 10);
+  const response = await fetch(url, requestInit);
+  const rawBody = await response.text();
   return {
-    status: Number.isFinite(status) ? status : 0,
+    status: response.status,
     body: rawBody ? JSON.parse(rawBody) : null,
   };
 }
@@ -182,7 +169,7 @@ test.after(async () => {
 
 test(
   "compiled API executable serves root + ingest/context routes",
-  { skip: !BUN_AVAILABLE || !CURL_AVAILABLE },
+  { skip: !BUN_AVAILABLE },
   async () => {
     const tempDir = await mkdtemp(resolve(tmpdir(), "ums-api-sfe-state-"));
     const stateFile = resolve(tempDir, "state.json");
@@ -247,7 +234,7 @@ test(
 
 test(
   "compiled API executable preserves deterministic error envelopes",
-  { skip: !BUN_AVAILABLE || !CURL_AVAILABLE },
+  { skip: !BUN_AVAILABLE },
   async () => {
     const tempDir = await mkdtemp(resolve(tmpdir(), "ums-api-sfe-state-"));
     const stateFile = resolve(tempDir, "state.json");

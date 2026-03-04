@@ -4,6 +4,7 @@ import {
   readFile,
   rename,
   rm,
+  stat,
   writeFile,
   type FileHandle,
 } from "node:fs/promises";
@@ -18,14 +19,18 @@ import {
 export const DEFAULT_SHARED_STATE_FILE =
   process.env["UMS_STATE_FILE"] ?? ".ums-state.json";
 
-const LOCK_TIMEOUT_MS = Number.parseInt(
-  process.env["UMS_STATE_LOCK_TIMEOUT_MS"] ?? "8000",
-  10
-);
-const LOCK_RETRY_MS = Number.parseInt(
-  process.env["UMS_STATE_LOCK_RETRY_MS"] ?? "25",
-  10
-);
+function readPositiveIntEnv(name: string, fallback: number): number {
+  const value = process.env[name];
+  if (typeof value !== "string") {
+    return fallback;
+  }
+  const parsed = Number.parseInt(value, 10);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+const LOCK_TIMEOUT_MS = readPositiveIntEnv("UMS_STATE_LOCK_TIMEOUT_MS", 8000);
+const LOCK_RETRY_MS = readPositiveIntEnv("UMS_STATE_LOCK_RETRY_MS", 25);
+const LOCK_STALE_MS = readPositiveIntEnv("UMS_STATE_LOCK_STALE_MS", 1000);
 const READ_ONLY_OPERATIONS = new Set([
   "context",
   "validate",
@@ -85,6 +90,131 @@ function isErrnoException(error: unknown): error is NodeJS.ErrnoException {
     "code" in error &&
     typeof (error as { code?: unknown }).code === "string"
   );
+}
+
+function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    if (isErrnoException(error)) {
+      return error.code === "EPERM";
+    }
+    return false;
+  }
+}
+
+function parseLockPid(raw: string): number | null {
+  const trimmed = raw.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  if (trimmed.startsWith("{")) {
+    try {
+      const parsed: unknown = JSON.parse(trimmed);
+      if (
+        parsed &&
+        typeof parsed === "object" &&
+        "pid" in parsed &&
+        Number.isInteger((parsed as { pid?: unknown }).pid) &&
+        (parsed as { pid: number }).pid > 0
+      ) {
+        return (parsed as { pid: number }).pid;
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  }
+
+  const firstToken = trimmed.split(/\s+/, 1)[0] ?? "";
+  const pid = Number.parseInt(firstToken, 10);
+  return Number.isInteger(pid) && pid > 0 ? pid : null;
+}
+
+async function canReclaimLockFile(lockPath: string): Promise<boolean> {
+  let ownerPid: number | null = null;
+  try {
+    const raw = await readFile(lockPath, "utf8");
+    ownerPid = parseLockPid(raw);
+  } catch (error) {
+    if (isErrnoException(error) && error.code === "ENOENT") {
+      return false;
+    }
+    throw error;
+  }
+
+  if (ownerPid !== null && isProcessAlive(ownerPid)) {
+    return false;
+  }
+
+  if (ownerPid === null) {
+    try {
+      const metadata = await stat(lockPath);
+      const ageMs = Date.now() - metadata.mtimeMs;
+      if (ageMs < LOCK_STALE_MS) {
+        return false;
+      }
+    } catch (error) {
+      if (isErrnoException(error) && error.code === "ENOENT") {
+        return false;
+      }
+      throw error;
+    }
+  }
+
+  return true;
+}
+
+async function acquireReclaimLock(
+  reclaimPath: string
+): Promise<FileHandle | null> {
+  const openReclaimHandle = async (): Promise<FileHandle> => {
+    const handle = await open(reclaimPath, "wx");
+    await handle.writeFile(`${process.pid}\n`, "utf8");
+    return handle;
+  };
+
+  try {
+    return await openReclaimHandle();
+  } catch (error) {
+    if (!(isErrnoException(error) && error.code === "EEXIST")) {
+      throw error;
+    }
+  }
+
+  if (!(await canReclaimLockFile(reclaimPath))) {
+    return null;
+  }
+  await rm(reclaimPath, { force: true }).catch(ignoreCleanupError);
+
+  try {
+    return await openReclaimHandle();
+  } catch (error) {
+    if (isErrnoException(error) && error.code === "EEXIST") {
+      return null;
+    }
+    throw error;
+  }
+}
+
+async function reclaimStaleLock(lockPath: string): Promise<boolean> {
+  const reclaimPath = `${lockPath}.reclaim`;
+  const reclaimHandle = await acquireReclaimLock(reclaimPath);
+  if (!reclaimHandle) {
+    return false;
+  }
+  try {
+    if (!(await canReclaimLockFile(lockPath))) {
+      return false;
+    }
+    await rm(lockPath, { force: true }).catch(ignoreCleanupError);
+    return true;
+  } finally {
+    await reclaimHandle.close().catch(ignoreCleanupError);
+    await rm(reclaimPath, { force: true }).catch(ignoreCleanupError);
+  }
 }
 
 export function resolveStateFilePath(
@@ -158,6 +288,9 @@ async function acquireLock(
     } catch (error) {
       if (!(isErrnoException(error) && error.code === "EEXIST")) {
         throw error;
+      }
+      if (await reclaimStaleLock(lockPath)) {
+        continue;
       }
       if (Date.now() >= deadline) {
         throw withCode(
