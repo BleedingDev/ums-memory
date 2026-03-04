@@ -90,6 +90,179 @@ test("ingest is deterministic for identical request payload", () => {
   assert.deepEqual(first.eventRefs, second.eventRefs);
 });
 
+test("ingest deduplicates identical events within a single payload", () => {
+  const result = executeOperation("ingest", {
+    storeId: "coding-agent",
+    profile: "demo",
+    events: [
+      { type: "note", source: "chat", content: "duplicate candidate" },
+      { type: "note", source: "chat", content: "duplicate candidate" },
+    ],
+  });
+
+  assert.equal(result.accepted, 1);
+  assert.equal(result.duplicates, 1);
+  assert.equal(result.eventRefs.length, 2);
+  assert.equal(result.eventRefs[0].status, "accepted");
+  assert.equal(result.eventRefs[1].status, "duplicate");
+
+  const snapshot = snapshotProfile("demo", "coding-agent");
+  assert.equal(snapshot.events.length, 1);
+});
+
+test("ingest keeps same-content events with distinct explicit ids", () => {
+  const result = executeOperation("ingest", {
+    storeId: "coding-agent",
+    profile: "demo",
+    events: [
+      {
+        id: "evt-distinct-1",
+        type: "note",
+        source: "chat",
+        content: "same-content",
+      },
+      {
+        id: "evt-distinct-2",
+        type: "note",
+        source: "chat",
+        content: "same-content",
+      },
+    ],
+  });
+
+  assert.equal(result.accepted, 2);
+  assert.equal(result.duplicates, 0);
+  const snapshot = snapshotProfile("demo", "coding-agent");
+  assert.equal(snapshot.events.length, 2);
+  assert.deepEqual(snapshot.events.map((event: any) => event.eventId).sort(), [
+    "evt-distinct-1",
+    "evt-distinct-2",
+  ]);
+});
+
+test("ingest keeps legacy ordinal-based replay semantics across requests", () => {
+  const first = executeOperation("ingest", {
+    storeId: "coding-agent",
+    profile: "demo",
+    events: [
+      { type: "note", source: "chat", content: "same-content" },
+      { type: "note", source: "chat", content: "other-content" },
+    ],
+  });
+  const second = executeOperation("ingest", {
+    storeId: "coding-agent",
+    profile: "demo",
+    events: [
+      { type: "note", source: "chat", content: "new-content" },
+      { type: "note", source: "chat", content: "same-content" },
+    ],
+  });
+
+  assert.equal(first.accepted, 2);
+  assert.equal(first.duplicates, 0);
+  assert.equal(second.accepted, 2);
+  assert.equal(second.duplicates, 0);
+
+  const snapshot = snapshotProfile("demo", "coding-agent");
+  assert.equal(snapshot.events.length, 4);
+});
+
+test("importStoreSnapshot preserves profile keys during round-trip export", () => {
+  const storeId = "tenant-import-profiles";
+  importStoreSnapshot({
+    stores: {
+      [storeId]: {
+        profiles: {
+          alpha: {
+            events: [
+              {
+                eventId: "evt-alpha-1",
+                type: "note",
+                source: "import",
+                content: "alpha profile event",
+                digest: "digest-alpha-1",
+              },
+            ],
+          },
+          beta: {
+            events: [
+              {
+                eventId: "evt-beta-1",
+                type: "note",
+                source: "import",
+                content: "beta profile event",
+                digest: "digest-beta-1",
+              },
+            ],
+          },
+        },
+      },
+    },
+  });
+
+  const exported = exportStoreSnapshot();
+  const profiles = exported.stores[storeId]?.profiles as Record<
+    string,
+    { events?: Array<{ content?: string }> }
+  >;
+  assert.ok(profiles);
+  assert.deepEqual(Object.keys(profiles).sort(), [
+    "__store_default__",
+    "alpha",
+    "beta",
+  ]);
+  assert.equal(
+    profiles["__store_default__"]?.events?.[0]?.content,
+    "beta profile event"
+  );
+  assert.equal(profiles["alpha"]?.events?.[0]?.content, "alpha profile event");
+  assert.equal(profiles["beta"]?.events?.[0]?.content, "beta profile event");
+});
+
+test("importStoreSnapshot keeps explicit default profile without overwrite", () => {
+  const storeId = "tenant-import-explicit-default";
+  importStoreSnapshot({
+    stores: {
+      [storeId]: {
+        profiles: {
+          __store_default__: {
+            events: [
+              {
+                eventId: "evt-default-1",
+                type: "note",
+                source: "import",
+                content: "explicit default profile event",
+                digest: "digest-default-1",
+              },
+            ],
+          },
+          alpha: {
+            events: [
+              {
+                eventId: "evt-alpha-1",
+                type: "note",
+                source: "import",
+                content: "alpha profile event",
+                digest: "digest-alpha-1",
+              },
+            ],
+          },
+        },
+      },
+    },
+  });
+
+  const exported = exportStoreSnapshot();
+  const profiles = exported.stores[storeId]?.profiles as Record<
+    string,
+    { events?: Array<{ content?: string }> }
+  >;
+  assert.equal(
+    profiles["__store_default__"]?.events?.[0]?.content,
+    "explicit default profile event"
+  );
+});
+
 test("ums-memory-yji.6 memory_console operations return deterministic bounded operator read models", () => {
   const storeId = "tenant-yji6-core";
   const profile = "operator-yji6-core";

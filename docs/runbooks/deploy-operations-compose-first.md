@@ -22,6 +22,7 @@
 | --------------------------- | --------------- | ------------------------------------- |
 | `UMS_API_HOST`              | `api`           | `0.0.0.0`                             |
 | `UMS_API_PORT`              | `api`           | `8787`                                |
+| `UMS_API_MAX_JSON_BODY_BYTES` | `api`         | _unset_ (defaults to `1048576`)       |
 | `UMS_STATE_FILE`            | `api`, `worker` | `/var/lib/ums/.ums-state.json`        |
 | `UMS_STATE_LOCK_TIMEOUT_MS` | `api`           | `8000`                                |
 | `UMS_STATE_LOCK_RETRY_MS`   | `api`           | `25`                                  |

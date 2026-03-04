@@ -1146,6 +1146,45 @@ test("http server rejects non-object JSON payloads", async () => {
   }
 });
 
+test("http server rejects oversized JSON payloads", async () => {
+  resetStore();
+  const { server, host } = await startApiServer({
+    host: "127.0.0.1",
+    port: 0,
+    stateFile: null,
+  });
+  const address = server.address();
+  assert.ok(address && typeof address === "object");
+  const base = `http://${host}:${address.port}`;
+
+  try {
+    const oversizedBody = JSON.stringify({
+      events: [
+        {
+          type: "note",
+          source: "http-test",
+          content: "x".repeat(1_060_000),
+        },
+      ],
+    });
+
+    const response = await fetch(`${base}/v1/ingest`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: oversizedBody,
+    });
+    assert.equal(response.status, 413);
+    const body = await response.json();
+    assert.equal(body.ok, false);
+    assert.equal(body.error.code, "PAYLOAD_TOO_LARGE");
+    assert.match(body.error.message, /exceeds/i);
+  } finally {
+    await new Promise<void>((resolve, reject) => {
+      server.close((error) => (error ? reject(error) : resolve()));
+    });
+  }
+});
+
 test("ums-memory-d6q.1.11/ums-memory-d6q.1.9 http routes reject missing evidence pointers and expose policy exception observability", async () => {
   resetStore();
   const { server, host } = await startApiServer({

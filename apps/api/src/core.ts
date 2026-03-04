@@ -2501,21 +2501,30 @@ function getProfileState(storeId: any, profile: any) {
 
 function normalizeEvent(raw: any, index: any) {
   const event = raw && typeof raw === "object" ? raw : {};
+  const explicitEventId =
+    typeof event.id === "string" && event.id.trim().length > 0
+      ? event.id.trim()
+      : null;
+  const dedupeMaterial = stableStringify({
+    source: event.source ?? "unknown",
+    type: event.type ?? "note",
+    content: event.content ?? "",
+    eventId: explicitEventId,
+  });
   const material = stableStringify({
     source: event.source ?? "unknown",
     type: event.type ?? "note",
     content: event.content ?? "",
     ordinal: index,
   });
+  const dedupeDigest = hash(dedupeMaterial);
   const digest = hash(material);
   return {
-    eventId:
-      typeof event.id === "string" && event.id
-        ? event.id
-        : makeId("evt", digest),
+    eventId: explicitEventId ?? makeId("evt", digest),
     type: event.type ?? "note",
     source: event.source ?? "unknown",
     content: event.content ?? "",
+    dedupeDigest,
     digest,
   };
 }
@@ -4792,11 +4801,21 @@ function runIngest(request: any) {
   const state = getProfileState(storeId, profile);
   const events = Array.isArray(request.events) ? request.events : [];
   const refs = [];
+  const requestDigests = new Set();
   let accepted = 0;
   let duplicates = 0;
 
-  for (let i = 0; i < events.length; i += 1) {
-    const normalized = normalizeEvent(events[i], i);
+  for (const [index, event] of events.entries()) {
+    const normalized = normalizeEvent(event, index);
+    if (requestDigests.has(normalized.dedupeDigest)) {
+      duplicates += 1;
+      refs.push({
+        eventId: normalized.eventId,
+        digest: normalized.digest,
+        status: "duplicate",
+      });
+      continue;
+    }
     if (state.eventDigests.has(normalized.digest)) {
       duplicates += 1;
       refs.push({
@@ -4806,6 +4825,7 @@ function runIngest(request: any) {
       });
       continue;
     }
+    requestDigests.add(normalized.dedupeDigest);
     state.eventDigests.add(normalized.digest);
     state.events.push(normalized);
     accepted += 1;
@@ -12885,9 +12905,22 @@ function importProfiles(storeId: any, profiles: any) {
     profiles && typeof profiles === "object"
       ? (profiles as Record<string, unknown>)
       : {};
+  let fallbackDefaultState: ReturnType<typeof normalizeState> | null = null;
 
   for (const profile of Object.keys(source).sort()) {
-    profileMap.set(defaultProfile(), normalizeState(source[profile]));
+    const normalizedProfile =
+      typeof profile === "string" && profile.trim().length > 0
+        ? profile.trim()
+        : defaultProfile();
+    const normalizedState = normalizeState(source[profile]);
+    profileMap.set(normalizedProfile, normalizedState);
+    if (normalizedProfile !== defaultProfile()) {
+      fallbackDefaultState = normalizedState;
+    }
+  }
+
+  if (!profileMap.has(defaultProfile()) && fallbackDefaultState !== null) {
+    profileMap.set(defaultProfile(), fallbackDefaultState);
   }
 }
 

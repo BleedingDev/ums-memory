@@ -94,6 +94,10 @@ const ENABLE_CONSOLE_UI = parseBooleanFlag(
   process.env["UMS_API_ENABLE_CONSOLE_UI"]
 );
 const API_PREFIX = "/v1";
+const DEFAULT_MAX_JSON_BODY_BYTES = parsePositiveInteger(
+  process.env["UMS_API_MAX_JSON_BODY_BYTES"],
+  1_048_576
+);
 const DEFAULT_AUTH_REQUIRED =
   typeof process.env["UMS_API_AUTH_REQUIRED"] === "string"
     ? parseBooleanFlag(process.env["UMS_API_AUTH_REQUIRED"])
@@ -137,6 +141,20 @@ function parseBooleanFlag(value: unknown): boolean {
     normalized === "yes" ||
     normalized === "on"
   );
+}
+
+function parsePositiveInteger(value: unknown, fallback: number): number {
+  if (typeof value === "number" && Number.isInteger(value) && value > 0) {
+    return value;
+  }
+  if (typeof value !== "string") {
+    return fallback;
+  }
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    return fallback;
+  }
+  return parsed;
 }
 
 function normalizeConsoleUiToggle(value: unknown): boolean {
@@ -390,9 +408,37 @@ function isPathPublic(pathname: string): boolean {
 }
 
 async function parseJsonBody(req: IncomingMessage): Promise<unknown> {
+  const contentLengthHeader = req.headers["content-length"];
+  const contentLengthRaw = Array.isArray(contentLengthHeader)
+    ? contentLengthHeader[0]
+    : contentLengthHeader;
+  if (typeof contentLengthRaw === "string") {
+    const declaredLength = Number.parseInt(contentLengthRaw, 10);
+    if (
+      Number.isInteger(declaredLength) &&
+      declaredLength > DEFAULT_MAX_JSON_BODY_BYTES
+    ) {
+      const payloadTooLarge = new Error(
+        `Request body exceeds ${DEFAULT_MAX_JSON_BODY_BYTES} bytes.`
+      ) as Error & { code: string };
+      payloadTooLarge.code = "PAYLOAD_TOO_LARGE";
+      throw payloadTooLarge;
+    }
+  }
+
   const chunks: Buffer[] = [];
+  let totalBytes = 0;
   for await (const chunk of req) {
-    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    const nextChunk = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    totalBytes += nextChunk.byteLength;
+    if (totalBytes > DEFAULT_MAX_JSON_BODY_BYTES) {
+      const payloadTooLarge = new Error(
+        `Request body exceeds ${DEFAULT_MAX_JSON_BODY_BYTES} bytes.`
+      ) as Error & { code: string };
+      payloadTooLarge.code = "PAYLOAD_TOO_LARGE";
+      throw payloadTooLarge;
+    }
+    chunks.push(nextChunk);
   }
   const raw = Buffer.concat(chunks).toString("utf8").trim();
   if (!raw) {
@@ -413,6 +459,21 @@ function toErrorResponse(error: unknown): {
         error: {
           code: "INVALID_JSON",
           message: "Request body must be valid JSON.",
+        },
+      },
+    };
+  }
+  if (hasErrorCode(error, "PAYLOAD_TOO_LARGE")) {
+    return {
+      statusCode: 413,
+      body: {
+        ok: false,
+        error: {
+          code: "PAYLOAD_TOO_LARGE",
+          message: toErrorMessage(
+            error,
+            "Request body exceeds the configured size limit."
+          ),
         },
       },
     };
