@@ -1,105 +1,26 @@
 import { isAbsolute, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
-import {
-  executeOperation,
-  listOperations,
-  resetPolicyPackPlugin,
-  setPolicyPackPlugin,
-} from "./core.ts";
-import {
-  DEFAULT_SHARED_STATE_FILE,
-  executeOperationWithSharedState,
-} from "./persistence.ts";
+import { createRuntimeAdapter as createEffectRuntimeAdapter } from "./effect-runtime-adapter.ts";
+import { DEFAULT_SHARED_STATE_FILE } from "./persistence.ts";
 
 export const DEFAULT_RUNTIME_ADAPTER_EXPORT = "createRuntimeAdapter";
+export const DEFAULT_RUNTIME_ADAPTER_MODULE = "builtin:effect-runtime-adapter";
 export const DEFAULT_RUNTIME_STATE_FILE = DEFAULT_SHARED_STATE_FILE;
 export const DEFAULT_POLICY_PACK_PLUGIN_EXPORT = "createPolicyPackPlugin";
 
 const RUNTIME_ADAPTER_LOAD_ERROR_CODE = "RUNTIME_ADAPTER_LOAD_ERROR";
 const RUNTIME_ADAPTER_CONTRACT_ERROR_CODE = "RUNTIME_ADAPTER_CONTRACT_ERROR";
-const LEGACY_RUNTIME_ADAPTER_SOURCE = "legacy-core-persistence";
 
-interface RuntimeAdapterConfig {
-  modulePath: string | null;
-  exportName: string;
-}
-
-interface RuntimeAdapterListOptions {
-  env?: NodeJS.ProcessEnv;
-}
-
-interface RuntimeAdapterExecuteOptions {
-  operation?: unknown;
-  requestBody?: unknown;
-  stateFile?: string | null;
-  env?: NodeJS.ProcessEnv;
-  reload?: boolean;
-}
-
-interface RuntimeAdapter {
-  source?: string;
-  listOperations: (
-    options?: RuntimeAdapterListOptions
-  ) => Promise<unknown> | unknown;
-  executeOperation: (options: {
-    operation: string;
-    requestBody?: unknown;
-    stateFile?: string | null;
-    env?: NodeJS.ProcessEnv;
-  }) => Promise<unknown> | unknown;
-}
-
-interface RuntimeAdapterFactoryInput {
-  createLegacyRuntimeAdapter: () => RuntimeAdapter;
-  defaultStateFile: string;
-}
-
-interface ResolveRuntimeAdapterOptions {
-  env?: NodeJS.ProcessEnv;
-  reload?: boolean;
-}
-
-interface CodedError extends Error {
+type CodedError = Error & {
   code: string;
   cause?: unknown;
-}
+};
 
-interface PolicyPackPluginConfig {
-  modulePath: string | null;
-  exportName: string;
-}
-
-const LEGACY_RUNTIME_ADAPTER: RuntimeAdapter = Object.freeze({
-  source: LEGACY_RUNTIME_ADAPTER_SOURCE,
-  async listOperations({ env = process.env }: RuntimeAdapterListOptions = {}) {
-    await configureLegacyPolicyPackPlugin(env);
-    return listOperations();
-  },
-  async executeOperation({
-    operation,
-    requestBody,
-    stateFile = DEFAULT_RUNTIME_STATE_FILE,
-    env = process.env,
-  }: {
-    operation: string;
-    requestBody?: unknown;
-    stateFile?: string | null;
-    env?: NodeJS.ProcessEnv;
-  }) {
-    await configureLegacyPolicyPackPlugin(env);
-    return executeOperationWithSharedState({
-      operation,
-      stateFile,
-      executor: () => executeOperation(operation, requestBody),
-    });
-  },
-});
+type RuntimeAdapterValue = ReturnType<typeof assertRuntimeAdapter>;
 
 let cachedRuntimeAdapterKey: string | undefined;
-let cachedRuntimeAdapterPromise: Promise<RuntimeAdapter> | undefined;
-let cachedPolicyPackPluginKey: string | undefined;
-let cachedPolicyPackPluginPromise: Promise<void> | undefined;
+let cachedRuntimeAdapterPromise: Promise<RuntimeAdapterValue> | undefined;
 
 function asNonEmptyString(value: unknown): string | null {
   if (typeof value !== "string") {
@@ -130,25 +51,17 @@ function isCodedError(error: unknown, expectedCode: string): boolean {
   );
 }
 
-function getRuntimeAdapterConfig(
-  env: NodeJS.ProcessEnv = process.env
-): RuntimeAdapterConfig {
+function getRuntimeAdapterConfig(env: NodeJS.ProcessEnv = process.env): {
+  modulePath: string;
+  exportName: string;
+} {
   return {
-    modulePath: asNonEmptyString(env["UMS_RUNTIME_ADAPTER_MODULE"]),
+    modulePath:
+      asNonEmptyString(env["UMS_RUNTIME_ADAPTER_MODULE"]) ??
+      DEFAULT_RUNTIME_ADAPTER_MODULE,
     exportName:
       asNonEmptyString(env["UMS_RUNTIME_ADAPTER_EXPORT"]) ??
       DEFAULT_RUNTIME_ADAPTER_EXPORT,
-  };
-}
-
-function getPolicyPackPluginConfig(
-  env: NodeJS.ProcessEnv = process.env
-): PolicyPackPluginConfig {
-  return {
-    modulePath: asNonEmptyString(env["UMS_POLICY_PACK_PLUGIN_MODULE"]),
-    exportName:
-      asNonEmptyString(env["UMS_POLICY_PACK_PLUGIN_EXPORT"]) ??
-      DEFAULT_POLICY_PACK_PLUGIN_EXPORT,
   };
 }
 
@@ -179,14 +92,29 @@ function toContractError(message: string): CodedError {
 function assertRuntimeAdapter(
   adapter: unknown,
   source: string
-): RuntimeAdapter {
+): {
+  source?: string;
+  listOperations: (
+    options?: { env?: NodeJS.ProcessEnv } | undefined
+  ) => Promise<unknown> | unknown;
+  executeOperation: (options: {
+    operation: string;
+    requestBody?: unknown;
+    stateFile?: string | null;
+    env?: NodeJS.ProcessEnv;
+  }) => Promise<unknown> | unknown;
+} {
   if (typeof adapter !== "object" || adapter === null) {
     throw toContractError(
       `Runtime adapter '${source}' must resolve to an object.`
     );
   }
 
-  const candidate = adapter as Partial<RuntimeAdapter>;
+  const candidate = adapter as {
+    source?: string;
+    listOperations?: unknown;
+    executeOperation?: unknown;
+  };
   if (typeof candidate.listOperations !== "function") {
     throw toContractError(
       `Runtime adapter '${source}' must expose listOperations().`
@@ -198,21 +126,23 @@ function assertRuntimeAdapter(
     );
   }
 
-  return candidate as RuntimeAdapter;
+  return candidate as RuntimeAdapterValue;
 }
 
-async function resolveRuntimeAdapterFromModule(
-  config: RuntimeAdapterConfig
-): Promise<RuntimeAdapter> {
-  if (config.modulePath === null) {
-    return LEGACY_RUNTIME_ADAPTER;
+async function resolveRuntimeAdapterFromModule(config: {
+  modulePath: string;
+  exportName: string;
+}): Promise<RuntimeAdapterValue> {
+  let runtimeModule: Record<string, unknown>;
+  if (config.modulePath === DEFAULT_RUNTIME_ADAPTER_MODULE) {
+    runtimeModule = {
+      [DEFAULT_RUNTIME_ADAPTER_EXPORT]: createEffectRuntimeAdapter,
+      default: createEffectRuntimeAdapter,
+    };
+  } else {
+    const moduleSpecifier = toModuleSpecifier(config.modulePath);
+    runtimeModule = (await import(moduleSpecifier)) as Record<string, unknown>;
   }
-
-  const moduleSpecifier = toModuleSpecifier(config.modulePath);
-  const runtimeModule = (await import(moduleSpecifier)) as Record<
-    string,
-    unknown
-  >;
   const exportedValue =
     runtimeModule[config.exportName] ??
     (config.exportName === DEFAULT_RUNTIME_ADAPTER_EXPORT
@@ -228,13 +158,10 @@ async function resolveRuntimeAdapterFromModule(
   const maybeAdapter =
     typeof exportedValue === "function"
       ? await (
-          exportedValue as (
-            input: RuntimeAdapterFactoryInput
-          ) => RuntimeAdapter | Promise<RuntimeAdapter>
-        )({
-          createLegacyRuntimeAdapter,
-          defaultStateFile: DEFAULT_RUNTIME_STATE_FILE,
-        })
+          exportedValue as () =>
+            | RuntimeAdapterValue
+            | Promise<RuntimeAdapterValue>
+        )()
       : exportedValue;
 
   return assertRuntimeAdapter(
@@ -243,16 +170,15 @@ async function resolveRuntimeAdapterFromModule(
   );
 }
 
-function makeRuntimeAdapterCacheKey(config: RuntimeAdapterConfig): string {
-  return `${config.modulePath ?? LEGACY_RUNTIME_ADAPTER_SOURCE}#${config.exportName}`;
-}
-
-function makePolicyPackPluginCacheKey(config: PolicyPackPluginConfig): string {
-  return `${config.modulePath ?? "noop-policy-pack-plugin"}#${config.exportName}`;
+function makeRuntimeAdapterCacheKey(config: {
+  modulePath: string;
+  exportName: string;
+}): string {
+  return `${config.modulePath}#${config.exportName}`;
 }
 
 function toAdapterLoadError(
-  config: RuntimeAdapterConfig,
+  config: { modulePath: string; exportName: string },
   error: unknown
 ): CodedError {
   if (isCodedError(error, RUNTIME_ADAPTER_CONTRACT_ERROR_CODE)) {
@@ -267,103 +193,15 @@ function toAdapterLoadError(
   );
 }
 
-function toPolicyPackPluginLoadError(
-  config: PolicyPackPluginConfig,
-  error: unknown
-): CodedError {
-  if (isCodedError(error, RUNTIME_ADAPTER_CONTRACT_ERROR_CODE)) {
-    return error as CodedError;
-  }
-  return toCodedError(
-    `Failed to load policy pack plugin '${config.modulePath}#${config.exportName}': ${
-      error instanceof Error ? error.message : String(error)
-    }`,
-    RUNTIME_ADAPTER_LOAD_ERROR_CODE,
-    error
-  );
-}
-
-async function resolvePolicyPackPluginFromModule(
-  config: PolicyPackPluginConfig
-): Promise<unknown> {
-  if (config.modulePath === null) {
-    return undefined;
-  }
-
-  const moduleSpecifier = toModuleSpecifier(config.modulePath);
-  const pluginModule = (await import(moduleSpecifier)) as Record<
-    string,
-    unknown
-  >;
-  const exportedValue =
-    pluginModule[config.exportName] ??
-    (config.exportName === DEFAULT_POLICY_PACK_PLUGIN_EXPORT
-      ? pluginModule["default"]
-      : undefined);
-
-  if (exportedValue === null || exportedValue === undefined) {
-    throw toContractError(
-      `Policy pack plugin module '${config.modulePath}' does not export '${config.exportName}'.`
-    );
-  }
-
-  if (typeof exportedValue === "function") {
-    return await (exportedValue as () => Promise<unknown> | unknown)();
-  }
-  return exportedValue;
-}
-
-function configureLegacyPolicyPackPlugin(
-  env: NodeJS.ProcessEnv = process.env
-): Promise<void> {
-  const config = getPolicyPackPluginConfig(env);
-  const cacheKey = makePolicyPackPluginCacheKey(config);
-  if (
-    cachedPolicyPackPluginPromise !== undefined &&
-    cachedPolicyPackPluginKey === cacheKey
-  ) {
-    return cachedPolicyPackPluginPromise;
-  }
-
-  const configurePromise = (async (): Promise<void> => {
-    try {
-      if (config.modulePath === null) {
-        resetPolicyPackPlugin();
-        return;
-      }
-      const plugin = await resolvePolicyPackPluginFromModule(config);
-      setPolicyPackPlugin(plugin);
-    } catch (error) {
-      cachedPolicyPackPluginKey = undefined;
-      cachedPolicyPackPluginPromise = undefined;
-      if (config.modulePath !== null) {
-        resetPolicyPackPlugin();
-        throw toPolicyPackPluginLoadError(config, error);
-      }
-      throw error;
-    }
-  })();
-
-  cachedPolicyPackPluginKey = cacheKey;
-  cachedPolicyPackPluginPromise = configurePromise;
-  return cachedPolicyPackPluginPromise;
-}
-
-export function createLegacyRuntimeAdapter(): RuntimeAdapter {
-  return LEGACY_RUNTIME_ADAPTER;
-}
-
 export function resolveRuntimeAdapter({
   env = process.env,
   reload = false,
-}: ResolveRuntimeAdapterOptions = {}): Promise<RuntimeAdapter> {
+}: {
+  env?: NodeJS.ProcessEnv;
+  reload?: boolean;
+} = {}): Promise<RuntimeAdapterValue> {
   const config = getRuntimeAdapterConfig(env);
   const cacheKey = makeRuntimeAdapterCacheKey(config);
-
-  if (reload) {
-    cachedPolicyPackPluginKey = undefined;
-    cachedPolicyPackPluginPromise = undefined;
-  }
 
   if (
     !reload &&
@@ -374,9 +212,6 @@ export function resolveRuntimeAdapter({
   }
 
   const nextAdapterPromise = (async () => {
-    if (config.modulePath === null) {
-      return LEGACY_RUNTIME_ADAPTER;
-    }
     try {
       return await resolveRuntimeAdapterFromModule(config);
     } catch (error) {
@@ -392,7 +227,10 @@ export function resolveRuntimeAdapter({
 }
 
 export async function listRuntimeOperations(
-  options: ResolveRuntimeAdapterOptions = {}
+  options: {
+    env?: NodeJS.ProcessEnv;
+    reload?: boolean;
+  } = {}
 ): Promise<string[]> {
   const { env = process.env, reload = false } = options;
   const adapter = await resolveRuntimeAdapter({ env, reload });
@@ -408,7 +246,13 @@ export async function listRuntimeOperations(
 }
 
 export async function executeRuntimeOperation(
-  options: RuntimeAdapterExecuteOptions = {}
+  options: {
+    operation?: unknown;
+    requestBody?: unknown;
+    stateFile?: string | null;
+    env?: NodeJS.ProcessEnv;
+    reload?: boolean;
+  } = {}
 ): Promise<unknown> {
   const {
     operation,
@@ -430,6 +274,4 @@ export async function executeRuntimeOperation(
 export function clearRuntimeAdapterCache(): void {
   cachedRuntimeAdapterKey = undefined;
   cachedRuntimeAdapterPromise = undefined;
-  cachedPolicyPackPluginKey = undefined;
-  cachedPolicyPackPluginPromise = undefined;
 }

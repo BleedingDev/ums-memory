@@ -58,7 +58,7 @@ function runCli(args: any, stdin = "", { env = process.env } = {}) {
   });
 }
 
-function useLegacyRuntimeAdapter() {
+function useDefaultRuntimeAdapter() {
   delete process.env["UMS_RUNTIME_ADAPTER_MODULE"];
   delete process.env["UMS_RUNTIME_ADAPTER_EXPORT"];
   delete process.env["UMS_POLICY_PACK_PLUGIN_MODULE"];
@@ -75,7 +75,7 @@ function useFixtureRuntimeAdapter() {
 
 test.beforeEach(() => {
   resetStore();
-  useLegacyRuntimeAdapter();
+  useDefaultRuntimeAdapter();
 });
 
 test.after(() => {
@@ -105,10 +105,10 @@ test.after(() => {
   resetStore();
 });
 
-test("runtime adapter default path stays compatible with legacy core + persistence wiring", async () => {
+test("runtime adapter default path stays compatible with effect core + persistence wiring", async () => {
   const requestBody = {
     profile: "runtime-adapter-default",
-    events: [{ type: "note", source: "test", content: "legacy compatibility" }],
+    events: [{ type: "note", source: "test", content: "effect compatibility" }],
   };
 
   const expectedOperations = listOperations();
@@ -158,8 +158,8 @@ test("runtime adapter module override resolves deterministic contract behavior",
   assert.deepEqual(first, second);
 });
 
-test("legacy runtime adapter can load policy pack plugins from env module", async () => {
-  useLegacyRuntimeAdapter();
+test("default runtime adapter can load policy pack plugins from env module", async () => {
+  useDefaultRuntimeAdapter();
   const env = {
     ...process.env,
     UMS_POLICY_PACK_PLUGIN_MODULE: POLICY_PACK_PLUGIN_FIXTURE,

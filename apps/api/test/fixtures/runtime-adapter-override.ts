@@ -24,11 +24,11 @@ function digest(value: unknown): string {
   return createHash("sha256").update(stableStringify(value)).digest("hex");
 }
 
-interface RuntimeAdapterExecuteRequest {
+type RuntimeAdapterExecuteRequest = {
   readonly operation?: unknown;
   readonly requestBody?: unknown;
   readonly stateFile?: unknown;
-}
+};
 
 export function createDeterministicRuntimeAdapter() {
   return {
