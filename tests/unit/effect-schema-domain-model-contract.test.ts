@@ -2,10 +2,21 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  AgentIdSchema,
+  BatchIdSchema,
+  ConversationIdSchema,
   EventIdSchema,
+  EvidenceIdSchema,
+  MemoryIdSchema,
+  MessageIdSchema,
+  ProfileIdSchema,
   ProjectIdSchema,
+  RoleIdSchema,
   RunIdSchema,
+  SourceIdSchema,
+  SpaceIdSchema,
   TenantIdSchema,
+  UserIdSchema,
 } from "../../libs/shared/src/effect/contracts/ids.ts";
 import {
   AdapterSessionEnvelopeSchema,
@@ -21,8 +32,19 @@ import { decodeUnknownSync } from "../../libs/shared/src/effect/contracts/valida
 
 const decodeTenantId = decodeUnknownSync(TenantIdSchema);
 const decodeProjectId = decodeUnknownSync(ProjectIdSchema);
+const decodeRoleId = decodeUnknownSync(RoleIdSchema);
+const decodeUserId = decodeUnknownSync(UserIdSchema);
+const decodeAgentId = decodeUnknownSync(AgentIdSchema);
+const decodeConversationId = decodeUnknownSync(ConversationIdSchema);
+const decodeMessageId = decodeUnknownSync(MessageIdSchema);
+const decodeSourceId = decodeUnknownSync(SourceIdSchema);
+const decodeBatchId = decodeUnknownSync(BatchIdSchema);
 const decodeRunId = decodeUnknownSync(RunIdSchema);
 const decodeEventId = decodeUnknownSync(EventIdSchema);
+const decodeSpaceId = decodeUnknownSync(SpaceIdSchema);
+const decodeProfileId = decodeUnknownSync(ProfileIdSchema);
+const decodeMemoryId = decodeUnknownSync(MemoryIdSchema);
+const decodeEvidenceId = decodeUnknownSync(EvidenceIdSchema);
 
 const decodeAdapterSessionEnvelope = decodeUnknownSync(
   AdapterSessionEnvelopeSchema
@@ -44,50 +66,79 @@ const decodeSchemaEvolutionPolicy = decodeUnknownSync(
 );
 
 test("ums-memory-y9m.2: canonical ID schemas decode tenant/project/run/event identifiers", () => {
-  assert.equal(decodeTenantId("tenant-acme"), "tenant-acme");
-  assert.equal(decodeProjectId("project-memory"), "project-memory");
-  assert.equal(decodeRunId("run-shadow-001"), "run-shadow-001");
-  assert.equal(decodeEventId("event-42"), "event-42");
+  const canonicalIds = [
+    ["tenantId", decodeTenantId, "tenant-acme"],
+    ["projectId", decodeProjectId, "project-memory"],
+    ["roleId", decodeRoleId, "role-lead"],
+    ["userId", decodeUserId, "user-42"],
+    ["agentId", decodeAgentId, "agent-codex"],
+    ["conversationId", decodeConversationId, "conversation-1"],
+    ["messageId", decodeMessageId, "message-1"],
+    ["sourceId", decodeSourceId, "source-codex"],
+    ["batchId", decodeBatchId, "batch-17"],
+    ["runId", decodeRunId, "run-shadow-001"],
+    ["eventId", decodeEventId, "event-42"],
+    ["spaceId", decodeSpaceId, "space-main"],
+    ["profileId", decodeProfileId, "profile-dev"],
+    ["memoryId", decodeMemoryId, "memory-77"],
+    ["evidenceId", decodeEvidenceId, "evidence-14"],
+  ] as const;
 
-  assert.throws(() => decodeTenantId(""), /ParseError|non-empty|length/i);
-  assert.throws(
-    () => decodeProjectId("   "),
-    /ParseError|trim|leading or trailing whitespace/i
-  );
+  for (const [, decode, sample] of canonicalIds) {
+    assert.equal(decode(sample), sample);
+  }
+
+  for (const [label, decode] of canonicalIds) {
+    assert.throws(() => decode(""), /ParseError|non-empty|length/i, label);
+    assert.throws(
+      () => decode("  not-trimmed  "),
+      /ParseError|trim|leading or trailing whitespace/i,
+      label
+    );
+  }
 });
 
 test("ums-memory-y9m.3: adapter session envelope schema normalizes codex/claude/cursor/opencode/vscode payloads", () => {
-  const decoded = decodeAdapterSessionEnvelope({
-    tenantId: "tenant-1",
-    spaceId: "workspace-1",
-    source: "cursor",
-    sessionId: "session-1",
-    runId: "run-1",
-    startedAt: "2026-03-04T00:00:00.000Z",
-    endedAt: "2026-03-04T00:05:00.000Z",
-    messages: [
-      {
-        eventId: "event-1",
-        messageId: "message-1",
-        role: "user",
-        content: "Find memory dedupe regressions",
-        createdAt: "2026-03-04T00:00:00.000Z",
-        citations: [],
-      },
-      {
-        eventId: "event-2",
-        messageId: "message-2",
-        role: "assistant",
-        content: "Running schema validation now",
-        createdAt: "2026-03-04T00:01:00.000Z",
-        citations: ["evidence-1"],
-      },
-    ],
-  });
+  const supportedSources = [
+    "codex-cli",
+    "claude-code",
+    "cursor",
+    "opencode",
+    "vscode",
+  ] as const;
 
-  assert.equal(decoded.source, "cursor");
-  assert.equal(decoded.messages.length, 2);
-  assert.equal(decoded.messages[1]?.role, "assistant");
+  for (const source of supportedSources) {
+    const decoded = decodeAdapterSessionEnvelope({
+      tenantId: "tenant-1",
+      spaceId: "workspace-1",
+      source,
+      sessionId: `session-${source}`,
+      runId: "run-1",
+      startedAt: "2026-03-04T00:00:00.000Z",
+      endedAt: "2026-03-04T00:05:00.000Z",
+      messages: [
+        {
+          eventId: "event-1",
+          messageId: "message-1",
+          role: "user",
+          content: "Find memory dedupe regressions",
+          createdAt: "2026-03-04T00:00:00.000Z",
+          citations: [],
+        },
+        {
+          eventId: "event-2",
+          messageId: "message-2",
+          role: "assistant",
+          content: "Running schema validation now",
+          createdAt: "2026-03-04T00:01:00.000Z",
+          citations: ["evidence-1"],
+        },
+      ],
+    });
+    assert.equal(decoded.source, source);
+    assert.equal(decoded.messages.length, 2);
+    assert.equal(decoded.messages[1]?.role, "assistant");
+  }
 
   assert.throws(
     () =>
@@ -110,6 +161,29 @@ test("ums-memory-y9m.3: adapter session envelope schema normalizes codex/claude/
         ],
       }),
     /ParseError|role/i
+  );
+
+  assert.throws(
+    () =>
+      decodeAdapterSessionEnvelope({
+        tenantId: "tenant-1",
+        spaceId: "workspace-1",
+        source: "unknown-adapter",
+        sessionId: "session-1",
+        runId: "run-1",
+        startedAt: "2026-03-04T00:00:00.000Z",
+        messages: [
+          {
+            eventId: "event-1",
+            messageId: "message-1",
+            role: "user",
+            content: "invalid source",
+            createdAt: "2026-03-04T00:00:00.000Z",
+            citations: [],
+          },
+        ],
+      }),
+    /ParseError|source/i
   );
 });
 
@@ -153,6 +227,45 @@ test("ums-memory-y9m.4: memory candidate extraction and persisted memory record 
   assert.equal(extraction.extractionRunId, "run-17");
   assert.equal(persisted.citations.length, 1);
   assert.equal(persisted.version, 1);
+
+  assert.throws(
+    () =>
+      decodeMemoryCandidateExtraction({
+        extractionRunId: "run-17",
+        spaceId: "workspace-2",
+        candidateId: "candidate-22",
+        statement: "   ",
+        scope: "project",
+        sourceEpisodeIds: ["evidence-1"],
+        extractedAtMillis: 1_746_000_000_000,
+      }),
+    /ParseError|non-empty|trim|statement/i
+  );
+
+  assert.throws(
+    () =>
+      decodePersistedMemoryRecord({
+        spaceId: "workspace-2",
+        memoryId: "memory-22",
+        layer: "procedural",
+        statement: "Document compatibility mode for schema evolution.",
+        scope: "project",
+        evidenceIds: ["evidence-1"],
+        citations: [
+          {
+            citationId: "evidence-1",
+            memoryId: "memory-22",
+            startOffset: 0,
+            endOffset: 45,
+            quote: "   ",
+          },
+        ],
+        createdAtMillis: -1,
+        updatedAtMillis: 1_746_000_000_500,
+        version: 1,
+      }),
+    /ParseError|non-empty|non-negative|quote|createdAtMillis/i
+  );
 });
 
 test("ums-memory-y9m.5: deterministic dedupe artifacts enforce action/reason/metric evidence contracts", () => {
@@ -185,6 +298,37 @@ test("ums-memory-y9m.5: deterministic dedupe artifacts enforce action/reason/met
         },
       }),
     /ParseError|reason/i
+  );
+
+  assert.throws(
+    () =>
+      decodeDeterministicDedupeDecision({
+        action: "add",
+        reasonCodes: ["NO_MATCH"],
+        metricEvidence: {
+          lexicalSimilarity: 1.2,
+          semanticSimilarity: 0.6,
+          recencyDeltaMillis: 0,
+          confidenceDelta: 0,
+        },
+      }),
+    /ParseError|lexical|between|similarity/i
+  );
+
+  assert.throws(
+    () =>
+      decodeDeterministicDedupeDecision({
+        action: "update",
+        reasonCodes: ["SEMANTIC_SUPERSET"],
+        metricEvidence: {
+          lexicalSimilarity: 0.6,
+          semanticSimilarity: 0.6,
+          recencyDeltaMillis: 0,
+          confidenceDelta: 2,
+        },
+        targetMemoryId: "  ",
+      }),
+    /ParseError|confidence|targetMemoryId|trim/i
   );
 });
 

@@ -30,6 +30,13 @@ const REQUIRED_REFERENCES = Object.freeze([
   "effect-schema-domain-model-contract.test.ts",
 ]);
 
+const REQUIRED_INTEGRATION_ARTIFACTS = Object.freeze([
+  "AdapterSessionEnvelopeSchema",
+  "decodeDeterministicDedupeDecision",
+  "scripts/validate-schema-boundaries.ts",
+  "npm run validate:schema-boundaries",
+]);
+
 test("phase0 effect schema domain model runbook covers SCH-01..SCH-10 sections", () => {
   const content = readFileSync(RUNBOOK_PATH, "utf8");
 
@@ -50,6 +57,18 @@ test("phase0 effect schema domain model runbook references required contracts an
       content,
       new RegExp(reference.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&"), "iu"),
       `Missing required runbook reference: ${reference}`
+    );
+  }
+});
+
+test("ums-memory-y9m.10: phase0 runbook publishes stable integration artifacts for adapter envelopes, dedupe decisions, and boundary gates", () => {
+  const content = readFileSync(RUNBOOK_PATH, "utf8");
+
+  for (const snippet of REQUIRED_INTEGRATION_ARTIFACTS) {
+    assert.match(
+      content,
+      new RegExp(snippet.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&"), "u"),
+      `Missing required integration artifact snippet: ${snippet}`
     );
   }
 });
