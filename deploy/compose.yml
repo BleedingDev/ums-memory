@@ -16,6 +16,8 @@ services:
       UMS_STATE_FILE: /var/lib/ums/.ums-state.json
       UMS_STATE_LOCK_TIMEOUT_MS: "8000"
       UMS_STATE_LOCK_RETRY_MS: "25"
+      UMS_API_AUTH_REQUIRED: "true"
+      UMS_API_AUTH_TOKENS: ${UMS_API_AUTH_TOKENS:?UMS_API_AUTH_TOKENS must be set}
     ports:
       - "8787:8787"
     volumes:

@@ -38,15 +38,18 @@ node --import tsx apps/ums/src/index.ts worker
 Run from repository root:
 
 ```bash
+export UMS_API_AUTH_TOKENS="$(openssl rand -hex 32)"
 docker compose -f deploy/compose.yml up --build -d
 docker compose -f deploy/compose.yml ps
 curl -sS http://127.0.0.1:8787/
+curl -sS -H "Authorization: Bearer ${UMS_API_AUTH_TOKENS}" http://127.0.0.1:8787/metrics
 docker compose -f deploy/compose.yml logs -f api worker
 docker compose -f deploy/compose.yml down
 ```
 
 Compose mounts one shared named volume at `/var/lib/ums` for both services, with `UMS_STATE_FILE=/var/lib/ums/.ums-state.json`.
 Worker startup includes an API-readiness gate (`UMS_API_HOST` default `api`, `UMS_API_HEALTH_PATH` default `/`, `UMS_API_READY_TIMEOUT_MS` default `90000`) so the worker does not race shared-state initialization on fresh boots.
+API ingress authentication is required in Compose (`UMS_API_AUTH_REQUIRED=true`); set `UMS_API_AUTH_TOKENS` before `docker compose up` and pass it as a bearer token (`Authorization: Bearer <token>`) or `x-ums-api-key` header for protected routes.
 If you explicitly want a full data reset, run `docker compose -f deploy/compose.yml down -v` (destructive: removes the shared state volume).
 
 ## Shared-State Notes

@@ -46,6 +46,99 @@ function assertConsoleSecurityHeaders(response: any) {
   assert.equal(response.headers.get("x-content-type-options"), "nosniff");
 }
 
+test("http server fails closed when token auth is required but not configured", async () => {
+  await assert.rejects(
+    () =>
+      startApiServer({
+        host: "127.0.0.1",
+        port: 0,
+        stateFile: null,
+        auth: {
+          required: true,
+          tokens: [],
+        },
+      }),
+    /SERVICE_MISCONFIGURATION: API authentication is required but UMS_API_AUTH_TOKENS is not configured\./
+  );
+});
+
+test("http server enforces deterministic ingress auth for protected routes", async () => {
+  resetStore();
+  const { server, host, port } = await startApiServer({
+    host: "127.0.0.1",
+    port: 0,
+    stateFile: null,
+    auth: {
+      required: true,
+      tokens: ["test-token"],
+    },
+  });
+  const base = `http://${host}:${port}`;
+
+  try {
+    const rootRes = await fetch(`${base}/`);
+    assert.equal(rootRes.status, 200);
+    const rootBody = await rootRes.json();
+    assert.equal(rootBody.ok, true);
+    assert.equal(rootBody.authentication.required, true);
+
+    const missingRes = await fetch(`${base}/metrics`);
+    assert.equal(missingRes.status, 401);
+    assert.match(missingRes.headers.get("www-authenticate") ?? "", /Bearer/i);
+    const missingBody = await missingRes.json();
+    assert.equal(missingBody.ok, false);
+    assert.equal(missingBody.error.code, "UNAUTHORIZED");
+    assert.equal(missingBody.error.message, "Authentication required.");
+
+    const badTokenRes = await fetch(`${base}/v1/ingest`, {
+      method: "POST",
+      headers: {
+        authorization: "Bearer wrong-token",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        profile: "auth-http",
+        events: [{ type: "note", source: "test", content: "auth check" }],
+      }),
+    });
+    assert.equal(badTokenRes.status, 401);
+    const badTokenBody = await badTokenRes.json();
+    assert.equal(badTokenBody.ok, false);
+    assert.equal(badTokenBody.error.code, "UNAUTHORIZED");
+    assert.equal(badTokenBody.error.message, "Authentication failed.");
+
+    const ingestRes = await fetch(`${base}/v1/ingest`, {
+      method: "POST",
+      headers: {
+        authorization: "Bearer test-token",
+        "content-type": "application/json",
+        "x-ums-store": "tenant-auth-http",
+      },
+      body: JSON.stringify({
+        profile: "auth-http",
+        events: [{ type: "note", source: "test", content: "auth success" }],
+      }),
+    });
+    assert.equal(ingestRes.status, 200);
+    const ingestBody = await ingestRes.json();
+    assert.equal(ingestBody.ok, true);
+    assert.equal(ingestBody.data.operation, "ingest");
+
+    const apiKeyMetricsRes = await fetch(`${base}/metrics`, {
+      headers: {
+        "x-ums-api-key": "test-token",
+      },
+    });
+    assert.equal(apiKeyMetricsRes.status, 200);
+  } finally {
+    await new Promise<void>((resolvePromise, rejectPromise) => {
+      server.close((error) =>
+        error ? rejectPromise(error) : resolvePromise()
+      );
+    });
+  }
+});
+
 test("http server exposes prometheus metrics and deterministic structured telemetry events", async () => {
   resetStore();
   const events: any[] = [];

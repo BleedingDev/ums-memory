@@ -1,3 +1,4 @@
+import { timingSafeEqual } from "node:crypto";
 import { once } from "node:events";
 import {
   createServer,
@@ -46,6 +47,7 @@ interface StartApiServerOptions {
   stateFile?: string | null;
   telemetry?: ApiTelemetry;
   enableConsoleUi?: boolean | string;
+  auth?: ApiAuthSettingsInput;
 }
 
 interface StartedApiServer {
@@ -59,6 +61,16 @@ interface ConsoleRoute {
   body: string;
   contentType: string;
   methodError: string;
+}
+
+interface ApiAuthSettingsInput {
+  required?: boolean | string;
+  tokens?: string | readonly string[] | null;
+}
+
+interface ApiAuthSettings {
+  required: boolean;
+  tokens: readonly string[];
 }
 
 interface SupervisionSnapshot {
@@ -82,6 +94,13 @@ const ENABLE_CONSOLE_UI = parseBooleanFlag(
   process.env["UMS_API_ENABLE_CONSOLE_UI"]
 );
 const API_PREFIX = "/v1";
+const DEFAULT_AUTH_REQUIRED =
+  typeof process.env["UMS_API_AUTH_REQUIRED"] === "string"
+    ? parseBooleanFlag(process.env["UMS_API_AUTH_REQUIRED"])
+    : process.env["NODE_ENV"] === "production";
+const DEFAULT_AUTH_TOKENS = parseAuthTokens(
+  process.env["UMS_API_AUTH_TOKENS"] ?? process.env["UMS_API_AUTH_TOKEN"]
+);
 const CONSOLE_SECURITY_HEADERS: Readonly<Record<string, string>> =
   Object.freeze({
     "content-security-policy":
@@ -130,6 +149,57 @@ function normalizeConsoleUiToggle(value: unknown): boolean {
   return false;
 }
 
+function normalizeAuthRequired(
+  value: unknown,
+  fallback = DEFAULT_AUTH_REQUIRED
+): boolean {
+  if (typeof value === "boolean") {
+    return value;
+  }
+  if (typeof value === "string") {
+    return parseBooleanFlag(value);
+  }
+  return fallback;
+}
+
+function parseAuthTokens(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return value
+      .filter((entry): entry is string => typeof entry === "string")
+      .map((entry) => entry.trim())
+      .filter((entry) => entry.length > 0);
+  }
+  if (typeof value !== "string") {
+    return [];
+  }
+  return value
+    .split(/[,\n]/)
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0);
+}
+
+function normalizeAuthSettings(
+  input: ApiAuthSettingsInput | null | undefined
+): ApiAuthSettings {
+  const required = normalizeAuthRequired(
+    input?.required,
+    DEFAULT_AUTH_REQUIRED
+  );
+  const tokens =
+    input?.tokens === undefined
+      ? DEFAULT_AUTH_TOKENS
+      : parseAuthTokens(input.tokens);
+  if (required && tokens.length === 0) {
+    throw new Error(
+      "SERVICE_MISCONFIGURATION: API authentication is required but UMS_API_AUTH_TOKENS is not configured."
+    );
+  }
+  return {
+    required,
+    tokens,
+  };
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
@@ -172,12 +242,14 @@ function toErrorMessage(error: unknown, fallback: string): string {
 function json(
   res: ServerResponse<IncomingMessage>,
   statusCode: number,
-  body: unknown
+  body: unknown,
+  additionalHeaders?: Readonly<Record<string, string>>
 ): void {
   const payload = JSON.stringify(body);
   res.writeHead(statusCode, {
     "content-type": "application/json; charset=utf-8",
     "content-length": Buffer.byteLength(payload),
+    ...additionalHeaders,
   });
   res.end(payload);
 }
@@ -215,6 +287,23 @@ function methodNotAllowed(
   });
 }
 
+function unauthorized(
+  res: ServerResponse<IncomingMessage>,
+  message: string
+): void {
+  json(
+    res,
+    401,
+    {
+      ok: false,
+      error: { code: "UNAUTHORIZED", message },
+    },
+    {
+      "www-authenticate": 'Bearer realm="ums-api"',
+    }
+  );
+}
+
 function parseOperation(pathname: string): string | null {
   if (!pathname.startsWith(`${API_PREFIX}/`)) {
     return null;
@@ -239,6 +328,65 @@ function parseStoreHeader(req: IncomingMessage): string | null {
     return value.trim();
   }
   return null;
+}
+
+function parseAuthenticationToken(req: IncomingMessage): string | null {
+  const authorization = req.headers["authorization"];
+  const authorizationHeader = Array.isArray(authorization)
+    ? authorization.find((entry): entry is string => typeof entry === "string")
+    : authorization;
+  if (typeof authorizationHeader === "string") {
+    const match = authorizationHeader.match(/^Bearer\s+(.+)$/i);
+    if (match && typeof match[1] === "string") {
+      const token = match[1].trim();
+      if (token.length > 0) {
+        return token;
+      }
+    }
+  }
+
+  const apiKey = req.headers["x-ums-api-key"];
+  const apiKeyHeader = Array.isArray(apiKey)
+    ? apiKey.find((entry): entry is string => typeof entry === "string")
+    : apiKey;
+  if (typeof apiKeyHeader === "string" && apiKeyHeader.trim().length > 0) {
+    return apiKeyHeader.trim();
+  }
+  return null;
+}
+
+function hasTokenMatch(candidate: string, expected: string): boolean {
+  const candidateBuffer = Buffer.from(candidate);
+  const expectedBuffer = Buffer.from(expected);
+  if (candidateBuffer.length !== expectedBuffer.length) {
+    return false;
+  }
+  return timingSafeEqual(candidateBuffer, expectedBuffer);
+}
+
+function isAuthenticationValid(
+  req: IncomingMessage,
+  tokens: readonly string[]
+): "valid" | "missing" | "invalid" {
+  const token = parseAuthenticationToken(req);
+  if (!token) {
+    return "missing";
+  }
+  for (const expected of tokens) {
+    if (hasTokenMatch(token, expected)) {
+      return "valid";
+    }
+  }
+  return "invalid";
+}
+
+function isPathPublic(pathname: string): boolean {
+  return (
+    pathname === "/" ||
+    pathname === "/console" ||
+    pathname === "/console.js" ||
+    pathname === "/console.css"
+  );
 }
 
 async function parseJsonBody(req: IncomingMessage): Promise<unknown> {
@@ -381,9 +529,11 @@ export function createApiServer({
   stateFile = DEFAULT_RUNTIME_STATE_FILE,
   telemetry = createInMemoryApiTelemetry() as ApiTelemetry,
   enableConsoleUi = ENABLE_CONSOLE_UI,
+  auth,
 }: Omit<StartApiServerOptions, "host" | "port"> = {}): Server {
   const activeTelemetry = resolveTelemetry(telemetry);
   const consoleUiEnabled = normalizeConsoleUiToggle(enableConsoleUi);
+  const authSettings = normalizeAuthSettings(auth);
   return createServer(async (req, res) => {
     let url: URL;
     try {
@@ -401,6 +551,20 @@ export function createApiServer({
       });
       return;
     }
+
+    if (authSettings.required && !isPathPublic(url.pathname)) {
+      const authResult = isAuthenticationValid(req, authSettings.tokens);
+      if (authResult !== "valid") {
+        unauthorized(
+          res,
+          authResult === "missing"
+            ? "Authentication required."
+            : "Authentication failed."
+        );
+        return;
+      }
+    }
+
     if (url.pathname === "/" && req.method === "GET") {
       try {
         const operations = await listRuntimeOperations();
@@ -420,6 +584,11 @@ export function createApiServer({
           consoleUi: {
             enabled: consoleUiEnabled,
             routes: consoleUiEnabled ? Object.keys(CONSOLE_ROUTES) : [],
+          },
+          authentication: {
+            required: authSettings.required,
+            acceptedHeaders: ["authorization", "x-ums-api-key"],
+            publicPaths: ["/", "/console", "/console.js", "/console.css"],
           },
         });
         return;
@@ -537,13 +706,16 @@ export async function startApiServer({
   stateFile = DEFAULT_RUNTIME_STATE_FILE,
   telemetry = createInMemoryApiTelemetry() as ApiTelemetry,
   enableConsoleUi = ENABLE_CONSOLE_UI,
+  auth,
 }: StartApiServerOptions = {}): Promise<StartedApiServer> {
   const activeTelemetry = resolveTelemetry(telemetry);
-  const server = createApiServer({
+  const serverOptions: Omit<StartApiServerOptions, "host" | "port"> = {
     stateFile,
     telemetry: activeTelemetry,
     enableConsoleUi,
-  });
+    ...(auth === undefined ? {} : { auth }),
+  };
+  const server = createApiServer(serverOptions);
   const startupAbortController = new AbortController();
   const waitForListening = async (): Promise<Error | null> => {
     try {

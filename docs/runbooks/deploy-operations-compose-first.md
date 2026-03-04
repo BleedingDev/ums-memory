@@ -12,7 +12,7 @@
 
 1. Compose asset: `deploy/compose.yml`.
 2. API service endpoint: `GET /` on port `8787`.
-3. Observability endpoint: `GET /metrics` on port `8787`.
+3. Observability endpoint: `GET /metrics` on port `8787` (requires auth header).
 4. Shared state file: `UMS_STATE_FILE=/var/lib/ums/.ums-state.json`.
 5. Shared volume name pattern: `<project>_ums_shared_state` (for example `ums-prod_ums_shared_state`).
 
@@ -25,6 +25,8 @@
 | `UMS_STATE_FILE`            | `api`, `worker` | `/var/lib/ums/.ums-state.json`        |
 | `UMS_STATE_LOCK_TIMEOUT_MS` | `api`           | `8000`                                |
 | `UMS_STATE_LOCK_RETRY_MS`   | `api`           | `25`                                  |
+| `UMS_API_AUTH_REQUIRED`     | `api`           | `true`                                |
+| `UMS_API_AUTH_TOKENS`       | `api`           | `${UMS_API_AUTH_TOKENS:?required}`    |
 | `UMS_API_HOST`              | `worker`        | `api`                                 |
 | `UMS_API_PORT`              | `worker`        | `8787`                                |
 | `UMS_API_HEALTH_PATH`       | `worker`        | `/`                                   |
@@ -35,10 +37,11 @@
 Run from repository root:
 
 ```bash
+export UMS_API_AUTH_TOKENS="<configured-shared-api-token>"
 docker compose -f deploy/compose.yml up --build -d
 docker compose -f deploy/compose.yml ps
 curl -fsS http://127.0.0.1:8787/
-curl -fsS http://127.0.0.1:8787/metrics | head -n 20
+curl -fsS -H "Authorization: Bearer ${UMS_API_AUTH_TOKENS}" http://127.0.0.1:8787/metrics | head -n 20
 docker compose -f deploy/compose.yml logs --tail=100 api worker
 ```
 
@@ -60,10 +63,11 @@ Run on the staging host from a checked-out repo revision:
 
 ```bash
 export PROJECT=ums-staging
+export UMS_API_AUTH_TOKENS="<configured-shared-api-token>"
 docker compose -p "$PROJECT" -f deploy/compose.yml up --build -d --remove-orphans
 docker compose -p "$PROJECT" -f deploy/compose.yml ps
 curl -fsS http://127.0.0.1:8787/
-curl -fsS http://127.0.0.1:8787/metrics | head -n 20
+curl -fsS -H "Authorization: Bearer ${UMS_API_AUTH_TOKENS}" http://127.0.0.1:8787/metrics | head -n 20
 ```
 
 Staging rollback to prior revision:
@@ -80,10 +84,11 @@ Run on the production host:
 
 ```bash
 export PROJECT=ums-prod
+export UMS_API_AUTH_TOKENS="<configured-shared-api-token>"
 docker compose -p "$PROJECT" -f deploy/compose.yml up --build -d --remove-orphans
 docker compose -p "$PROJECT" -f deploy/compose.yml ps
 curl -fsS http://127.0.0.1:8787/
-curl -fsS http://127.0.0.1:8787/metrics | head -n 20
+curl -fsS -H "Authorization: Bearer ${UMS_API_AUTH_TOKENS}" http://127.0.0.1:8787/metrics | head -n 20
 docker compose -p "$PROJECT" -f deploy/compose.yml logs --tail=100 api worker
 ```
 
@@ -125,6 +130,7 @@ export PROJECT=ums-prod
 export VOLUME="${PROJECT}_ums_shared_state"
 export BACKUP_DIR="$PWD/backups"
 export BACKUP_FILE="ums-state-<timestamp>.json"
+export UMS_API_AUTH_TOKENS="<configured-shared-api-token>"
 
 docker compose -p "$PROJECT" -f deploy/compose.yml down
 docker run --rm \
@@ -135,14 +141,14 @@ docker run --rm \
 docker compose -p "$PROJECT" -f deploy/compose.yml up -d
 docker compose -p "$PROJECT" -f deploy/compose.yml ps
 curl -fsS http://127.0.0.1:8787/
-curl -fsS http://127.0.0.1:8787/metrics | head -n 20
+curl -fsS -H "Authorization: Bearer ${UMS_API_AUTH_TOKENS}" http://127.0.0.1:8787/metrics | head -n 20
 ```
 
 Restore success criteria:
 
 1. `api` and `worker` are healthy in compose status.
 2. `GET /` returns `200`.
-3. `GET /metrics` returns `200` and Prometheus-formatted payload.
+3. `GET /metrics` returns `200` and Prometheus-formatted payload when called with the configured auth token.
 
 ## Incident Response
 
@@ -150,10 +156,11 @@ Restore success criteria:
 
 ```bash
 export PROJECT=ums-prod
+export UMS_API_AUTH_TOKENS="<configured-shared-api-token>"
 docker compose -p "$PROJECT" -f deploy/compose.yml ps
 docker compose -p "$PROJECT" -f deploy/compose.yml logs --since=15m api worker
 curl -fsS http://127.0.0.1:8787/ || true
-curl -fsS http://127.0.0.1:8787/metrics | head -n 20 || true
+curl -fsS -H "Authorization: Bearer ${UMS_API_AUTH_TOKENS}" http://127.0.0.1:8787/metrics | head -n 20 || true
 ```
 
 ### 2) Containment
@@ -170,7 +177,7 @@ docker compose -p "$PROJECT" -f deploy/compose.yml stop worker
 
 1. API unhealthy or not responding:
    - `docker compose -p "$PROJECT" -f deploy/compose.yml restart api`
-   - Re-check `GET /` and `GET /metrics`.
+   - Re-check `GET /` and authenticated `GET /metrics`.
 2. Worker crash-loop or startup timeout waiting for API:
    - Confirm API `GET /` is `200`.
    - `docker compose -p "$PROJECT" -f deploy/compose.yml restart worker`
@@ -182,7 +189,7 @@ docker compose -p "$PROJECT" -f deploy/compose.yml stop worker
 ### 4) Exit Criteria
 
 1. `api` and `worker` healthy.
-2. `GET /` and `GET /metrics` stable for 15 minutes.
+2. `GET /` and authenticated `GET /metrics` stable for 15 minutes.
 3. Incident log includes timeline, root cause, and recovery commands executed.
 
 ## Observability Endpoints
@@ -193,6 +200,7 @@ docker compose -p "$PROJECT" -f deploy/compose.yml stop worker
 2. `GET /metrics`
    - Purpose: Prometheus scrape endpoint.
    - Expected: `200` with content type `text/plain; version=0.0.4; charset=utf-8`.
+   - Authentication: provide `Authorization: Bearer <UMS_API_AUTH_TOKENS>` or `x-ums-api-key`.
    - Key series exposed by current runtime include:
      - `ums_api_operation_requests_total`
      - `ums_api_operation_latency_ms_bucket`
@@ -202,6 +210,6 @@ docker compose -p "$PROJECT" -f deploy/compose.yml stop worker
 Example checks:
 
 ```bash
-curl -fsS http://127.0.0.1:8787/metrics | grep '^ums_api_operation_requests_total'
-curl -fsS http://127.0.0.1:8787/metrics | grep '^ums_api_operation_latency_ms_count'
+curl -fsS -H "Authorization: Bearer ${UMS_API_AUTH_TOKENS}" http://127.0.0.1:8787/metrics | grep '^ums_api_operation_requests_total'
+curl -fsS -H "Authorization: Bearer ${UMS_API_AUTH_TOKENS}" http://127.0.0.1:8787/metrics | grep '^ums_api_operation_latency_ms_count'
 ```

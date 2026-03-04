@@ -1,0 +1,110 @@
+groups:
+  - name: phase3-learner-profile
+    rules:
+      - alert: UMSReplayDigestMismatchDetected
+        expr: sum(increase(replay_digest_mismatch_total[5m])) > 0
+        for: 1m
+        labels:
+          severity: critical
+          domain: learner-profile
+        annotations:
+          summary: Replay digest mismatch detected
+          description: Replay determinism has diverged for learner profile or identity graph updates.
+
+      - alert: UMSEvidenceMissingRateHigh
+        expr: sum(rate(profile_evidence_missing_total[15m])) > 0.05
+        for: 10m
+        labels:
+          severity: warning
+          domain: learner-profile
+        annotations:
+          summary: Missing evidence pointers are trending up
+          description: profile_evidence_missing_total exceeded the policy baseline over 15 minutes.
+
+  - name: phase3-misconception
+    rules:
+      - alert: UMSMisconceptionGuardrailRejectSpike
+        expr: sum(rate(misconception_guardrail_reject_total[15m])) > 0.1
+        for: 10m
+        labels:
+          severity: warning
+          domain: misconception
+        annotations:
+          summary: Misconception guardrail rejection spike
+          description: Reject rate exceeded expected guardrail envelope.
+
+      - alert: UMSMisconceptionReplayMismatch
+        expr: sum(increase(misconception_replay_mismatch_total[10m])) > 0
+        for: 5m
+        labels:
+          severity: critical
+          domain: misconception
+        annotations:
+          summary: Misconception replay mismatch
+          description: Deterministic replay mismatch detected in misconception operations.
+
+  - name: phase3-curriculum
+    rules:
+      - alert: UMSCurriculumGuardrailRejectSpike
+        expr: sum(rate(curriculum_guardrail_reject_total[15m])) > 0.1
+        for: 10m
+        labels:
+          severity: warning
+          domain: curriculum
+        annotations:
+          summary: Curriculum guardrail rejection spike
+          description: curriculum_guardrail_reject_total is above baseline.
+
+      - alert: UMSCurriculumReplayMismatch
+        expr: sum(increase(curriculum_replay_mismatch_total[10m])) > 0
+        for: 5m
+        labels:
+          severity: critical
+          domain: curriculum
+        annotations:
+          summary: Curriculum replay mismatch
+          description: Determinism mismatch detected for curriculum planner operations.
+
+  - name: phase3-scheduling
+    rules:
+      - alert: UMSReviewScheduleProvenanceMissing
+        expr: sum(rate(review_schedule_provenance_missing_total[15m])) > 0
+        for: 10m
+        labels:
+          severity: warning
+          domain: review-scheduling
+        annotations:
+          summary: Review schedule provenance gaps detected
+          description: Schedule mutation events missing provenance pointers.
+
+      - alert: UMSReviewScheduleReplayMismatch
+        expr: sum(increase(review_schedule_replay_mismatch_total[10m])) > 0
+        for: 5m
+        labels:
+          severity: critical
+          domain: review-scheduling
+        annotations:
+          summary: Review schedule replay mismatch
+          description: Deterministic replay mismatch detected for scheduling operations.
+
+  - name: phase3-policy-safety
+    rules:
+      - alert: UMSPersonalizationPolicyReplayMismatch
+        expr: sum(increase(personalization_policy_replay_mismatch_total[10m])) > 0
+        for: 5m
+        labels:
+          severity: critical
+          domain: policy
+        annotations:
+          summary: Personalization policy replay mismatch
+          description: Deterministic replay mismatch detected in policy evaluation.
+
+      - alert: UMSPersonalizationPolicyRejectRateHigh
+        expr: sum(rate(personalization_policy_reject_total[15m])) > 0.2
+        for: 10m
+        labels:
+          severity: warning
+          domain: policy
+        annotations:
+          summary: Personalization policy rejection rate high
+          description: Policy rejections are above expected operating range.

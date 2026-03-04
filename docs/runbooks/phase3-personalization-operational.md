@@ -10,17 +10,26 @@ See also:
 - `docs/adr/0006-p3-personalization-safety-scope.md`
 - `mcp_agent_mail/docs/observability.md` (log shipping + Loki/Prometheus guidance)
 
+Operational evidence bundle (2026-03-04):
+- `docs/reports/phase3/operational-hardening-closure-notes-2026-03-04.md`
+- `docs/reports/phase3/operational-hardening-backlog-2026-03-04.csv`
+- `docs/reports/phase3/domain-slo-rejection-validation-2026-03-04.md`
+- `docs/observability/phase3-personalization-alerts.rules.yml`
+- `docs/reports/phase3/policy-audit-export-sample-2026-03-04.ndjson`
+- `docs/reports/phase3/policy-incident-checklist-2026-03-04.md`
+- `docs/reports/phase3/policy-replay-transcript-2026-03-04.md`
+
 ## Learner profile + identity graph hardening (`ums-memory-d6q.1.10/.1.11/.1.12/.1.13/.1.9`)
 
 - **`ums-memory-d6q.1.10` – Learner-profile runbook hardening backlog completion notes**
   - Checklist:
-    - [ ] Closure notes explicitly reference completed dependency beads (`.1.7/.1.8/.1.9/.1.11/.1.12/.1.13`) and the validation evidence used to close each item.
-    - [ ] Remaining hardening gaps are captured as discrete backlog entries with owner, severity, due milestone, and rollback impact.
-    - [ ] Runbook callouts for replay determinism, evidence-pointer enforcement, chronology/timeline behavior, and normalization drift are verified as current.
+    - [x] Closure notes explicitly reference completed dependency beads (`.1.7/.1.8/.1.9/.1.11/.1.12/.1.13`) and the validation evidence used to close each item.
+    - [x] Remaining hardening gaps are captured as discrete backlog entries with owner, severity, due milestone, and rollback impact.
+    - [x] Runbook callouts for replay determinism, evidence-pointer enforcement, chronology/timeline behavior, and normalization drift are verified as current.
   - Expected artifacts:
-    - [ ] Hardening backlog snapshot (`owner`, `risk`, `status`, `next bead`) exported as Markdown/CSV and attached to the bead timeline.
-    - [ ] Closure comment linking this runbook section plus the latest test/observability evidence bundle.
-    - [ ] Follow-up bead IDs for any open hardening items (no unresolved TODO text without a tracking ID).
+    - [x] Hardening backlog snapshot (`owner`, `risk`, `status`, `next bead`) exported as Markdown/CSV and attached to the bead timeline.
+    - [x] Closure comment linking this runbook section plus the latest test/observability evidence bundle.
+    - [x] Follow-up bead IDs for any open hardening items (no unresolved TODO text without a tracking ID).
 
 - **`ums-memory-d6q.1.11` – Evidence-pointer contract for `learner_profile_update`**
   - Rule: every mutation must include at least one evidence pointer (`evidenceEventIds[]` or `evidenceEpisodeIds[]`) or an explicit `metadata.policyException`.
@@ -126,11 +135,11 @@ Deterministic rejection envelope (missing both evidence and exception):
 
 ### Observability/SLO checklist (`ums-memory-d6q.1.9`)
 
-- [ ] Structured logs include: `operation`, `storeId`, `profile`, `action`, `requestDigest`, `profileId/edgeId`, `profileDigest/edgeDigest`, `evidenceCount`, `policyExceptionUsed`, `conflictResolved`.
-- [ ] Metrics include: `learner_profile_update_requests_total{action}`, `identity_graph_update_requests_total{action}`, `learner_profile_update_latency_ms`, `identity_graph_update_latency_ms`, `profile_evidence_missing_total`, `profile_policy_exception_total`, `profile_conflict_resolutions_total`, `profile_normalization_rewrites_total`.
-- [ ] Replay determinism monitor: same request digest must never produce divergent profile/edge digests (`replay_digest_mismatch_total == 0`).
-- [ ] SLO targets: 30-day success rate `>= 99.9%`, p95 mutation latency `<= 250ms`, evidence or policy-exception coverage `= 100%`, unresolved conflict count `= 0`.
-- [ ] Alerts are wired through the Loki/Prometheus pipeline described in `mcp_agent_mail/docs/observability.md`.
+- [x] Structured logs include: `operation`, `storeId`, `profile`, `action`, `requestDigest`, `profileId/edgeId`, `profileDigest/edgeDigest`, `evidenceCount`, `policyExceptionUsed`, `conflictResolved`.
+- [x] Metrics include: `learner_profile_update_requests_total{action}`, `identity_graph_update_requests_total{action}`, `learner_profile_update_latency_ms`, `identity_graph_update_latency_ms`, `profile_evidence_missing_total`, `profile_policy_exception_total`, `profile_conflict_resolutions_total`, `profile_normalization_rewrites_total`.
+- [x] Replay determinism monitor: same request digest must never produce divergent profile/edge digests (`replay_digest_mismatch_total == 0`).
+- [x] SLO targets: 30-day success rate `>= 99.9%`, p95 mutation latency `<= 250ms`, evidence or policy-exception coverage `= 100%`, unresolved conflict count `= 0`.
+- [x] Alerts are wired through the Loki/Prometheus pipeline described in `mcp_agent_mail/docs/observability.md`.
 
 ## Other P3 bead-level expectations
 
@@ -150,9 +159,9 @@ Deterministic rejection envelope (missing both evidence and exception):
 
 - **`ums-memory-d6q.2.10` – Misconception tracking runbook + hardening backlog closure**
   - Runbook checklist:
-    - [ ] Signal ingestion semantics are documented for explicit pain and implicit failure paths, including evidence contract requirements.
-    - [ ] Chronology output behavior is documented for recall consumers (`misconceptionChronology.limit`, relevance prioritization, deterministic formatting).
-    - [ ] Anti-pattern inversion and decay acceleration thresholds are documented with replay-safe expectations.
+    - [x] Signal ingestion semantics are documented for explicit pain and implicit failure paths, including evidence contract requirements.
+    - [x] Chronology output behavior is documented for recall consumers (`misconceptionChronology.limit`, relevance prioritization, deterministic formatting).
+    - [x] Anti-pattern inversion and decay acceleration thresholds are documented with replay-safe expectations.
   - Hardening backlog (tracked follow-ups):
     - `ums-memory-d6q.2.10.1` Misconception chronology conflict compression for high-churn learners.
     - `ums-memory-d6q.2.10.2` Severity-calibration sweeps for implicit failure mappings.
@@ -164,9 +173,9 @@ Deterministic rejection envelope (missing both evidence and exception):
 
 - **`ums-memory-d6q.3.10` – Curriculum planner runbook and hardening backlog closure**
   - Runbook checklist:
-    - [ ] Freshness/decay warning thresholds and ranking-weight defaults are documented with override examples.
-    - [ ] Conflict chronology behavior (`A -> B` ordering, bounded output, deterministic formatting) is documented for API/CLI readers.
-    - [ ] Token/recall budget bounding behavior is documented with expected degradation semantics when budget is exhausted.
+    - [x] Freshness/decay warning thresholds and ranking-weight defaults are documented with override examples.
+    - [x] Conflict chronology behavior (`A -> B` ordering, bounded output, deterministic formatting) is documented for API/CLI readers.
+    - [x] Token/recall budget bounding behavior is documented with expected degradation semantics when budget is exhausted.
   - Hardening backlog (tracked follow-ups):
     - `ums-memory-d6q.3.10.1` Drift-detection dashboard for recommendation weight skew over rolling windows.
     - `ums-memory-d6q.3.10.2` Regression suite for stale-recommendation suppression under bursty write patterns.
@@ -178,18 +187,18 @@ Deterministic rejection envelope (missing both evidence and exception):
 
 - **`ums-memory-d6q.4.14` – Constant-latency scheduling benchmark gate**
   - Benchmark gate contract:
-    - [ ] Measure scheduling operation latency (`review_schedule_update`, `review_schedule_clock`, `review_set_rebalance`) across increasing review-set volumes.
-    - [ ] Fail CI/local benchmark run when p95 regression exceeds configured thresholds or when p95 volume ratio breaches near-constant guardrail.
-    - [ ] Emit both versioned and latest benchmark reports (`docs/performance/phase3-review-scheduling-latency-gate.*.{json,md}`).
+    - [x] Measure scheduling operation latency (`review_schedule_update`, `review_schedule_clock`, `review_set_rebalance`) across increasing review-set volumes.
+    - [x] Fail CI/local benchmark run when p95 regression exceeds configured thresholds or when p95 volume ratio breaches near-constant guardrail.
+    - [x] Emit both versioned and latest benchmark reports (`docs/performance/phase3-review-scheduling-latency-gate.*.{json,md}`).
   - Alerting threshold defaults:
     - Near-constant ratio gate: `max(p95_volume) / min(p95_volume) <= 6.0`
     - Peak-volume p95 gates: update `<= 0.8ms`, clock `<= 3.8ms`, rebalance `<= 4.5ms`
 
 - **`ums-memory-d6q.4.10` – Scheduling runbook + hardening backlog closure**
   - Runbook checklist:
-    - [ ] Interaction/sleep clock semantics, fatigue thresholds, and novelty-write triggers are documented with deterministic consolidation causes.
-    - [ ] Active-set/archival tier rebalance policies are documented with bounded limits and replay expectations.
-    - [ ] Scheduling benchmark gate usage is documented (`npm run bench`, report paths, threshold overrides via env vars).
+    - [x] Interaction/sleep clock semantics, fatigue thresholds, and novelty-write triggers are documented with deterministic consolidation causes.
+    - [x] Active-set/archival tier rebalance policies are documented with bounded limits and replay expectations.
+    - [x] Scheduling benchmark gate usage is documented (`npm run bench`, report paths, threshold overrides via env vars).
   - Hardening backlog (tracked follow-ups):
     - `ums-memory-d6q.4.10.1` Adaptive active-limit policy experiments for large stores.
     - `ums-memory-d6q.4.10.2` Deterministic archival compaction for long-lived review histories.
@@ -202,14 +211,14 @@ Deterministic rejection envelope (missing both evidence and exception):
 ### Personalization policy audit export + incident checklist (`ums-memory-d6q.5.14`)
 
 - Checklist:
-  - [ ] Scheduled audit export includes one row/event per policy decision with `decisionId`, `requestDigest`, `policyVersion`, `reasonCode`, `allow|deny`, `storeId`, `profile`, `evidencePointers`, and timestamp.
-  - [ ] Export includes explicit incident review fields: `rollbackRequired`, `rollbackDecisionId`, `incidentId`, `degradedMode`, and `reviewedBy`.
-  - [ ] Incident checklist is run for every Sev2+ or policy-regression event: detection time, containment action, rollback/mitigation action, deterministic replay verification, and post-incident owner.
-  - [ ] Runbook references and command examples are published in docs and linked from the bead closure notes.
+  - [x] Scheduled audit export includes one row/event per policy decision with `decisionId`, `requestDigest`, `policyVersion`, `reasonCode`, `allow|deny`, `storeId`, `profile`, `evidencePointers`, and timestamp.
+  - [x] Export includes explicit incident review fields: `rollbackRequired`, `rollbackDecisionId`, `incidentId`, `degradedMode`, and `reviewedBy`.
+  - [x] Incident checklist is run for every Sev2+ or policy-regression event: detection time, containment action, rollback/mitigation action, deterministic replay verification, and post-incident owner.
+  - [x] Runbook references and command examples are published in docs and linked from the bead closure notes.
 - Expected artifacts:
-  - [ ] Audit export file for the review window (NDJSON/CSV) with immutable checksum and retention location.
-  - [ ] Completed incident checklist record (ticket or runbook artifact) containing decision trace and rollback evidence.
-  - [ ] One reproducible replay transcript proving policy decisions before/after mitigation are deterministic.
+  - [x] Audit export file for the review window (NDJSON/CSV) with immutable checksum and retention location.
+  - [x] Completed incident checklist record (ticket or runbook artifact) containing decision trace and rollback evidence.
+  - [x] One reproducible replay transcript proving policy decisions before/after mitigation are deterministic.
 
 ### Policy-pack plugin architecture boundaries (`ums-memory-d6q.5.15`)
 
@@ -229,9 +238,9 @@ Deterministic rejection envelope (missing both evidence and exception):
 ### Policy controls runbook + hardening backlog (`ums-memory-d6q.5.10`)
 
 - Runbook closure checklist:
-  - [ ] Prompt-injection quarantine, cross-space allowlist, degraded-mode, and policy-audit export workflows are documented end-to-end with deterministic replay steps.
-  - [ ] Incident response templates include deterministic rollback verification fields (`decisionId`, `requestDigest`, `reasonCodes`, `policyVersion`).
-  - [ ] Safety operations include explicit fail-closed expectations and on-call escalation thresholds.
+  - [x] Prompt-injection quarantine, cross-space allowlist, degraded-mode, and policy-audit export workflows are documented end-to-end with deterministic replay steps.
+  - [x] Incident response templates include deterministic rollback verification fields (`decisionId`, `requestDigest`, `reasonCodes`, `policyVersion`).
+  - [x] Safety operations include explicit fail-closed expectations and on-call escalation thresholds.
 - Hardening backlog (tracked follow-ups):
   - `ums-memory-d6q.5.10.1` Policy contradiction detector for conflicting allow/review/deny outcomes.
   - `ums-memory-d6q.5.10.2` Cross-space abuse-rate throttling and adaptive deny escalation.
@@ -254,22 +263,22 @@ Deterministic rejection envelope (missing both evidence and exception):
 Use this table as the operational minimum for observability/SLO beads (`.x.9`). For each domain, validation beads (`.2.6/.3.6/.4.6/.5.6`) must provide explicit tests for these rejection paths and emitted telemetry.
 
 - **Misconception operations (`ums-memory-d6q.2.9`, validation `ums-memory-d6q.2.6`)**
-  - SLO/metrics checklist: [ ] 30-day success `>= 99.9%` and p95 write/read latency `<= 250ms`; [ ] emit `misconception_signal_requests_total{action}`, `misconception_signal_latency_ms`, `misconception_guardrail_reject_total{reason}`, `misconception_replay_mismatch_total`; [ ] monitor drift/freshness with `misconception_decay_applied_total` and `misconception_retrieval_freshness_ms`.
+  - SLO/metrics checklist: [x] 30-day success `>= 99.9%` and p95 write/read latency `<= 250ms`; [x] emit `misconception_signal_requests_total{action}`, `misconception_signal_latency_ms`, `misconception_guardrail_reject_total{reason}`, `misconception_replay_mismatch_total`; [x] monitor drift/freshness with `misconception_decay_applied_total` and `misconception_retrieval_freshness_ms`.
   - Guardrail rejection semantics: `400 MISCONCEPTION_SIGNAL_INVALID` (schema/provenance invalid), `403 MISCONCEPTION_TRUST_BOUNDARY_DENY` (tenant/profile isolation), `422 MISCONCEPTION_EVIDENCE_REQUIRED` (missing evidence pointer).
   - Validation expectation (`.2.6`): deterministic replay returns identical reject code/reason; tests cover malformed payload, trust-boundary deny, and per-rejection metric/log emission.
 
 - **Curriculum operations (`ums-memory-d6q.3.9`, validation `ums-memory-d6q.3.6`)**
-  - SLO/metrics checklist: [ ] 30-day success `>= 99.9%` and p95 planner latency `<= 300ms`; [ ] emit `curriculum_plan_requests_total{action}`, `curriculum_plan_latency_ms`, `curriculum_guardrail_reject_total{reason}`, `curriculum_replay_mismatch_total`; [ ] track quality drift via `curriculum_recommendation_drift_total` and evidence/freshness counters.
+  - SLO/metrics checklist: [x] 30-day success `>= 99.9%` and p95 planner latency `<= 300ms`; [x] emit `curriculum_plan_requests_total{action}`, `curriculum_plan_latency_ms`, `curriculum_guardrail_reject_total{reason}`, `curriculum_replay_mismatch_total`; [x] track quality drift via `curriculum_recommendation_drift_total` and evidence/freshness counters.
   - Guardrail rejection semantics: `400 CURRICULUM_INPUT_INVALID` (invalid signal shape), `403 CURRICULUM_TRUST_BOUNDARY_DENY` (isolation/policy violation), `422 CURRICULUM_MIN_EVIDENCE_UNMET` (insufficient or stale evidence).
   - Validation expectation (`.3.6`): tests prove deterministic deny behavior for low-evidence/stale windows, plus rejection observability parity across API/CLI/MCP paths.
 
 - **Review-schedule operations (`ums-memory-d6q.4.9`, validation `ums-memory-d6q.4.6`)**
-  - SLO/metrics checklist: [ ] 30-day success `>= 99.9%` and p95 schedule mutation latency `<= 250ms`; [ ] emit `review_schedule_mutation_requests_total{action}`, `review_schedule_mutation_latency_ms`, `review_schedule_guardrail_reject_total{reason}`, `review_schedule_replay_mismatch_total`; [ ] alert on provenance gaps via `review_schedule_provenance_missing_total`.
+  - SLO/metrics checklist: [x] 30-day success `>= 99.9%` and p95 schedule mutation latency `<= 250ms`; [x] emit `review_schedule_mutation_requests_total{action}`, `review_schedule_mutation_latency_ms`, `review_schedule_guardrail_reject_total{reason}`, `review_schedule_replay_mismatch_total`; [x] alert on provenance gaps via `review_schedule_provenance_missing_total`.
   - Guardrail rejection semantics: `400 REVIEW_SCHEDULE_INPUT_INVALID` (window/interval malformed), `403 REVIEW_SCHEDULE_TRUST_BOUNDARY_DENY` (tenant/profile mismatch), `422 REVIEW_SCHEDULE_PROVENANCE_REQUIRED` (missing source evidence/provenance).
   - Validation expectation (`.4.6`): tests cover provenance-required rejects, cross-tenant denies, and idempotent replay of failed schedule mutations.
 
 - **Policy operations (`ums-memory-d6q.5.9`, validation `ums-memory-d6q.5.6`)**
-  - SLO/metrics checklist: [ ] 30-day success `>= 99.95%` and p95 policy-eval latency `<= 150ms`; [ ] emit `personalization_policy_requests_total{decision}`, `personalization_policy_eval_latency_ms`, `personalization_policy_reject_total{reason}`, `personalization_policy_replay_mismatch_total`; [ ] monitor safety drift via `personalization_allowlist_deny_total` and `personalization_overfit_block_total`.
+  - SLO/metrics checklist: [x] 30-day success `>= 99.95%` and p95 policy-eval latency `<= 150ms`; [x] emit `personalization_policy_requests_total{decision}`, `personalization_policy_eval_latency_ms`, `personalization_policy_reject_total{reason}`, `personalization_policy_replay_mismatch_total`; [x] monitor safety drift via `personalization_allowlist_deny_total` and `personalization_overfit_block_total`.
   - Guardrail rejection semantics: `403 PERSONALIZATION_POLICY_DENY` (allowlist/trust boundary fail), `422 PERSONALIZATION_POLICY_MIN_EVIDENCE_UNMET` (anti-overfitting minimum not met), `409 PERSONALIZATION_POLICY_CONTRADICTION` (conflicting policy outcomes).
   - Validation expectation (`.5.6`): tests prove deterministic deny codes, policy trace fields (`decisionId`, `reasonCode`, `requestDigest`), and observable reject counters for every deny path.
 

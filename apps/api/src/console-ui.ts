@@ -32,6 +32,16 @@ export const CONSOLE_HTML = `<!doctype html>
               disabled
             >
           </label>
+          <label>
+            API Token (optional)
+            <input
+              id="console-auth-token"
+              name="authToken"
+              type="password"
+              placeholder="Bearer or x-ums-api-key token"
+              autocomplete="off"
+            >
+          </label>
         </div>
         <p class="field-note">
           Profile is fixed to <code>operator-console</code>; the current runtime adapter ignores profile overrides.
@@ -449,6 +459,7 @@ export const CONSOLE_JS = `const API_PREFIX = "/v1";
 const DEFAULT_PROFILE = "operator-console";
 
 const storeInput = document.querySelector("#console-store");
+const authTokenInput = document.querySelector("#console-auth-token");
 const forms = Array.from(document.querySelectorAll("form.operation-form"));
 
 function getFieldValue(form, name) {
@@ -640,6 +651,13 @@ async function postOperation(operation, payload) {
   const storeId = storeInput && typeof storeInput.value === "string" ? storeInput.value.trim() : "";
   if (storeId) {
     headers["x-ums-store"] = storeId;
+  }
+  const authToken =
+    authTokenInput && typeof authTokenInput.value === "string"
+      ? authTokenInput.value.trim()
+      : "";
+  if (authToken) {
+    headers.authorization = "Bearer " + authToken;
   }
   const response = await fetch(API_PREFIX + "/" + operation, {
     method: "POST",
