@@ -1,239 +1,236 @@
 {
-  "generatedAt": "2026-02-28T20:56:19.063Z",
-  "sources": {
-    "jiraExampleRepo": "/Users/satan/work/techsio-prototypes/ferndesk-connector",
-    "codexJsonlFiles": 6725,
-    "claudeJsonlFiles": 188
-  },
+  "generatedAt": "2026-03-04T00:00:00.000Z",
   "ingestion": {
+    "codingAgents": {
+      "accepted": 5,
+      "duplicates": 0,
+      "rejected": 0,
+      "stats": {
+        "redactedSecrets": 0,
+        "spaceCount": 3,
+        "storeCount": 2,
+        "totalEvents": 9,
+        "unsafeInstructions": 0
+      }
+    },
     "jira": {
       "accepted": 4,
       "duplicates": 0,
       "rejected": 0,
       "stats": {
-        "storeCount": 1,
-        "spaceCount": 1,
-        "totalEvents": 4,
         "redactedSecrets": 0,
-        "unsafeInstructions": 0
-      }
-    },
-    "codingAgents": {
-      "accepted": 6653,
-      "duplicates": 0,
-      "rejected": 0,
-      "stats": {
-        "storeCount": 2,
-        "spaceCount": 3,
-        "totalEvents": 6657,
-        "redactedSecrets": 153,
-        "unsafeInstructions": 0
-      }
-    }
-  },
-  "snapshotTotals": {
-    "storeCount": 2,
-    "spaceCount": 3,
-    "eventCount": 6657
-  },
-  "stores": [
-    {
-      "storeId": "coding-agent",
-      "totals": {
-        "spaceCount": 2,
-        "eventCount": 6653
-      },
-      "spaces": [
-        {
-          "space": "codex-cli",
-          "count": 6469
-        },
-        {
-          "space": "claude-code",
-          "count": 184
-        }
-      ],
-      "topSources": [
-        {
-          "source": "codex-cli",
-          "count": 6469
-        },
-        {
-          "source": "claude-code",
-          "count": 184
-        }
-      ],
-      "topTerms": [
-        {
-          "term": "output",
-          "count": 998
-        },
-        {
-          "term": "code",
-          "count": 991
-        },
-        {
-          "term": "can",
-          "count": 831
-        },
-        {
-          "term": "use",
-          "count": 763
-        },
-        {
-          "term": "metadata",
-          "count": 723
-        },
-        {
-          "term": "exit",
-          "count": 719
-        },
-        {
-          "term": "duration",
-          "count": 697
-        },
-        {
-          "term": "seconds",
-          "count": 697
-        },
-        {
-          "term": "make",
-          "count": 696
-        },
-        {
-          "term": "everything",
-          "count": 686
-        },
-        {
-          "term": "should",
-          "count": 634
-        },
-        {
-          "term": "need",
-          "count": 631
-        }
-      ]
-    },
-    {
-      "storeId": "jira-history",
-      "totals": {
         "spaceCount": 1,
-        "eventCount": 4
-      },
-      "spaces": [
-        {
-          "space": "ferndesk-support",
-          "count": 4
-        }
-      ],
-      "topSources": [
-        {
-          "source": "jira",
-          "count": 4
-        }
-      ],
-      "topTerms": [
-        {
-          "term": "agent",
-          "count": 2
-        },
-        {
-          "term": "comment",
-          "count": 2
-        },
-        {
-          "term": "description",
-          "count": 2
-        },
-        {
-          "term": "public",
-          "count": 2
-        },
-        {
-          "term": "visibility",
-          "count": 2
-        },
-        {
-          "term": "abc",
-          "count": 1
-        },
-        {
-          "term": "acme",
-          "count": 1
-        },
-        {
-          "term": "amount",
-          "count": 1
-        },
-        {
-          "term": "billing",
-          "count": 1
-        },
-        {
-          "term": "customer",
-          "count": 1
-        },
-        {
-          "term": "escalated",
-          "count": 1
-        },
-        {
-          "term": "example",
-          "count": 1
-        }
-      ]
+        "storeCount": 1,
+        "totalEvents": 4,
+        "unsafeInstructions": 0
+      }
     }
-  ],
+  },
   "reflections": {
-    "jiraHistory": {
-      "query": "invoice mismatch escalation billing",
-      "sampleItems": [
-        {
-          "id": "jira-ABC-1-summary",
-          "source": "jira",
-          "content": "[ABC-1] Invoice mismatch for Acme\nDescription: Customer reports wrong invoice amount."
-        },
-        {
-          "id": "jira-ABC-1-comment-20001",
-          "source": "jira",
-          "content": "Comment by Support Agent\nVisibility: public\nEscalated to billing squad."
-        },
-        {
-          "id": "jira-SUP-1-comment-c-1",
-          "source": "jira",
-          "content": "Comment by Agent\nVisibility: public\nA public reply"
-        },
-        {
-          "id": "jira-SUP-1-summary",
-          "source": "jira",
-          "content": "[SUP-1] Example issue\nDescription: Hello"
-        }
-      ]
-    },
     "codingAgent": {
       "query": "benchmark tests memory store jira",
       "sampleItems": [
         {
-          "id": "codex-cli-.codex/history.jsonl-151",
-          "source": "codex-cli",
-          "content": "Type of \"register\" is partially unknown\n  Type of \"register\" is \"(key: str | None = None, username: str | None = None, password: [REDACTED] | None = None, token: [REDACTED] | None = None, personal_key_id: str | None = None, personal_key_secret: str | None = None, server: str | No…"
+          "content": "Need deterministic replay tests for ingestion.",
+          "id": "codex-cli-fixture-1",
+          "source": "codex-cli"
         },
         {
-          "id": "codex-cli-.codex/history.jsonl-1082",
-          "source": "codex-cli",
-          "content": "How's the final performance after optimisation? Did we get any speed improvements or memory improvements? If necessary improve benchmark precision, so that we get accurate comparison."
+          "content": "Add duplicate replay assertions and benchmark checks.",
+          "id": "codex-cli-fixture-2",
+          "source": "codex-cli"
         },
         {
-          "id": "codex-cli-.codex/sessions/2025/08/12/rollout-2025-08-12T17-18-22-b9d0f1c7-5054-4ee8-886b-df12019fcd23.jsonl-95",
-          "source": "codex-cli",
-          "content": "{\"output\":\"\\n RUN  v3.2.2 /Users/satan/work/coursition-effect-experiment\\n\\n ✓ src/stores/jobs/jobs.store.test.ts (5 tests) 24ms\\n ✓ src/stores/media/media.store.test.ts (2 tests) 26ms\\n\\n\\n Test Files  2 passed (2)\\n      Tests  7 passed (7)\\n   Start at  17:26:55\\n   Duration  …"
+          "content": "Ensure report output never changes during CI checks.",
+          "id": "codex-cli-fixture-3",
+          "source": "codex-cli"
+        }
+      ]
+    },
+    "jiraHistory": {
+      "query": "invoice mismatch escalation billing",
+      "sampleItems": [
+        {
+          "content": "[ABC-1] Invoice mismatch for Acme\nDescription: Customer reports wrong invoice amount.",
+          "id": "jira-ABC-1-summary",
+          "source": "jira"
         },
         {
-          "id": "codex-cli-.codex/history.jsonl-2348",
-          "source": "codex-cli",
-          "content": "Continue. Are the tests, typecheck passing? Did you validate using dev-browser already?"
+          "content": "Comment by Support Agent\nVisibility: public\nEscalated to billing squad.",
+          "id": "jira-ABC-1-comment-20001",
+          "source": "jira"
+        },
+        {
+          "content": "Comment by Agent\nVisibility: public\nA public reply",
+          "id": "jira-SUP-1-comment-c-1",
+          "source": "jira"
+        },
+        {
+          "content": "[SUP-1] Example issue\nDescription: Hello",
+          "id": "jira-SUP-1-summary",
+          "source": "jira"
         }
       ]
     }
-  }
+  },
+  "schemaVersion": "ingestion_validation_summary.v2",
+  "snapshotTotals": {
+    "eventCount": 9,
+    "spaceCount": 3,
+    "storeCount": 2
+  },
+  "sources": {
+    "claudeJsonlFiles": 2,
+    "codexJsonlFiles": 3,
+    "jiraExampleRepo": "/fixtures/ferndesk-connector",
+    "mode": "deterministic"
+  },
+  "stores": [
+    {
+      "spaces": [
+        {
+          "count": 3,
+          "space": "codex-cli"
+        },
+        {
+          "count": 2,
+          "space": "claude-code"
+        }
+      ],
+      "storeId": "coding-agent",
+      "topSources": [
+        {
+          "count": 3,
+          "source": "codex-cli"
+        },
+        {
+          "count": 2,
+          "source": "claude-code"
+        }
+      ],
+      "topTerms": [
+        {
+          "count": 2,
+          "term": "checks"
+        },
+        {
+          "count": 2,
+          "term": "replay"
+        },
+        {
+          "count": 2,
+          "term": "schema"
+        },
+        {
+          "count": 1,
+          "term": "adapter"
+        },
+        {
+          "count": 1,
+          "term": "add"
+        },
+        {
+          "count": 1,
+          "term": "assertions"
+        },
+        {
+          "count": 1,
+          "term": "benchmark"
+        },
+        {
+          "count": 1,
+          "term": "block"
+        },
+        {
+          "count": 1,
+          "term": "boundary"
+        },
+        {
+          "count": 1,
+          "term": "changes"
+        },
+        {
+          "count": 1,
+          "term": "decodeunknown"
+        },
+        {
+          "count": 1,
+          "term": "design"
+        }
+      ],
+      "totals": {
+        "eventCount": 5,
+        "spaceCount": 2
+      }
+    },
+    {
+      "spaces": [
+        {
+          "count": 4,
+          "space": "ferndesk-support"
+        }
+      ],
+      "storeId": "jira-history",
+      "topSources": [
+        {
+          "count": 4,
+          "source": "jira"
+        }
+      ],
+      "topTerms": [
+        {
+          "count": 2,
+          "term": "agent"
+        },
+        {
+          "count": 2,
+          "term": "comment"
+        },
+        {
+          "count": 2,
+          "term": "description"
+        },
+        {
+          "count": 2,
+          "term": "public"
+        },
+        {
+          "count": 2,
+          "term": "visibility"
+        },
+        {
+          "count": 1,
+          "term": "abc"
+        },
+        {
+          "count": 1,
+          "term": "acme"
+        },
+        {
+          "count": 1,
+          "term": "amount"
+        },
+        {
+          "count": 1,
+          "term": "billing"
+        },
+        {
+          "count": 1,
+          "term": "customer"
+        },
+        {
+          "count": 1,
+          "term": "escalated"
+        },
+        {
+          "count": 1,
+          "term": "example"
+        }
+      ],
+      "totals": {
+        "eventCount": 4,
+        "spaceCount": 1
+      }
+    }
+  ]
 }

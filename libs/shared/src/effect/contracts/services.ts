@@ -10,12 +10,14 @@ import {
   AgentIdSchema,
   BatchIdSchema,
   ConversationIdSchema,
+  EventIdSchema,
   EvidenceIdSchema,
   MessageIdSchema,
   MemoryIdSchema,
   ProfileIdSchema,
   ProjectIdSchema,
   RoleIdSchema,
+  RunIdSchema,
   SourceIdSchema,
   SpaceIdSchema,
   TenantIdSchema,
@@ -63,6 +65,48 @@ export const ProvenanceEnvelopeSchema = Schema.Struct({
   messageId: Schema.optional(MessageIdSchema),
   sourceId: Schema.optional(SourceIdSchema),
   batchId: Schema.optional(BatchIdSchema),
+});
+
+export const AdapterSourceSchema = Schema.Literals([
+  "codex-cli",
+  "claude-code",
+  "cursor",
+  "opencode",
+  "vscode",
+]);
+
+export const AdapterSessionMessageRoleSchema = Schema.Literals([
+  "system",
+  "user",
+  "assistant",
+  "tool",
+]);
+
+export const AdapterSessionMessageSchema = Schema.Struct({
+  eventId: EventIdSchema,
+  messageId: MessageIdSchema,
+  role: AdapterSessionMessageRoleSchema,
+  content: NonEmptyTrimmedStringSchema,
+  createdAt: Schema.String,
+  citations: Schema.Array(EvidenceIdSchema),
+  metadata: Schema.optional(IngestionMetadataSchema),
+});
+
+export const AdapterSessionEnvelopeSchema = Schema.Struct({
+  tenantId: TenantIdSchema,
+  spaceId: SpaceIdSchema,
+  source: AdapterSourceSchema,
+  sessionId: ConversationIdSchema,
+  runId: RunIdSchema,
+  batchId: Schema.optional(BatchIdSchema),
+  projectId: Schema.optional(ProjectIdSchema),
+  roleId: Schema.optional(RoleIdSchema),
+  userId: Schema.optional(UserIdSchema),
+  agentId: Schema.optional(AgentIdSchema),
+  startedAt: Schema.String,
+  endedAt: Schema.optional(Schema.String),
+  messages: Schema.Array(AdapterSessionMessageSchema),
+  metadata: Schema.optional(IngestionMetadataSchema),
 });
 
 export const StorageUpsertRequestSchema = Schema.Struct({
@@ -200,6 +244,20 @@ export const RetrievalHitSchema = Schema.Struct({
   ),
 });
 
+export const GroundedAnswerCitationSchema = Schema.Struct({
+  citationId: EvidenceIdSchema,
+  memoryId: MemoryIdSchema,
+  sourceId: Schema.optional(SourceIdSchema),
+  startOffset: NonNegativeIntSchema,
+  endOffset: NonNegativeIntSchema,
+  quote: NonEmptyTrimmedStringSchema,
+});
+
+export const GroundedAnswerSchema = Schema.Struct({
+  answer: NonEmptyTrimmedStringSchema,
+  citations: Schema.Array(GroundedAnswerCitationSchema),
+});
+
 export const RetrievalExplainabilityReasonCodeSchema = Schema.Literals([
   "QUERY_TOKEN_MATCH",
   "QUERY_EMPTY_FALLBACK",
@@ -294,6 +352,7 @@ export const RetrievalResponseSchema = Schema.Struct({
   totalHits: NonNegativeIntSchema,
   nextCursor: Schema.NullOr(Schema.String),
   actionablePack: Schema.optional(ActionableRetrievalPackSchema),
+  groundedAnswer: Schema.optional(GroundedAnswerSchema),
 });
 
 export const RetrievalExplainabilityResponseSchema = Schema.Struct({
@@ -362,6 +421,26 @@ export const PolicyPackPluginResponseSchema = Schema.Struct({
   outcome: PolicyPackPluginOutcomeSchema,
   reasonCodes: Schema.Array(Schema.String),
   metadata: Schema.optional(PolicyContextSchema),
+});
+
+export const SchemaCompatibilityModeSchema = Schema.Literals([
+  "backward",
+  "forward",
+  "breaking",
+]);
+
+export const SchemaVersionSchema = Schema.Struct({
+  major: NonNegativeIntSchema,
+  minor: NonNegativeIntSchema,
+  patch: NonNegativeIntSchema,
+});
+
+export const SchemaEvolutionPolicySchema = Schema.Struct({
+  contract: NonEmptyTrimmedStringSchema,
+  version: SchemaVersionSchema,
+  compatibilityMode: SchemaCompatibilityModeSchema,
+  migrationNotes: Schema.optional(Schema.String),
+  effectiveFrom: Schema.String,
 });
 
 export const AuthorizationRoleSchema = Schema.Literals([
@@ -472,6 +551,62 @@ const LifecycleDeltaMillisSchema = Schema.Number.check(
   Schema.isBetween({ minimum: -86_400_000, maximum: 86_400_000 })
 );
 const LifecycleDeltaCountSchema = Schema.Number.check(Schema.isInt());
+const DedupeSimilarityScoreSchema = Schema.Number.check(
+  Schema.isBetween({ minimum: 0, maximum: 1 })
+);
+
+export const MemoryCandidateExtractionSchema = Schema.Struct({
+  extractionRunId: RunIdSchema,
+  spaceId: SpaceIdSchema,
+  candidateId: LifecycleEntityIdSchema,
+  statement: NonEmptyTrimmedStringSchema,
+  scope: NonEmptyTrimmedStringSchema,
+  sourceEpisodeIds: Schema.Array(EvidenceIdSchema),
+  extractedAtMillis: NonNegativeIntSchema,
+  provenance: Schema.optional(ProvenanceEnvelopeSchema),
+});
+
+export const PersistedMemoryRecordSchema = Schema.Struct({
+  spaceId: SpaceIdSchema,
+  memoryId: MemoryIdSchema,
+  layer: MemoryLayerSchema,
+  statement: NonEmptyTrimmedStringSchema,
+  scope: NonEmptyTrimmedStringSchema,
+  evidenceIds: Schema.Array(EvidenceIdSchema),
+  citations: Schema.Array(GroundedAnswerCitationSchema),
+  provenance: Schema.optional(ProvenanceEnvelopeSchema),
+  createdAtMillis: NonNegativeIntSchema,
+  updatedAtMillis: NonNegativeIntSchema,
+  version: NonNegativeIntSchema,
+});
+
+export const DeterministicDedupeActionSchema = Schema.Literals([
+  "add",
+  "update",
+  "noop",
+]);
+
+export const DeterministicDedupeReasonCodeSchema = Schema.Literals([
+  "NO_MATCH",
+  "EXACT_DUPLICATE",
+  "SEMANTIC_SUPERSET",
+  "RECENCY_PREFERENCE",
+  "LOW_SIGNAL_EVIDENCE",
+]);
+
+export const DeterministicDedupeMetricEvidenceSchema = Schema.Struct({
+  lexicalSimilarity: DedupeSimilarityScoreSchema,
+  semanticSimilarity: DedupeSimilarityScoreSchema,
+  recencyDeltaMillis: LifecycleDeltaMillisSchema,
+  confidenceDelta: LifecycleDeltaScoreSchema,
+});
+
+export const DeterministicDedupeDecisionSchema = Schema.Struct({
+  action: DeterministicDedupeActionSchema,
+  reasonCodes: Schema.Array(DeterministicDedupeReasonCodeSchema),
+  metricEvidence: DeterministicDedupeMetricEvidenceSchema,
+  targetMemoryId: Schema.optional(MemoryIdSchema),
+});
 
 export const MemoryLifecycleOperationSchema = Schema.Literals([
   "shadow_write",
@@ -548,6 +683,7 @@ export const MemoryLifecycleShadowWriteResponseSchema = Schema.Struct({
   operation: Schema.Literal("shadow_write"),
   requestDigest: Sha256HexSchema,
   action: Schema.Literals(["created", "updated", "noop"]),
+  dedupeDecision: Schema.optional(DeterministicDedupeDecisionSchema),
   candidate: MemoryLifecycleCandidateSchema,
 });
 
@@ -641,6 +777,16 @@ export type ScopeAuthorizationInput = Schema.Schema.Type<
 export type ProvenanceEnvelope = Schema.Schema.Type<
   typeof ProvenanceEnvelopeSchema
 >;
+export type AdapterSource = Schema.Schema.Type<typeof AdapterSourceSchema>;
+export type AdapterSessionMessageRole = Schema.Schema.Type<
+  typeof AdapterSessionMessageRoleSchema
+>;
+export type AdapterSessionMessage = Schema.Schema.Type<
+  typeof AdapterSessionMessageSchema
+>;
+export type AdapterSessionEnvelope = Schema.Schema.Type<
+  typeof AdapterSessionEnvelopeSchema
+>;
 export type RetrievalScopeSelectors = Schema.Schema.Type<
   typeof RetrievalScopeSelectorsSchema
 >;
@@ -657,6 +803,10 @@ export type RetrievalScopeLevel = Schema.Schema.Type<
   typeof RetrievalScopeLevelSchema
 >;
 export type RetrievalHit = Schema.Schema.Type<typeof RetrievalHitSchema>;
+export type GroundedAnswerCitation = Schema.Schema.Type<
+  typeof GroundedAnswerCitationSchema
+>;
+export type GroundedAnswer = Schema.Schema.Type<typeof GroundedAnswerSchema>;
 export type RetrievalExplainabilityReasonCode = Schema.Schema.Type<
   typeof RetrievalExplainabilityReasonCodeSchema
 >;
@@ -710,6 +860,13 @@ export type PolicyPackPluginOutcome = Schema.Schema.Type<
 export type PolicyPackPluginResponse = Schema.Schema.Type<
   typeof PolicyPackPluginResponseSchema
 >;
+export type SchemaCompatibilityMode = Schema.Schema.Type<
+  typeof SchemaCompatibilityModeSchema
+>;
+export type SchemaVersion = Schema.Schema.Type<typeof SchemaVersionSchema>;
+export type SchemaEvolutionPolicy = Schema.Schema.Type<
+  typeof SchemaEvolutionPolicySchema
+>;
 export type AuthorizationRole = Schema.Schema.Type<
   typeof AuthorizationRoleSchema
 >;
@@ -749,6 +906,24 @@ export type IngestionRequest = Schema.Schema.Type<
 >;
 export type IngestionResponse = Schema.Schema.Type<
   typeof IngestionResponseSchema
+>;
+export type MemoryCandidateExtraction = Schema.Schema.Type<
+  typeof MemoryCandidateExtractionSchema
+>;
+export type PersistedMemoryRecord = Schema.Schema.Type<
+  typeof PersistedMemoryRecordSchema
+>;
+export type DeterministicDedupeAction = Schema.Schema.Type<
+  typeof DeterministicDedupeActionSchema
+>;
+export type DeterministicDedupeReasonCode = Schema.Schema.Type<
+  typeof DeterministicDedupeReasonCodeSchema
+>;
+export type DeterministicDedupeMetricEvidence = Schema.Schema.Type<
+  typeof DeterministicDedupeMetricEvidenceSchema
+>;
+export type DeterministicDedupeDecision = Schema.Schema.Type<
+  typeof DeterministicDedupeDecisionSchema
 >;
 export type MemoryLifecycleEntityId = Schema.Schema.Type<
   typeof LifecycleEntityIdSchema

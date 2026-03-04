@@ -2,8 +2,10 @@ import { Effect, Schema, SchemaIssue } from "effect";
 
 import { ContractValidationError } from "../errors.js";
 import {
+  AdapterSessionEnvelopeSchema,
   AuthorizationRequestSchema,
   AuthorizationResponseSchema,
+  DeterministicDedupeDecisionSchema,
   EvaluationRequestSchema,
   IngestionRequestSchema,
   MemoryLifecycleDemoteRequestSchema,
@@ -161,6 +163,28 @@ export const validateIngestionRequest = validateUnknownSync(
 export const decodeIngestionRequestEffect = decodeUnknownEffect(
   IngestionRequestSchema,
   "IngestionRequest"
+);
+
+export const decodeAdapterSessionEnvelope = decodeUnknownSync(
+  AdapterSessionEnvelopeSchema
+);
+export const validateAdapterSessionEnvelope = validateUnknownSync(
+  AdapterSessionEnvelopeSchema
+);
+export const decodeAdapterSessionEnvelopeEffect = decodeUnknownEffect(
+  AdapterSessionEnvelopeSchema,
+  "AdapterSessionEnvelope"
+);
+
+export const decodeDeterministicDedupeDecision = decodeUnknownSync(
+  DeterministicDedupeDecisionSchema
+);
+export const validateDeterministicDedupeDecision = validateUnknownSync(
+  DeterministicDedupeDecisionSchema
+);
+export const decodeDeterministicDedupeDecisionEffect = decodeUnknownEffect(
+  DeterministicDedupeDecisionSchema,
+  "DeterministicDedupeDecision"
 );
 
 export const decodeMemoryLifecycleShadowWriteRequest = decodeUnknownSync(
