@@ -159,6 +159,107 @@ test("worker cycle executes review/replay/doctor with real shared state and retu
   });
 });
 
+test("worker cycle derives replay_eval deltas from outcomes and feedback instead of zero-default metrics", async () => {
+  const replayEvalRequests: Array<Record<string, unknown>> = [];
+  const summary = await runBackgroundWorkerCycle({
+    timestamp: "2026-03-02T00:00:00.000Z",
+    replayEvalMaxPerProfile: 5,
+    maxErrorEntries: 8,
+    loadSnapshot: async () => ({
+      stores: {
+        "worker-autopilot-store": {
+          profiles: {
+            "worker-autopilot-profile": {
+              shadowCandidates: [
+                {
+                  candidateId: "cand-worker-autopilot-1",
+                  ruleId: "rule-worker-autopilot-1",
+                  status: "shadow",
+                  confidence: 0.9,
+                },
+              ],
+              replayEvaluations: [
+                {
+                  candidateId: "cand-worker-autopilot-1",
+                  evaluatedAt: "2026-02-28T00:00:00.000Z",
+                },
+              ],
+              outcomes: [
+                {
+                  outcome: "success",
+                  usedRuleIds: ["rule-worker-autopilot-1"],
+                  recordedAt: "2026-03-01T00:00:00.000Z",
+                },
+                {
+                  outcome: "success",
+                  usedRuleIds: ["rule-worker-autopilot-1"],
+                  recordedAt: "2026-03-01T00:05:00.000Z",
+                },
+                {
+                  outcome: "failure",
+                  usedRuleIds: ["rule-worker-autopilot-other"],
+                  recordedAt: "2026-03-01T00:10:00.000Z",
+                },
+                {
+                  outcome: "failure",
+                  usedRuleIds: ["rule-worker-autopilot-other"],
+                  recordedAt: "2026-03-01T00:15:00.000Z",
+                },
+              ],
+              feedback: [
+                {
+                  signal: "helpful",
+                  targetRuleId: "rule-worker-autopilot-1",
+                  recordedAt: "2026-03-01T00:03:00.000Z",
+                },
+                {
+                  signal: "harmful",
+                  targetRuleId: "rule-worker-autopilot-other",
+                  recordedAt: "2026-03-01T00:12:00.000Z",
+                },
+              ],
+            },
+          },
+        },
+      },
+    }),
+    runOperation: async ({ operation, requestBody }) => {
+      if (operation === "replay_eval") {
+        replayEvalRequests.push(
+          requestBody as unknown as Record<string, unknown>
+        );
+      }
+      return {};
+    },
+  });
+
+  assert.equal(summary.profileCount, 1);
+  assert.equal(summary.replayEval.attempted, 1);
+  assert.equal(summary.replayEval.succeeded, 1);
+  assert.equal(summary.replayEval.failed, 0);
+  assert.equal(replayEvalRequests.length, 1);
+
+  const replayEvalRequest = replayEvalRequests[0];
+  assert.ok(replayEvalRequest);
+  assert.equal(replayEvalRequest["candidateId"], "cand-worker-autopilot-1");
+  assert.equal(replayEvalRequest["successRateDelta"], 0.5);
+  assert.equal(replayEvalRequest["reopenRateDelta"], -0.5);
+  assert.equal(replayEvalRequest["policyViolationsDelta"], 0);
+  assert.equal(replayEvalRequest["hallucinationFlagDelta"], 0);
+  assert.equal(replayEvalRequest["canarySuccessRateDelta"], 0.25);
+  assert.equal(replayEvalRequest["canaryErrorRateDelta"], -0.5);
+  assert.equal(replayEvalRequest["canaryPolicyViolationsDelta"], 0);
+  assert.equal(replayEvalRequest["canaryHallucinationFlagDelta"], 0);
+
+  const metadata = replayEvalRequest["metadata"] as Record<string, unknown>;
+  assert.equal(metadata["source"], "worker_outcome_autopilot");
+  assert.equal(metadata["observedGlobalOutcomes"], 4);
+  assert.equal(metadata["observedCandidateOutcomes"], 2);
+  assert.equal(metadata["observedGlobalFeedback"], 2);
+  assert.equal(metadata["observedCandidateFeedback"], 1);
+  assert.equal(metadata["candidateRuleId"], "rule-worker-autopilot-1");
+});
+
 test("supervised worker service starts, runs cycles, and stops cleanly", async () => {
   await withTempStateFile(async ({ stateFile }) => {
     const { service, cycleCount } = await startSupervisedWorkerService({

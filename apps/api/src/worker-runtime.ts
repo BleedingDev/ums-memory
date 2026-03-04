@@ -27,6 +27,9 @@ interface StoreProfilePair {
 
 interface WorkerProfileSnapshot extends Record<string, unknown> {
   shadowCandidates?: unknown[];
+  outcomes?: unknown[];
+  feedback?: unknown[];
+  replayEvaluations?: unknown[];
 }
 
 interface WorkerStoreEntrySnapshot extends Record<string, unknown> {
@@ -43,6 +46,21 @@ interface WorkerOperationRequestBody extends Record<string, unknown> {
   profile: string;
   timestamp: string;
   candidateId?: string;
+}
+
+interface ReplayEvalAutopilotMetrics {
+  successRateDelta: number;
+  reopenRateDelta: number;
+  latencyP95DeltaMs: number;
+  tokenCostDelta: number;
+  policyViolationsDelta: number;
+  hallucinationFlagDelta: number;
+  canarySuccessRateDelta: number;
+  canaryErrorRateDelta: number;
+  canaryLatencyP95DeltaMs: number;
+  canaryPolicyViolationsDelta: number;
+  canaryHallucinationFlagDelta: number;
+  metadata: Record<string, unknown>;
 }
 
 interface RunOperationInput {
@@ -275,6 +293,302 @@ function listShadowCandidateIds(
   return [...ids].sort((left, right) => left.localeCompare(right));
 }
 
+function roundNumber(value: number, precision = 6): number {
+  const factor = 10 ** precision;
+  return Math.round(value * factor) / factor;
+}
+
+function normalizeFiniteNumber(value: unknown): number | null {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return null;
+  }
+  return value;
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
+}
+
+function normalizeIsoMillis(value: unknown): number | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const normalized = value.trim();
+  if (!normalized) {
+    return null;
+  }
+  const parsed = Date.parse(normalized);
+  if (!Number.isFinite(parsed)) {
+    return null;
+  }
+  return parsed;
+}
+
+function parseStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  const values = new Set<string>();
+  for (const entry of value) {
+    const normalized = normalizeNonEmptyString(entry);
+    if (normalized) {
+      values.add(normalized);
+    }
+  }
+  return [...values];
+}
+
+function resolveCandidateSnapshot(
+  profileState: WorkerProfileSnapshot | null,
+  candidateId: string
+): Record<string, unknown> | null {
+  if (profileState === null || !Array.isArray(profileState.shadowCandidates)) {
+    return null;
+  }
+  for (const entry of profileState.shadowCandidates) {
+    if (!isRecord(entry)) {
+      continue;
+    }
+    const currentCandidateId = normalizeNonEmptyString(entry["candidateId"]);
+    if (currentCandidateId === candidateId) {
+      return entry;
+    }
+  }
+  return null;
+}
+
+function resolveLatestReplayEvalMillisForCandidate(
+  profileState: WorkerProfileSnapshot | null,
+  candidateId: string
+): number | null {
+  if (profileState === null || !Array.isArray(profileState.replayEvaluations)) {
+    return null;
+  }
+  let latest: number | null = null;
+  for (const entry of profileState.replayEvaluations) {
+    if (!isRecord(entry)) {
+      continue;
+    }
+    const currentCandidateId = normalizeNonEmptyString(entry["candidateId"]);
+    if (currentCandidateId !== candidateId) {
+      continue;
+    }
+    const evaluatedAtMillis = normalizeIsoMillis(entry["evaluatedAt"]);
+    if (evaluatedAtMillis === null) {
+      continue;
+    }
+    if (latest === null || evaluatedAtMillis > latest) {
+      latest = evaluatedAtMillis;
+    }
+  }
+  return latest;
+}
+
+function resolveCandidateUtilityBaseline(
+  candidate: Record<string, unknown> | null
+): number {
+  if (candidate === null) {
+    return 0.5;
+  }
+  const metadata = isRecord(candidate["metadata"])
+    ? candidate["metadata"]
+    : null;
+  const utilitySignal =
+    metadata !== null && isRecord(metadata["utilitySignal"])
+      ? metadata["utilitySignal"]
+      : null;
+  const utilityScore = normalizeFiniteNumber(
+    utilitySignal !== null ? utilitySignal["score"] : undefined
+  );
+  if (utilityScore !== null) {
+    return clamp(utilityScore, 0, 1);
+  }
+  const candidateConfidence = normalizeFiniteNumber(candidate["confidence"]);
+  if (candidateConfidence !== null) {
+    return clamp(candidateConfidence, 0, 1);
+  }
+  return 0.5;
+}
+
+function isEventAfterReference(
+  eventMillis: number | null,
+  referenceMillis: number | null
+): boolean {
+  if (referenceMillis === null) {
+    return true;
+  }
+  if (eventMillis === null) {
+    return true;
+  }
+  return eventMillis >= referenceMillis;
+}
+
+function deriveReplayEvalAutopilotMetrics(
+  profileState: WorkerProfileSnapshot | null,
+  candidateId: string
+): ReplayEvalAutopilotMetrics {
+  const candidate = resolveCandidateSnapshot(profileState, candidateId);
+  const ruleId =
+    candidate !== null ? normalizeNonEmptyString(candidate["ruleId"]) : null;
+  const replayReferenceMillis = resolveLatestReplayEvalMillisForCandidate(
+    profileState,
+    candidateId
+  );
+  const replayReferenceIso =
+    replayReferenceMillis === null
+      ? null
+      : new Date(replayReferenceMillis).toISOString();
+
+  let globalOutcomeTotal = 0;
+  let globalOutcomeSuccess = 0;
+  let globalOutcomeFailure = 0;
+  let candidateOutcomeTotal = 0;
+  let candidateOutcomeSuccess = 0;
+  let candidateOutcomeFailure = 0;
+
+  if (profileState !== null && Array.isArray(profileState.outcomes)) {
+    for (const entry of profileState.outcomes) {
+      if (!isRecord(entry)) {
+        continue;
+      }
+      const eventMillis = normalizeIsoMillis(entry["recordedAt"]);
+      if (!isEventAfterReference(eventMillis, replayReferenceMillis)) {
+        continue;
+      }
+      const outcomeValue = normalizeNonEmptyString(
+        entry["outcome"]
+      )?.toLowerCase();
+      if (outcomeValue !== "success" && outcomeValue !== "failure") {
+        continue;
+      }
+      globalOutcomeTotal += 1;
+      if (outcomeValue === "success") {
+        globalOutcomeSuccess += 1;
+      } else {
+        globalOutcomeFailure += 1;
+      }
+
+      if (!ruleId) {
+        continue;
+      }
+      const usedRuleIds = parseStringArray(entry["usedRuleIds"]);
+      if (!usedRuleIds.includes(ruleId)) {
+        continue;
+      }
+      candidateOutcomeTotal += 1;
+      if (outcomeValue === "success") {
+        candidateOutcomeSuccess += 1;
+      } else {
+        candidateOutcomeFailure += 1;
+      }
+    }
+  }
+
+  const globalSuccessRate =
+    globalOutcomeTotal > 0 ? globalOutcomeSuccess / globalOutcomeTotal : 0.5;
+  const globalFailureRate =
+    globalOutcomeTotal > 0 ? globalOutcomeFailure / globalOutcomeTotal : 0.5;
+  const utilityBaseline = resolveCandidateUtilityBaseline(candidate);
+  const candidateSuccessRate =
+    candidateOutcomeTotal > 0
+      ? candidateOutcomeSuccess / candidateOutcomeTotal
+      : utilityBaseline;
+  const candidateFailureRate =
+    candidateOutcomeTotal > 0
+      ? candidateOutcomeFailure / candidateOutcomeTotal
+      : 1 - utilityBaseline;
+
+  let globalFeedbackTotal = 0;
+  let globalHarmfulFeedbackTotal = 0;
+  let candidateFeedbackTotal = 0;
+  let candidateHarmfulFeedbackTotal = 0;
+
+  if (profileState !== null && Array.isArray(profileState.feedback)) {
+    for (const entry of profileState.feedback) {
+      if (!isRecord(entry)) {
+        continue;
+      }
+      const eventMillis = normalizeIsoMillis(entry["recordedAt"]);
+      if (!isEventAfterReference(eventMillis, replayReferenceMillis)) {
+        continue;
+      }
+      const signal = normalizeNonEmptyString(entry["signal"])?.toLowerCase();
+      if (signal !== "helpful" && signal !== "harmful") {
+        continue;
+      }
+
+      globalFeedbackTotal += 1;
+      if (signal === "harmful") {
+        globalHarmfulFeedbackTotal += 1;
+      }
+
+      const targetCandidateId = normalizeNonEmptyString(
+        entry["targetCandidateId"]
+      );
+      const targetRuleId = normalizeNonEmptyString(entry["targetRuleId"]);
+      const candidateMatch =
+        targetCandidateId === candidateId ||
+        (Boolean(ruleId) && targetRuleId === ruleId);
+      if (!candidateMatch) {
+        continue;
+      }
+      candidateFeedbackTotal += 1;
+      if (signal === "harmful") {
+        candidateHarmfulFeedbackTotal += 1;
+      }
+    }
+  }
+
+  const globalHarmfulRate =
+    globalFeedbackTotal > 0
+      ? globalHarmfulFeedbackTotal / globalFeedbackTotal
+      : 0;
+  const candidateHarmfulRate =
+    candidateFeedbackTotal > 0
+      ? candidateHarmfulFeedbackTotal / candidateFeedbackTotal
+      : 0;
+  const harmfulRateDelta = clamp(
+    candidateHarmfulRate - globalHarmfulRate,
+    -1,
+    1
+  );
+
+  const successRateDelta = roundNumber(
+    clamp(candidateSuccessRate - globalSuccessRate, -1, 1)
+  );
+  const reopenRateDelta = roundNumber(
+    clamp(candidateFailureRate - globalFailureRate, -1, 1)
+  );
+  const policyViolationsDelta = roundNumber(Math.max(0, harmfulRateDelta));
+  const hallucinationFlagDelta = roundNumber(
+    Math.max(0, harmfulRateDelta * 0.5)
+  );
+
+  return {
+    successRateDelta,
+    reopenRateDelta,
+    latencyP95DeltaMs: 0,
+    tokenCostDelta: 0,
+    policyViolationsDelta,
+    hallucinationFlagDelta,
+    canarySuccessRateDelta: roundNumber(clamp(successRateDelta * 0.5, -1, 1)),
+    canaryErrorRateDelta: reopenRateDelta,
+    canaryLatencyP95DeltaMs: 0,
+    canaryPolicyViolationsDelta: policyViolationsDelta,
+    canaryHallucinationFlagDelta: hallucinationFlagDelta,
+    metadata: {
+      source: "worker_outcome_autopilot",
+      referenceEvaluatedAt: replayReferenceIso,
+      observedGlobalOutcomes: globalOutcomeTotal,
+      observedCandidateOutcomes: candidateOutcomeTotal,
+      observedGlobalFeedback: globalFeedbackTotal,
+      observedCandidateFeedback: candidateFeedbackTotal,
+      candidateRuleId: ruleId,
+      utilityBaseline: roundNumber(utilityBaseline),
+    },
+  };
+}
+
 function runOperationWithSharedState({
   operation,
   requestBody,
@@ -404,6 +718,7 @@ export async function runBackgroundWorkerCycle(
   };
 
   for (const { storeId, profile } of pairs) {
+    const profileSnapshot = getProfileSnapshot(snapshot, storeId, profile);
     const baseRequest: WorkerOperationRequestBody = {
       storeId,
       profile,
@@ -428,9 +743,7 @@ export async function runBackgroundWorkerCycle(
       });
     }
 
-    const candidateIds = listShadowCandidateIds(
-      getProfileSnapshot(snapshot, storeId, profile)
-    );
+    const candidateIds = listShadowCandidateIds(profileSnapshot);
     summary.replayEval.candidatesSeen += candidateIds.length;
     const selectedCandidateIds = candidateIds.slice(0, replayEvalMaxPerProfile);
     summary.replayEval.skippedByLimit += Math.max(
@@ -440,12 +753,30 @@ export async function runBackgroundWorkerCycle(
 
     for (const candidateId of selectedCandidateIds) {
       summary.replayEval.attempted += 1;
+      const replayEvalMetrics = deriveReplayEvalAutopilotMetrics(
+        profileSnapshot,
+        candidateId
+      );
       try {
         await runOperation({
           operation: "replay_eval",
           requestBody: {
             ...baseRequest,
             candidateId,
+            successRateDelta: replayEvalMetrics.successRateDelta,
+            reopenRateDelta: replayEvalMetrics.reopenRateDelta,
+            latencyP95DeltaMs: replayEvalMetrics.latencyP95DeltaMs,
+            tokenCostDelta: replayEvalMetrics.tokenCostDelta,
+            policyViolationsDelta: replayEvalMetrics.policyViolationsDelta,
+            hallucinationFlagDelta: replayEvalMetrics.hallucinationFlagDelta,
+            canarySuccessRateDelta: replayEvalMetrics.canarySuccessRateDelta,
+            canaryErrorRateDelta: replayEvalMetrics.canaryErrorRateDelta,
+            canaryLatencyP95DeltaMs: replayEvalMetrics.canaryLatencyP95DeltaMs,
+            canaryPolicyViolationsDelta:
+              replayEvalMetrics.canaryPolicyViolationsDelta,
+            canaryHallucinationFlagDelta:
+              replayEvalMetrics.canaryHallucinationFlagDelta,
+            metadata: replayEvalMetrics.metadata,
           },
           stateFile,
         });
