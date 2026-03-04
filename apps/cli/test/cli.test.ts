@@ -1,13 +1,15 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import test from "node:test";
 
 import { resetStore } from "../../api/src/core.ts";
+import { startApiServer } from "../../api/src/server.ts";
 
 const CLI_PATH = resolve(process.cwd(), "apps/cli/src/index.ts");
+const UMS_PATH = resolve(process.cwd(), "apps/ums/src/index.ts");
 
 function runCli(args: any, stdin = "", { env = process.env } = {}) {
   return new Promise((resolvePromise) => {
@@ -34,6 +36,48 @@ function runCli(args: any, stdin = "", { env = process.env } = {}) {
       proc.stdin.write(stdin);
     }
     proc.stdin.end();
+  });
+}
+
+function runUms(args: any, stdin = "", { env = process.env } = {}) {
+  return new Promise((resolvePromise) => {
+    const proc = spawn(
+      process.execPath,
+      ["--import", "tsx", UMS_PATH, ...args],
+      {
+        stdio: ["pipe", "pipe", "pipe"],
+        env,
+      }
+    );
+    let stdout = "";
+    let stderr = "";
+    proc.stdout.on("data", (chunk) => {
+      stdout += chunk.toString("utf8");
+    });
+    proc.stderr.on("data", (chunk) => {
+      stderr += chunk.toString("utf8");
+    });
+    proc.on("close", (code) => {
+      resolvePromise({ code, stdout, stderr });
+    });
+    if (stdin) {
+      proc.stdin.write(stdin);
+    }
+    proc.stdin.end();
+  });
+}
+
+async function stopApiServer(server: {
+  close: (callback: (error?: Error | null) => void) => void;
+}): Promise<void> {
+  await new Promise<void>((resolvePromise, rejectPromise) => {
+    server.close((error?: Error | null) => {
+      if (error) {
+        rejectPromise(error);
+        return;
+      }
+      resolvePromise();
+    });
   });
 }
 
@@ -208,6 +252,141 @@ test("cli store-id flag isolates memories across stores", async () => {
     assert.equal(codingBody.ok, true);
     assert.equal(codingBody.data.matches.length, 0);
   } finally {
+    await rm(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("ums connect requires prior login session", async () => {
+  const tempDir = await mkdtemp(resolve(tmpdir(), "ums-connect-no-login-"));
+  const accountFile = resolve(tempDir, "account.json");
+  try {
+    const connect = await runUms([
+      "connect",
+      "--account-file",
+      accountFile,
+      "--store-id",
+      "tenant-no-login",
+      "--no-auto-start",
+    ]);
+    assert.equal((connect as any).code, 1);
+    const stderr = JSON.parse((connect as any).stderr);
+    assert.equal(stderr.ok, false);
+    assert.equal(stderr.error.code, "UMS_RUNTIME_ERROR");
+    assert.match(stderr.error.message, /No account login found/i);
+  } finally {
+    await rm(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("ums login + connect + sync ingests local codex history into authenticated API", async () => {
+  const tempDir = await mkdtemp(resolve(tmpdir(), "ums-account-sync-"));
+  const homeDir = resolve(tempDir, "home");
+  const codexDir = resolve(homeDir, ".codex", "sessions");
+  const accountFile = resolve(tempDir, "account-session.json");
+  const serverStateFile = resolve(tempDir, "server-state.json");
+  const authToken = "sync-token-123";
+  await mkdir(codexDir, { recursive: true });
+  await writeFile(
+    resolve(codexDir, "session.jsonl"),
+    `${JSON.stringify({
+      timestamp: "2026-03-04T00:00:00.000Z",
+      event: {
+        role: "user",
+        content:
+          "Enterprise ingestion should auto-capture knowledge from developer sessions.",
+      },
+    })}\n`,
+    "utf8"
+  );
+
+  const server = await startApiServer({
+    host: "127.0.0.1",
+    port: 0,
+    stateFile: serverStateFile,
+    auth: {
+      required: true,
+      tokens: [authToken],
+    },
+  });
+
+  try {
+    const apiBaseUrl = `http://${server.host}:${server.port}`;
+    const env = {
+      ...process.env,
+      HOME: homeDir,
+    };
+
+    const login = await runUms(
+      [
+        "login",
+        "--api-url",
+        apiBaseUrl,
+        "--token",
+        authToken,
+        "--verify-store-id",
+        "tenant-sync",
+        "--account-file",
+        accountFile,
+      ],
+      "",
+      { env }
+    );
+    assert.equal((login as any).code, 0, (login as any).stderr);
+    const loginBody = JSON.parse((login as any).stdout);
+    assert.equal(loginBody.ok, true);
+    assert.equal(loginBody.data.operation, "login");
+
+    const connect = await runUms(
+      [
+        "connect",
+        "--account-file",
+        accountFile,
+        "--store-id",
+        "tenant-sync",
+        "--profile",
+        "developer-sync",
+        "--sources",
+        "codex",
+        "--no-auto-start",
+      ],
+      "",
+      { env }
+    );
+    assert.equal((connect as any).code, 0, (connect as any).stderr);
+    const connectBody = JSON.parse((connect as any).stdout);
+    assert.equal(connectBody.ok, true);
+    assert.equal(connectBody.data.operation, "connect");
+    assert.equal(connectBody.data.daemon.action, "disabled");
+
+    const sync = await runUms(["sync", "--account-file", accountFile], "", {
+      env,
+    });
+    assert.equal((sync as any).code, 0, (sync as any).stderr);
+    const syncBody = JSON.parse((sync as any).stdout);
+    assert.equal(syncBody.ok, true);
+    assert.equal(syncBody.data.operation, "sync");
+    assert.equal(syncBody.data.storeId, "tenant-sync");
+    assert.equal(syncBody.data.preparedEvents >= 1, true);
+    assert.equal(syncBody.data.accepted >= 1, true);
+
+    const context = await runCli([
+      "context",
+      "--state-file",
+      serverStateFile,
+      "--store-id",
+      "tenant-sync",
+      "--input",
+      JSON.stringify({
+        profile: "developer-sync",
+        query: "auto-capture knowledge",
+      }),
+    ]);
+    assert.equal((context as any).code, 0, (context as any).stderr);
+    const contextBody = JSON.parse((context as any).stdout);
+    assert.equal(contextBody.ok, true);
+    assert.equal(contextBody.data.matches.length >= 1, true);
+  } finally {
+    await stopApiServer(server.server);
     await rm(tempDir, { recursive: true, force: true });
   }
 });

@@ -13,6 +13,29 @@ Keep unrelated memory domains isolated so coding-agent workflows are not pollute
 - API also accepts `x-ums-store` header (used when request body omits `storeId`).
 - UMS engine ingest/recall accepts `storeId` and `space`.
 
+## Account-Linked Auto Ingestion (CLI)
+Use this when developers should continuously contribute local knowledge into a deployed tenant store.
+
+1. Login once per developer machine:
+   - `ums login --api-url https://ums.company.internal --token <api-token>`
+2. Bind the local machine to a tenant store/profile:
+   - `ums connect --store-id coding-agent --profile developer-main --sources codex,claude,plan`
+3. `connect` auto-starts `sync-daemon` by default (disable with `--no-auto-start`).
+4. Run one deterministic cycle manually:
+   - `ums sync`
+5. Inspect status/daemon health:
+   - `ums status`
+
+Current source adapters:
+- `codex`: tails `~/.codex/**/*.jsonl`
+- `claude`: tails `~/.claude/{transcripts,projects}/**/*.jsonl`
+- `plan`: snapshots local `PLAN.md`
+
+Security notes:
+- Session material is stored locally in `~/.ums/account-session.json` (override with `--account-file`).
+- Tokens are redacted from command output and never written to exported UMS state snapshots.
+- API authentication still enforces bearer/x-ums-api-key checks server-side.
+
 ## Supported Ingestion Shapes
 - Raw event or event array:
   - `{ storeId, space, source, content, timestamp, metadata }`
