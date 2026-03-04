@@ -4,7 +4,7 @@ import {
   DEFAULT_RUNTIME_STATE_FILE,
   executeRuntimeOperation,
   listRuntimeOperations,
-} from "../../api/src/runtime-adapter.ts";
+} from "../../api/src/runtime-service.ts";
 
 interface ParsedArgs {
   operation: string | null | undefined;
@@ -22,7 +22,7 @@ async function printUsage(): Promise<void> {
     const operations = await listRuntimeOperations();
     ops = operations.join(", ");
   } catch {
-    ops = "unavailable (runtime adapter failed to load)";
+    ops = "unavailable (runtime service failed to load)";
   }
   process.stderr.write(
     `${[

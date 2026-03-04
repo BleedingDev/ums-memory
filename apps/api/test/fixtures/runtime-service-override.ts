@@ -24,13 +24,13 @@ function digest(value: unknown): string {
   return createHash("sha256").update(stableStringify(value)).digest("hex");
 }
 
-type RuntimeAdapterExecuteRequest = {
+type RuntimeServiceExecuteRequest = {
   readonly operation?: unknown;
   readonly requestBody?: unknown;
   readonly stateFile?: unknown;
 };
 
-export function createDeterministicRuntimeAdapter() {
+export function createDeterministicRuntimeService() {
   return {
     listOperations() {
       return [...SUPPORTED_OPERATIONS];
@@ -39,7 +39,7 @@ export function createDeterministicRuntimeAdapter() {
       operation,
       requestBody,
       stateFile,
-    }: RuntimeAdapterExecuteRequest) {
+    }: RuntimeServiceExecuteRequest) {
       const normalizedOperation = String(operation ?? "")
         .trim()
         .toLowerCase();
@@ -59,7 +59,7 @@ export function createDeterministicRuntimeAdapter() {
 
       return {
         operation: normalizedOperation,
-        adapterId: "deterministic-runtime-adapter",
+        runtimeServiceId: "deterministic-runtime-service",
         request: normalizedRequest,
         stateFile: typeof stateFile === "string" ? stateFile : null,
         requestDigest: digest({

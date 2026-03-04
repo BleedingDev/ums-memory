@@ -12,7 +12,7 @@ import {
   DEFAULT_RUNTIME_STATE_FILE,
   executeRuntimeOperation,
   listRuntimeOperations,
-} from "./runtime-adapter.ts";
+} from "./runtime-service.ts";
 import {
   createInMemoryApiTelemetry,
   type BuildOperationTelemetryEventOptions,
@@ -305,28 +305,28 @@ function toErrorResponse(error: unknown): {
       },
     };
   }
-  if (hasErrorCode(error, "RUNTIME_ADAPTER_LOAD_ERROR")) {
+  if (hasErrorCode(error, "RUNTIME_SERVICE_LOAD_ERROR")) {
     return {
       statusCode: 500,
       body: {
         ok: false,
         error: {
-          code: "RUNTIME_ADAPTER_LOAD_ERROR",
-          message: toErrorMessage(error, "Runtime adapter load failed."),
+          code: "RUNTIME_SERVICE_LOAD_ERROR",
+          message: toErrorMessage(error, "Runtime service load failed."),
         },
       },
     };
   }
-  if (hasErrorCode(error, "RUNTIME_ADAPTER_CONTRACT_ERROR")) {
+  if (hasErrorCode(error, "RUNTIME_SERVICE_CONTRACT_ERROR")) {
     return {
       statusCode: 500,
       body: {
         ok: false,
         error: {
-          code: "RUNTIME_ADAPTER_CONTRACT_ERROR",
+          code: "RUNTIME_SERVICE_CONTRACT_ERROR",
           message: toErrorMessage(
             error,
-            "Runtime adapter contract is invalid."
+            "Runtime service contract is invalid."
           ),
         },
       },

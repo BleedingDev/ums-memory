@@ -3,28 +3,31 @@ import { spawn } from "node:child_process";
 import { resolve } from "node:path";
 import test from "node:test";
 
+import { Layer } from "effect";
+
 import { executeOperation, listOperations, resetStore } from "../src/core.ts";
 import { executeOperationWithSharedState } from "../src/persistence.ts";
 import {
-  clearRuntimeAdapterCache,
+  RuntimeServiceTag,
+  clearRuntimeServiceCache,
   executeRuntimeOperation,
   listRuntimeOperations,
-} from "../src/runtime-adapter.ts";
+} from "../src/runtime-service.ts";
 import { startApiServer } from "../src/server.ts";
 
 const CLI_PATH = resolve(process.cwd(), "apps/cli/src/index.ts");
-const RUNTIME_ADAPTER_FIXTURE = resolve(
+const RUNTIME_SERVICE_FIXTURE = resolve(
   process.cwd(),
-  "apps/api/test/fixtures/runtime-adapter-override.ts"
+  "apps/api/test/fixtures/runtime-service-override.ts"
 );
 const POLICY_PACK_PLUGIN_FIXTURE = resolve(
   process.cwd(),
   "apps/api/test/fixtures/policy-pack-plugin-override.ts"
 );
-const ORIGINAL_RUNTIME_ADAPTER_MODULE =
-  process.env["UMS_RUNTIME_ADAPTER_MODULE"];
-const ORIGINAL_RUNTIME_ADAPTER_EXPORT =
-  process.env["UMS_RUNTIME_ADAPTER_EXPORT"];
+const ORIGINAL_RUNTIME_SERVICE_MODULE =
+  process.env["UMS_RUNTIME_SERVICE_MODULE"];
+const ORIGINAL_RUNTIME_SERVICE_EXPORT =
+  process.env["UMS_RUNTIME_SERVICE_EXPORT"];
 const ORIGINAL_POLICY_PACK_PLUGIN_MODULE =
   process.env["UMS_POLICY_PACK_PLUGIN_MODULE"];
 const ORIGINAL_POLICY_PACK_PLUGIN_EXPORT =
@@ -58,36 +61,36 @@ function runCli(args: any, stdin = "", { env = process.env } = {}) {
   });
 }
 
-function useDefaultRuntimeAdapter() {
-  delete process.env["UMS_RUNTIME_ADAPTER_MODULE"];
-  delete process.env["UMS_RUNTIME_ADAPTER_EXPORT"];
+function useDefaultRuntimeService() {
+  delete process.env["UMS_RUNTIME_SERVICE_MODULE"];
+  delete process.env["UMS_RUNTIME_SERVICE_EXPORT"];
   delete process.env["UMS_POLICY_PACK_PLUGIN_MODULE"];
   delete process.env["UMS_POLICY_PACK_PLUGIN_EXPORT"];
-  clearRuntimeAdapterCache();
+  clearRuntimeServiceCache();
 }
 
-function useFixtureRuntimeAdapter() {
-  process.env["UMS_RUNTIME_ADAPTER_MODULE"] = RUNTIME_ADAPTER_FIXTURE;
-  process.env["UMS_RUNTIME_ADAPTER_EXPORT"] =
-    "createDeterministicRuntimeAdapter";
-  clearRuntimeAdapterCache();
+function useFixtureRuntimeService() {
+  process.env["UMS_RUNTIME_SERVICE_MODULE"] = RUNTIME_SERVICE_FIXTURE;
+  process.env["UMS_RUNTIME_SERVICE_EXPORT"] =
+    "createDeterministicRuntimeService";
+  clearRuntimeServiceCache();
 }
 
 test.beforeEach(() => {
   resetStore();
-  useDefaultRuntimeAdapter();
+  useDefaultRuntimeService();
 });
 
 test.after(() => {
-  if (ORIGINAL_RUNTIME_ADAPTER_MODULE) {
-    process.env["UMS_RUNTIME_ADAPTER_MODULE"] = ORIGINAL_RUNTIME_ADAPTER_MODULE;
+  if (ORIGINAL_RUNTIME_SERVICE_MODULE) {
+    process.env["UMS_RUNTIME_SERVICE_MODULE"] = ORIGINAL_RUNTIME_SERVICE_MODULE;
   } else {
-    delete process.env["UMS_RUNTIME_ADAPTER_MODULE"];
+    delete process.env["UMS_RUNTIME_SERVICE_MODULE"];
   }
-  if (ORIGINAL_RUNTIME_ADAPTER_EXPORT) {
-    process.env["UMS_RUNTIME_ADAPTER_EXPORT"] = ORIGINAL_RUNTIME_ADAPTER_EXPORT;
+  if (ORIGINAL_RUNTIME_SERVICE_EXPORT) {
+    process.env["UMS_RUNTIME_SERVICE_EXPORT"] = ORIGINAL_RUNTIME_SERVICE_EXPORT;
   } else {
-    delete process.env["UMS_RUNTIME_ADAPTER_EXPORT"];
+    delete process.env["UMS_RUNTIME_SERVICE_EXPORT"];
   }
   if (ORIGINAL_POLICY_PACK_PLUGIN_MODULE) {
     process.env["UMS_POLICY_PACK_PLUGIN_MODULE"] =
@@ -101,45 +104,45 @@ test.after(() => {
   } else {
     delete process.env["UMS_POLICY_PACK_PLUGIN_EXPORT"];
   }
-  clearRuntimeAdapterCache();
+  clearRuntimeServiceCache();
   resetStore();
 });
 
-test("runtime adapter default path stays compatible with effect core + persistence wiring", async () => {
+test("runtime service default path stays compatible with effect core + persistence wiring", async () => {
   const requestBody = {
-    profile: "runtime-adapter-default",
+    profile: "runtime-service-default",
     events: [{ type: "note", source: "test", content: "effect compatibility" }],
   };
 
   const expectedOperations = listOperations();
-  const adapterOperations = await listRuntimeOperations();
-  assert.deepEqual(adapterOperations, expectedOperations);
+  const serviceOperations = await listRuntimeOperations();
+  assert.deepEqual(serviceOperations, expectedOperations);
 
   resetStore();
-  const adapterResult = await executeRuntimeOperation({
+  const serviceResult = await executeRuntimeOperation({
     operation: "ingest",
     requestBody: structuredClone(requestBody),
     stateFile: null,
   });
 
   resetStore();
-  const legacyResult = await executeOperationWithSharedState({
+  const directResult = await executeOperationWithSharedState({
     operation: "ingest",
     stateFile: null,
     executor: () => executeOperation("ingest", structuredClone(requestBody)),
   });
 
-  assert.deepEqual(adapterResult, legacyResult);
+  assert.deepEqual(serviceResult, directResult);
 });
 
-test("runtime adapter module override resolves deterministic contract behavior", async () => {
-  useFixtureRuntimeAdapter();
+test("runtime service module override resolves deterministic contract behavior", async () => {
+  useFixtureRuntimeService();
 
   const operations = await listRuntimeOperations();
   assert.deepEqual(operations, ["context", "ingest"]);
 
   const requestBody = {
-    profile: "runtime-adapter-override",
+    profile: "runtime-service-override",
     query: "deterministic",
   };
 
@@ -154,12 +157,55 @@ test("runtime adapter module override resolves deterministic contract behavior",
     stateFile: "/tmp/custom-state.json",
   });
 
-  assert.equal((first as any).adapterId, "deterministic-runtime-adapter");
+  assert.equal(
+    (first as any).runtimeServiceId,
+    "deterministic-runtime-service"
+  );
   assert.deepEqual(first, second);
 });
 
-test("default runtime adapter can load policy pack plugins from env module", async () => {
-  useDefaultRuntimeAdapter();
+test("runtime service supports direct Layer override without env module loading", async () => {
+  const runtimeLayer = Layer.succeed(RuntimeServiceTag, {
+    source: "runtime-layer-override",
+    listOperations: () => ["context"],
+    executeOperation: async ({
+      operation,
+      requestBody,
+      stateFile,
+    }: {
+      operation: string;
+      requestBody?: unknown;
+      stateFile?: string | null;
+    }) => ({
+      operation,
+      requestBody:
+        requestBody &&
+        typeof requestBody === "object" &&
+        !Array.isArray(requestBody)
+          ? requestBody
+          : {},
+      stateFile: typeof stateFile === "string" ? stateFile : null,
+      runtimeServiceId: "runtime-layer-override",
+    }),
+  });
+
+  const operations = await listRuntimeOperations({ runtimeLayer });
+  assert.deepEqual(operations, ["context"]);
+
+  const result = await executeRuntimeOperation({
+    operation: "context",
+    requestBody: { query: "layer-override" },
+    stateFile: null,
+    runtimeLayer,
+  });
+  assert.equal(
+    (result as { runtimeServiceId?: unknown }).runtimeServiceId,
+    "runtime-layer-override"
+  );
+});
+
+test("default runtime service can load policy pack plugins from env module", async () => {
+  useDefaultRuntimeService();
   const env = {
     ...process.env,
     UMS_POLICY_PACK_PLUGIN_MODULE: POLICY_PACK_PLUGIN_FIXTURE,
@@ -208,8 +254,8 @@ test("default runtime adapter can load policy pack plugins from env module", asy
   assert.equal((replay as any).decisionDigest, (first as any).decisionDigest);
 });
 
-test("api server routes through runtime adapter override for list + operation execution", async () => {
-  useFixtureRuntimeAdapter();
+test("api server routes through runtime service override for list + operation execution", async () => {
+  useFixtureRuntimeService();
   const { server, host } = await startApiServer({
     host: "127.0.0.1",
     port: 0,
@@ -232,14 +278,17 @@ test("api server routes through runtime adapter override for list + operation ex
         "x-ums-store": "runtime-tenant",
       },
       body: JSON.stringify({
-        profile: "runtime-adapter-http",
+        profile: "runtime-service-http",
         query: "deterministic",
       }),
     });
     assert.equal(first.status, 200);
     const firstBody = await first.json();
     assert.equal(firstBody.ok, true);
-    assert.equal(firstBody.data.adapterId, "deterministic-runtime-adapter");
+    assert.equal(
+      firstBody.data.runtimeServiceId,
+      "deterministic-runtime-service"
+    );
     assert.equal(firstBody.data.request.storeId, "runtime-tenant");
 
     const second = await fetch(`${base}/v1/context`, {
@@ -249,7 +298,7 @@ test("api server routes through runtime adapter override for list + operation ex
         "x-ums-store": "runtime-tenant",
       },
       body: JSON.stringify({
-        profile: "runtime-adapter-http",
+        profile: "runtime-service-http",
         query: "deterministic",
       }),
     });
@@ -265,17 +314,17 @@ test("api server routes through runtime adapter override for list + operation ex
   }
 });
 
-test("cli routes through runtime adapter override deterministically", async () => {
+test("cli routes through runtime service override deterministically", async () => {
   const env = {
     ...process.env,
-    UMS_RUNTIME_ADAPTER_MODULE: RUNTIME_ADAPTER_FIXTURE,
-    UMS_RUNTIME_ADAPTER_EXPORT: "createDeterministicRuntimeAdapter",
+    UMS_RUNTIME_SERVICE_MODULE: RUNTIME_SERVICE_FIXTURE,
+    UMS_RUNTIME_SERVICE_EXPORT: "createDeterministicRuntimeService",
   };
   const args = [
     "context",
     "--input",
     JSON.stringify({
-      profile: "runtime-adapter-cli",
+      profile: "runtime-service-cli",
       query: "deterministic",
     }),
   ];
@@ -284,7 +333,10 @@ test("cli routes through runtime adapter override deterministically", async () =
   assert.equal((first as any).code, 0, (first as any).stderr);
   const firstBody = JSON.parse((first as any).stdout);
   assert.equal(firstBody.ok, true);
-  assert.equal(firstBody.data.adapterId, "deterministic-runtime-adapter");
+  assert.equal(
+    firstBody.data.runtimeServiceId,
+    "deterministic-runtime-service"
+  );
 
   const second = await runCli(args, "", { env });
   assert.equal((second as any).code, 0, (second as any).stderr);
