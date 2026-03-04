@@ -5,6 +5,7 @@ import {
   readdirSync,
   writeFileSync,
 } from "node:fs";
+import { homedir } from "node:os";
 import { extname, join, relative, resolve } from "node:path";
 import { createInterface } from "node:readline";
 
@@ -26,6 +27,9 @@ const MAX_LINES_PER_FILE = Number.parseInt(
   process.env["UMS_VALIDATE_MAX_LINES"] || "0",
   10
 );
+const USER_HOME = process.env["HOME"] || homedir();
+const CODEX_HISTORY_ROOT = join(USER_HOME, ".codex");
+const CLAUDE_HISTORY_ROOT = join(USER_HOME, ".claude");
 
 type JsonRecord = Record<string, unknown>;
 
@@ -226,7 +230,7 @@ async function loadConversationEvents({
       }
 
       const role = pickRole(parsed).toLowerCase();
-      const fileLabel = relative("/Users/satan", filePath) || filePath;
+      const fileLabel = relative(USER_HOME, filePath) || filePath;
       events.push({
         id: `${source}-${fileLabel}-${lineIndex - 1}`,
         storeId,
@@ -399,12 +403,12 @@ const jiraExamplePayload = {
 };
 
 const codexFiles = [
-  ...listJsonlFiles("/Users/satan/.codex/archived_sessions"),
-  ...listJsonlFiles("/Users/satan/.codex"),
+  ...listJsonlFiles(join(CODEX_HISTORY_ROOT, "archived_sessions")),
+  ...listJsonlFiles(CODEX_HISTORY_ROOT),
 ];
 const claudeFiles = [
-  ...listJsonlFiles("/Users/satan/.claude/transcripts"),
-  ...listJsonlFiles("/Users/satan/.claude/projects"),
+  ...listJsonlFiles(join(CLAUDE_HISTORY_ROOT, "transcripts")),
+  ...listJsonlFiles(join(CLAUDE_HISTORY_ROOT, "projects")),
 ];
 
 const codexEvents = await loadConversationEvents({

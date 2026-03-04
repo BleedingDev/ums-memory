@@ -56,3 +56,10 @@ Security notes:
 ## Notes
 - Existing snapshots with top-level `spaces` remain import-compatible and are treated as `storeId=default`.
 - New snapshots export under top-level `stores[]` with explicit store totals.
+
+## Validation Artifact Handling
+- `npm run validate:ingestion` rewrites `docs/reports/multi-store-ingestion-validation-summary.json`.
+- The report is machine-local: it includes `generatedAt` and source-file counts from local `~/.codex` and `~/.claude` histories.
+- Do not commit incidental report churn. Only commit report updates when intentionally capturing a reviewed baseline refresh.
+- If the report changed during local checks and no baseline refresh is intended, restore it before commit:
+  - `git restore --source=HEAD -- docs/reports/multi-store-ingestion-validation-summary.json`
