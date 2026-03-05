@@ -5,6 +5,6 @@
   "description": "Shared backend core contracts and in-memory reference implementation for UMS.",
   "type": "module",
   "scripts": {
-    "test": "node --import tsx --test ./src/**/*.test.ts"
+    "test": "bun test ./src/**/*.test.ts"
   }
 }

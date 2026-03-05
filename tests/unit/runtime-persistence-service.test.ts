@@ -29,7 +29,7 @@ const runEither = <T, E>(effect: Effect.Effect<T, E>) =>
     )
   );
 
-test("ums-memory-2dc.1: noop runtime persistence executes validated operation request", async () => {
+test("noop runtime persistence executes validated operation request", async () => {
   const service = makeNoopRuntimePersistenceService();
 
   const response = await Effect.runPromise(
@@ -50,7 +50,7 @@ test("ums-memory-2dc.1: noop runtime persistence executes validated operation re
   });
 });
 
-test("ums-memory-2dc.1: runtime persistence service can delegate to repository implementation", async () => {
+test("runtime persistence can delegate to repository implementation", async () => {
   const capturedRequests: RuntimePersistenceExecutionRequest[] = [];
   const repository: RuntimePersistenceRepository = {
     execute: <TResponse>(
@@ -93,7 +93,7 @@ test("ums-memory-2dc.1: runtime persistence service can delegate to repository i
   assert.equal(capturedRequests.length, 1);
 });
 
-test("ums-memory-2dc.1: repository-backed runtime persistence surfaces execution errors without contract reclassification", async () => {
+test("repository-backed runtime persistence surfaces execution errors", async () => {
   const repository: RuntimePersistenceRepository = {
     execute: () =>
       Effect.fail(
@@ -119,7 +119,7 @@ test("ums-memory-2dc.1: repository-backed runtime persistence surfaces execution
   assert.match(result.left.details, /sqlite write timeout/);
 });
 
-test("ums-memory-2dc.1: runtime persistence rejects empty operation names", async () => {
+test("runtime persistence rejects empty operation names", async () => {
   const service = makeNoopRuntimePersistenceService();
 
   const result = await runEither(
@@ -135,7 +135,7 @@ test("ums-memory-2dc.1: runtime persistence rejects empty operation names", asyn
   assert.match(result.left.message, /non-empty string/i);
 });
 
-test("ums-memory-2dc.1: runtime persistence rejects requests without executor function", async () => {
+test("runtime persistence rejects requests without executor function", async () => {
   const service = makeNoopRuntimePersistenceService();
 
   const result = await runEither(
@@ -150,7 +150,7 @@ test("ums-memory-2dc.1: runtime persistence rejects requests without executor fu
   assert.match(result.left.message, /executor function/i);
 });
 
-test("ums-memory-2dc.1: runtime persistence surfaces executor failures as RuntimePersistenceExecutionError", async () => {
+test("runtime persistence surfaces executor failures as execution errors", async () => {
   const service = makeNoopRuntimePersistenceService();
 
   const result = await runEither(
@@ -168,7 +168,7 @@ test("ums-memory-2dc.1: runtime persistence surfaces executor failures as Runtim
   assert.match(result.left.details, /executor blew up/);
 });
 
-test("ums-memory-2dc.1: deterministic runtime persistence layer exports RuntimePersistenceServiceTag wiring", async () => {
+test("deterministic runtime persistence layer wires RuntimePersistenceServiceTag", async () => {
   const response = await Effect.runPromise(
     Effect.gen(function* () {
       const runtimePersistenceService = yield* RuntimePersistenceServiceTag;
