@@ -326,6 +326,13 @@ function defaultProfile() {
   return INTERNAL_PROFILE_ID;
 }
 
+function normalizeProfile(value: any) {
+  if (typeof value === "string" && value.trim()) {
+    return value.trim();
+  }
+  return defaultProfile();
+}
+
 function isPlainObject(value: any) {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
@@ -3147,7 +3154,7 @@ function computeReplayEvalSafetyDeltas(
 function normalizeRequest(operation: any, request: any) {
   requireObject(request);
   const storeId = defaultStoreId(request.storeId ?? request.store);
-  const profile = defaultProfile();
+  const profile = normalizeProfile(request.profile);
   return {
     storeId,
     profile,
@@ -12014,7 +12021,10 @@ export function snapshotProfile(
   profile: any = INTERNAL_PROFILE_ID,
   storeId: any = DEFAULT_STORE_ID
 ) {
-  const state = getProfileState(defaultStoreId(storeId), defaultProfile());
+  const state = getProfileState(
+    defaultStoreId(storeId),
+    normalizeProfile(profile)
+  );
   return {
     events: state.events.map((event: any) => ({ ...event })),
     rules: state.rules.map((rule: any) => ({ ...rule })),
@@ -13001,6 +13011,9 @@ export function findRuleByDigestPrefix(
   digestPrefix: any,
   storeId: any = DEFAULT_STORE_ID
 ) {
-  const state = getProfileState(defaultStoreId(storeId), defaultProfile());
+  const state = getProfileState(
+    defaultStoreId(storeId),
+    normalizeProfile(profile)
+  );
   return findByDigestPrefix(state.rules, digestPrefix, "ruleId");
 }

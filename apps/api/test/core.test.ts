@@ -11,6 +11,7 @@ import { ErrorCode } from "../../../libs/shared/src/errors.ts";
 import {
   executeOperation,
   exportStoreSnapshot,
+  findRuleByDigestPrefix,
   importStoreSnapshot,
   listOperations,
   resetPolicyPackPlugin,
@@ -2174,6 +2175,99 @@ test("store isolation prevents cross-store state bleed", () => {
   assert.equal(codingContext.matches.length, 0);
   assert.equal(snapshotProfile("ops", "jira-history").events.length, 1);
   assert.equal(snapshotProfile("ops", "coding-agent").events.length, 1);
+});
+
+test("profile isolation prevents cross-profile state bleed within a store", () => {
+  executeOperation("ingest", {
+    storeId: "coding-agent",
+    profile: "ops-alpha",
+    events: [{ type: "note", source: "codex", content: "alpha-only evidence" }],
+  });
+  executeOperation("ingest", {
+    storeId: "coding-agent",
+    profile: "ops-beta",
+    events: [{ type: "note", source: "codex", content: "beta-only evidence" }],
+  });
+
+  const alphaContext = executeOperation("context", {
+    storeId: "coding-agent",
+    profile: "ops-alpha",
+    query: "beta-only",
+  });
+  const betaContext = executeOperation("context", {
+    storeId: "coding-agent",
+    profile: "ops-beta",
+    query: "alpha-only",
+  });
+
+  assert.equal(alphaContext.matches.length, 0);
+  assert.equal(betaContext.matches.length, 0);
+  assert.equal(snapshotProfile("ops-alpha", "coding-agent").events.length, 1);
+  assert.equal(snapshotProfile("ops-beta", "coding-agent").events.length, 1);
+  assert.equal(snapshotProfile(undefined, "coding-agent").events.length, 0);
+});
+
+test("findRuleByDigestPrefix resolves rules in the requested profile only", () => {
+  executeOperation("ingest", {
+    storeId: "coding-agent",
+    profile: "ops-alpha",
+    events: [{ type: "note", source: "codex", content: "alpha curation rule" }],
+  });
+  const reflectedAlpha = executeOperation("reflect", {
+    storeId: "coding-agent",
+    profile: "ops-alpha",
+    maxCandidates: 1,
+  });
+  executeOperation("curate", {
+    storeId: "coding-agent",
+    profile: "ops-alpha",
+    candidates: reflectedAlpha.candidates,
+  });
+
+  executeOperation("ingest", {
+    storeId: "coding-agent",
+    profile: "ops-beta",
+    events: [{ type: "note", source: "codex", content: "beta curation rule" }],
+  });
+  const reflectedBeta = executeOperation("reflect", {
+    storeId: "coding-agent",
+    profile: "ops-beta",
+    maxCandidates: 1,
+  });
+  executeOperation("curate", {
+    storeId: "coding-agent",
+    profile: "ops-beta",
+    candidates: reflectedBeta.candidates,
+  });
+
+  const alphaRuleId = snapshotProfile("ops-alpha", "coding-agent").rules[0]
+    ?.ruleId;
+  const betaRuleId = snapshotProfile("ops-beta", "coding-agent").rules[0]
+    ?.ruleId;
+
+  assert.equal(typeof alphaRuleId, "string");
+  assert.equal(typeof betaRuleId, "string");
+  assert.notEqual(alphaRuleId, betaRuleId);
+
+  const alphaMatch = findRuleByDigestPrefix(
+    "ops-alpha",
+    alphaRuleId?.slice(0, 10),
+    "coding-agent"
+  );
+  const betaMatch = findRuleByDigestPrefix(
+    "ops-beta",
+    betaRuleId?.slice(0, 10),
+    "coding-agent"
+  );
+  const crossProfile = findRuleByDigestPrefix(
+    "ops-alpha",
+    betaRuleId?.slice(0, 10),
+    "coding-agent"
+  );
+
+  assert.equal(alphaMatch?.ruleId, alphaRuleId);
+  assert.equal(betaMatch?.ruleId, betaRuleId);
+  assert.equal(crossProfile, null);
 });
 
 test("ums-memory-d6q.1.4 learner_profile_update deterministic IDs and replay-safe behavior", () => {

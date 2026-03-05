@@ -131,17 +131,17 @@ test("worker cycle executes review/replay/doctor with real shared state and retu
       maxErrorEntries: 8,
     });
 
-    assert.equal(summary.profileCount, 1);
-    assert.equal(summary.reviewScheduleClock.attempted, 1);
-    assert.equal(summary.reviewScheduleClock.succeeded, 1);
+    assert.equal(summary.profileCount, 2);
+    assert.equal(summary.reviewScheduleClock.attempted, 2);
+    assert.equal(summary.reviewScheduleClock.succeeded, 2);
     assert.equal(summary.reviewScheduleClock.failed, 0);
-    assert.equal(summary.replayEval.candidatesSeen, 1);
+    assert.equal(summary.replayEval.candidatesSeen, 2);
     assert.equal(summary.replayEval.skippedByLimit, 0);
-    assert.equal(summary.replayEval.attempted, 1);
-    assert.equal(summary.replayEval.succeeded, 1);
+    assert.equal(summary.replayEval.attempted, 2);
+    assert.equal(summary.replayEval.succeeded, 2);
     assert.equal(summary.replayEval.failed, 0);
-    assert.equal(summary.doctor.attempted, 1);
-    assert.equal(summary.doctor.succeeded, 1);
+    assert.equal(summary.doctor.attempted, 2);
+    assert.equal(summary.doctor.succeeded, 2);
     assert.equal(summary.doctor.failed, 0);
     assert.equal(summary.errorCount, 0);
     assert.equal(summary.errorOverflowCount, 0);
@@ -150,12 +150,14 @@ test("worker cycle executes review/replay/doctor with real shared state and retu
     const snapshot = JSON.parse(await readFile(stateFile, "utf8"));
     const storeProfiles = snapshot?.stores?.[storeId]?.profiles ?? {};
     const profileKeys = Object.keys(storeProfiles);
-    assert.equal(profileKeys.length, 1);
-    const profileKey = profileKeys[0];
-    assert.ok(profileKey);
-    const profileState = storeProfiles[profileKey];
+    assert.equal(profileKeys.length, 2);
+    assert.equal(profileKeys.includes(profile), true);
+    assert.equal(profileKeys.includes("__store_default__"), true);
+    const profileState = storeProfiles[profile];
+    assert.ok(profileState);
     assert.equal(Array.isArray(profileState.replayEvaluations), true);
     assert.equal(profileState.replayEvaluations.length, 1);
+    assert.equal(storeProfiles.__store_default__?.replayEvaluations?.length, 1);
   });
 });
 
