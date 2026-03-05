@@ -14,6 +14,9 @@ import {
   executeOperationWithSharedState,
 } from "./persistence.ts";
 
+// Runtime operation persistence semantics and migration requirements:
+// docs/runbooks/runtime-operation-persistence-map.md
+// docs/adr/0008-single-runtime-storage-adapter-architecture.md
 export const DEFAULT_RUNTIME_SERVICE_EXPORT = "createRuntimeService";
 export const DEFAULT_RUNTIME_SERVICE_MODULE = "builtin:effect-runtime-service";
 export const DEFAULT_RUNTIME_STATE_FILE = DEFAULT_SHARED_STATE_FILE;

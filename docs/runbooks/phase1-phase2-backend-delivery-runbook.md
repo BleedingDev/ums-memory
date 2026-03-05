@@ -8,6 +8,8 @@ Operational runbook for delivering Phase 1 and Phase 2 epics under shared backen
 - security defaults enabled by default
 
 This runbook is paired with [ADR-0001](../adr/0001-phase1-phase2-baseline-constraints.md).
+Runtime architecture and persistence constraints are locked by [ADR-0008](../adr/0008-single-runtime-storage-adapter-architecture.md).
+Operation-level persistence semantics are defined in [Runtime Operation-to-Persistence Contract Map](./runtime-operation-persistence-map.md).
 For source-domain partitioning, see [Multi-Store Source Ingestion](./multi-store-source-ingestion.md).
 
 ## Engineering Standards
@@ -31,12 +33,13 @@ Recall outputs must remain inside strict item/token/size budgets and enforce gua
 
 ## Epic Execution Flow (Phase 1 then Phase 2)
 1. Confirm epic scope in ADR mapping before coding.
-2. Lock entity/invariant contracts first, then repository/index contracts.
-3. Implement API/CLI contract handlers.
-4. Implement core service behavior.
-5. Validate guardrails and failure paths.
-6. Run unit tests, integration tests, and benchmarks.
-7. Record benchmark report in `docs/performance/`.
+2. Confirm operation-level persistence behavior in the runtime contract map before coding.
+3. Lock entity/invariant contracts first, then repository/index contracts.
+4. Implement API/CLI contract handlers.
+5. Implement core service behavior.
+6. Validate guardrails and failure paths.
+7. Run unit tests, integration tests, and benchmarks.
+8. Record benchmark report in `docs/performance/`.
 
 ## Quality Gates
 Every epic must pass these checks before close:
