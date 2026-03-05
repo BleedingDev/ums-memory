@@ -37,6 +37,10 @@ import {
   noopRetrievalLayer,
 } from "./services/retrieval-service.js";
 import {
+  deterministicTestRuntimePersistenceLayer,
+  noopRuntimePersistenceLayer,
+} from "./services/runtime-persistence-service.js";
+import {
   deterministicTestStorageLayer,
   noopStorageLayer,
 } from "./services/storage-service.js";
@@ -47,6 +51,7 @@ import {
 
 export const serviceBoundariesLayer = Layer.mergeAll(
   noopAuthorizationLayer,
+  noopRuntimePersistenceLayer,
   noopStorageLayer,
   noopRetrievalLayer,
   noopEvaluationLayer,
@@ -61,6 +66,7 @@ export const serviceBoundariesLayer = Layer.mergeAll(
 
 export const deterministicTestServiceBoundariesLayer = Layer.mergeAll(
   deterministicTestAuthorizationLayer,
+  deterministicTestRuntimePersistenceLayer,
   deterministicTestStorageLayer,
   deterministicTestRetrievalLayer,
   deterministicTestEvaluationLayer,

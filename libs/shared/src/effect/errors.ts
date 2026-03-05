@@ -125,6 +125,15 @@ export class MemoryLifecyclePreconditionError extends Schema.TaggedErrorClass<Me
   }
 ) {}
 
+export class RuntimePersistenceExecutionError extends Schema.TaggedErrorClass<RuntimePersistenceExecutionError>()(
+  "RuntimePersistenceExecutionError",
+  {
+    operation: Schema.String,
+    message: Schema.String,
+    details: Schema.String,
+  }
+) {}
+
 export type StorageServiceError =
   | ContractValidationError
   | StorageConflictError
@@ -155,3 +164,7 @@ export type TenantRoutingServiceError =
 export type MemoryLifecycleServiceError =
   | ContractValidationError
   | MemoryLifecyclePreconditionError;
+
+export type RuntimePersistenceServiceError =
+  | ContractValidationError
+  | RuntimePersistenceExecutionError;
