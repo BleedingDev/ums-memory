@@ -60,6 +60,7 @@ Legend:
 | `review_set_rebalance` | W | Deterministic active-set rebalance and archival tier projection updates. |
 | `curate_guarded` | W | Guarded curation + quarantine + policy audit persistence. |
 | `recall_authorization` | W | Deterministic authorization decision with policy audit event persistence. |
+| `attribution_ranking_policy` | W | Deterministic per-space kill-switch policy update for advisory attribution nudges. |
 | `tutor_degraded` | W | Deterministic degraded tutoring session record + policy audit persistence. |
 | `policy_audit_export` | W | Deterministic export artifact generation plus export audit event persistence. |
 | `memory_console_search` | R | Read-only console search over persisted state projections. |
@@ -69,6 +70,8 @@ Legend:
 | `memory_console_anomaly_alerts` | R | Read-only anomaly projection from persisted entities/signals. |
 | `feedback` | W | Deterministic feedback event persistence with replay-safe idempotency. |
 | `outcome` | W | Deterministic outcome persistence and linked reinforcement updates. |
+| `shadow_attribution` | R | Read-only shadow scorer over traced outcomes and replay lineage with uncertainty-first output. |
+| `attribution_report` | R | Read-only advisory report that ranks helpful/harmful attribution summaries without mutating memory. |
 | `audit` | R | Deterministic health/audit checks over current persisted state. |
 | `export` | R | Deterministic read-only export of state projections. |
 | `doctor` | R | Read-only diagnostics and deterministic status reporting. |

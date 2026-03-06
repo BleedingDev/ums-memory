@@ -1,0 +1,352 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ums.local/schema/ums-daemon-config.schema.json",
+  "title": "UMS Daemon Config",
+  "description": "Schema for the static JSONC config consumed by the UMS daemon-first CLI runtime.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "accounts", "memories", "routes", "defaults"],
+  "properties": {
+    "version": {
+      "type": "integer",
+      "const": 1
+    },
+    "state": {
+      "$ref": "#/$defs/stateConfig"
+    },
+    "accounts": {
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": {
+        "$ref": "#/$defs/alias"
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/accountConfig"
+      }
+    },
+    "memories": {
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": {
+        "$ref": "#/$defs/alias"
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/memoryConfig"
+      }
+    },
+    "sources": {
+      "$ref": "#/$defs/sourcesConfig"
+    },
+    "routes": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/routeConfig"
+      }
+    },
+    "defaults": {
+      "$ref": "#/$defs/defaultsConfig"
+    },
+    "policy": {
+      "$ref": "#/$defs/policyConfig"
+    }
+  },
+  "$defs": {
+    "alias": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"
+    },
+    "nonEmptyString": {
+      "type": "string",
+      "minLength": 1
+    },
+    "pathString": {
+      "type": "string",
+      "minLength": 1
+    },
+    "stateConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "rootDir": {
+          "$ref": "#/$defs/pathString"
+        },
+        "journalDir": {
+          "$ref": "#/$defs/pathString"
+        },
+        "checkpointDir": {
+          "$ref": "#/$defs/pathString"
+        },
+        "compactDeliveredAfterHours": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 720
+        }
+      }
+    },
+    "localAccountConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type"],
+      "properties": {
+        "type": {
+          "const": "local"
+        }
+      }
+    },
+    "httpAccountConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "apiBaseUrl", "auth"],
+      "properties": {
+        "type": {
+          "const": "http"
+        },
+        "apiBaseUrl": {
+          "type": "string",
+          "format": "uri"
+        },
+        "auth": {
+          "$ref": "#/$defs/authConfig"
+        }
+      }
+    },
+    "authConfig": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["mode", "credentialRef"],
+          "properties": {
+            "mode": {
+              "enum": ["oauth-device", "oidc-pkce", "session-ref"]
+            },
+            "credentialRef": {
+              "type": "string",
+              "pattern": "^(keychain|credential-manager|secret-service)://.+$"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["mode", "env"],
+          "properties": {
+            "mode": {
+              "enum": ["token-env"]
+            },
+            "env": {
+              "$ref": "#/$defs/nonEmptyString"
+            }
+          }
+        }
+      ]
+    },
+    "accountConfig": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/localAccountConfig"
+        },
+        {
+          "$ref": "#/$defs/httpAccountConfig"
+        }
+      ]
+    },
+    "memoryConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["account", "storeId", "profile"],
+      "properties": {
+        "account": {
+          "$ref": "#/$defs/alias"
+        },
+        "storeId": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "profile": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "project": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "workspace": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "readOnly": {
+          "type": "boolean"
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/nonEmptyString"
+          },
+          "uniqueItems": true
+        }
+      }
+    },
+    "adapterConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "roots": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/pathString"
+          },
+          "uniqueItems": true
+        },
+        "includeGlobs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/nonEmptyString"
+          },
+          "uniqueItems": true
+        },
+        "excludeGlobs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/nonEmptyString"
+          },
+          "uniqueItems": true
+        }
+      }
+    },
+    "sourcesConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "defaults": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "scanIntervalMs": {
+              "type": "integer",
+              "minimum": 1000,
+              "maximum": 86400000
+            },
+            "maxEventsPerCycle": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100000
+            }
+          }
+        },
+        "codex": {
+          "$ref": "#/$defs/adapterConfig"
+        },
+        "claude": {
+          "$ref": "#/$defs/adapterConfig"
+        },
+        "vscode": {
+          "$ref": "#/$defs/adapterConfig"
+        },
+        "codexNative": {
+          "$ref": "#/$defs/adapterConfig"
+        },
+        "plan": {
+          "$ref": "#/$defs/adapterConfig"
+        }
+      }
+    },
+    "routeMatchConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "properties": {
+        "pathPrefix": {
+          "$ref": "#/$defs/pathString"
+        },
+        "repoRoot": {
+          "$ref": "#/$defs/pathString"
+        },
+        "workspaceRoot": {
+          "$ref": "#/$defs/pathString"
+        },
+        "source": {
+          "enum": ["codex", "claude", "vscode", "codex-native", "plan"]
+        }
+      }
+    },
+    "routeConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["match", "memory"],
+      "properties": {
+        "match": {
+          "$ref": "#/$defs/routeMatchConfig"
+        },
+        "memory": {
+          "$ref": "#/$defs/alias"
+        },
+        "priority": {
+          "type": "integer",
+          "minimum": -10000,
+          "maximum": 10000
+        },
+        "project": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "workspace": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "notes": {
+          "$ref": "#/$defs/nonEmptyString"
+        }
+      }
+    },
+    "defaultsConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["memory", "onAmbiguous"],
+      "properties": {
+        "memory": {
+          "$ref": "#/$defs/alias"
+        },
+        "onAmbiguous": {
+          "enum": ["review", "default", "drop"]
+        },
+        "sync": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "intervalMs": {
+              "type": "integer",
+              "minimum": 1000,
+              "maximum": 86400000
+            },
+            "maxEventsPerCycle": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100000
+            }
+          }
+        }
+      }
+    },
+    "policyConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "allowEnvTokenFallback": {
+          "type": "boolean"
+        },
+        "allowPlaintextDevAuth": {
+          "type": "boolean"
+        },
+        "requireProjectForManagedWrites": {
+          "type": "boolean"
+        },
+        "managedMemoryPrefixes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/alias"
+          },
+          "uniqueItems": true
+        }
+      }
+    }
+  }
+}

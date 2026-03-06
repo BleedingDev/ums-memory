@@ -5,7 +5,7 @@
     "noEmit": true,
     "tsBuildInfoFile": "../../../dist/typecheck/apps/cli-test.tsbuildinfo"
   },
-  "include": ["**/*.ts"],
+  "include": ["**/*.ts", "../../ums/src/**/*.ts"],
   "references": [
     { "path": ".." },
     { "path": "../../api" },

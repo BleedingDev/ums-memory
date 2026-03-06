@@ -28,6 +28,7 @@ const OPS = [
   "review_set_rebalance",
   "curate_guarded",
   "recall_authorization",
+  "attribution_ranking_policy",
   "tutor_degraded",
   "policy_audit_export",
   "memory_console_search",
@@ -37,6 +38,8 @@ const OPS = [
   "memory_console_anomaly_alerts",
   "feedback",
   "outcome",
+  "shadow_attribution",
+  "attribution_report",
   "audit",
   "export",
   "doctor",
@@ -66,6 +69,15 @@ const DEFAULT_MEMORY_CONSOLE_LIMIT = 25;
 const DEFAULT_ANOMALY_WINDOW_HOURS = 24;
 const MAX_ANOMALY_WINDOW_HOURS = 720;
 const MAX_ANOMALY_EVIDENCE_IDS = 16;
+const DEFAULT_ATTRIBUTION_MIN_SUPPORT = 3;
+const DEFAULT_ATTRIBUTION_DIRECTION_THRESHOLD = 0.34;
+const DEFAULT_ATTRIBUTION_REPORT_LIMIT = 10;
+const MAX_ATTRIBUTION_REPORT_LIMIT = 32;
+const DEFAULT_ATTRIBUTION_RANKING_TOP_K = 10;
+const MAX_ATTRIBUTION_RANKING_TOP_K = 32;
+const MAX_ATTRIBUTION_LINEAGE_IDS = 16;
+const DEFAULT_ATTRIBUTION_RANKING_MIN_CONFIDENCE = 0.6;
+const DEFAULT_ATTRIBUTION_RANKING_MIN_EFFECT_SIZE = 0.34;
 const ANOMALY_ALERT_RULES = Object.freeze({
   harmful_signal_spike: Object.freeze({
     minObservationCount: 3,
@@ -109,6 +121,8 @@ const RECALL_AUTHORIZATION_REQUESTER_ERROR =
   "VALIDATION_CONTRACT_VIOLATION: recall_authorization requires requesterStoreId for cross-space checks.";
 const CROSS_SPACE_ALLOWLIST_DENY_ERROR =
   "PERSONALIZATION_POLICY_DENY: cross-space recall request is not authorized by allowlist policy.";
+const ATTRIBUTION_RANKING_POLICY_DENY_ERROR =
+  "PERSONALIZATION_POLICY_DENY: attribution ranking is not enabled for this store/profile.";
 const POLICY_REASON_CODES_CONTRACT_ERROR =
   "VALIDATION_CONTRACT_VIOLATION: policy_decision_update deny outcome requires reasonCodes.";
 const POLICY_PROVENANCE_EVENT_CONTRACT_ERROR =
@@ -2495,6 +2509,16 @@ function getProfileState(storeId: any, profile: any) {
       updatedAt: DEFAULT_VERSION_TIMESTAMP,
       metadata: {},
     },
+    attributionRankingPolicy: {
+      policyId: makeId(
+        "atrp",
+        hash(stableStringify({ storeId, profile, policy: "attribution_ranking" }))
+      ),
+      enabled: false,
+      failClosed: true,
+      updatedAt: DEFAULT_VERSION_TIMESTAMP,
+      metadata: {},
+    },
     degradedTutorSessions: [],
     policyDecisions: [],
     policyAuditTrail: [],
@@ -3619,6 +3643,89 @@ function getOrCreateRecallAllowlistPolicy(
   return normalized;
 }
 
+function normalizeAttributionRankingPolicyState(
+  value: any,
+  storeId: any,
+  profile: any
+) {
+  const current = isPlainObject(value) ? value : {};
+  return {
+    policyId:
+      normalizeBoundedString(
+        current.policyId,
+        "attributionRankingPolicy.policyId",
+        64
+      ) ??
+      makeId(
+        "atrp",
+        hash(stableStringify({ storeId, profile, policy: "attribution_ranking" }))
+      ),
+    enabled: current.enabled === true,
+    failClosed: current.failClosed !== false,
+    updatedAt: normalizeIsoTimestampOrFallback(
+      current.updatedAt,
+      DEFAULT_VERSION_TIMESTAMP
+    ),
+    metadata: normalizeMetadata(current.metadata),
+  };
+}
+
+function getAttributionRankingPolicy(state: any, storeId: any, profile: any) {
+  return normalizeAttributionRankingPolicyState(
+    state?.attributionRankingPolicy,
+    storeId,
+    profile
+  );
+}
+
+function getOrCreateAttributionRankingPolicy(
+  state: any,
+  storeId: any,
+  profile: any
+) {
+  const normalized = getAttributionRankingPolicy(state, storeId, profile);
+  state.attributionRankingPolicy = normalized;
+  return normalized;
+}
+
+function normalizeAttributionRankingPolicyRequest(request: any) {
+  const requestedMode =
+    request.mode ??
+    (request.enabled === true
+      ? "enable"
+      : request.enabled === false
+        ? "disable"
+        : "check");
+  return {
+    mode: normalizeDeterministicEnum(
+      requestedMode,
+      "mode",
+      "attribution_ranking_policy",
+      new Set(["check", "enable", "disable"]),
+      "check"
+    ),
+    timestamp: normalizeIsoTimestamp(
+      request.timestamp ?? request.updatedAt,
+      "attribution_ranking_policy.timestamp",
+      DEFAULT_VERSION_TIMESTAMP
+    ),
+    actor:
+      normalizeBoundedString(
+        request.actor ?? request.updatedBy,
+        "attribution_ranking_policy.actor",
+        128
+      ) ?? "system_unspecified",
+    reason:
+      normalizeBoundedString(
+        request.reason,
+        "attribution_ranking_policy.reason",
+        512
+      ) ?? "",
+    failClosed: request.failClosed !== false,
+    metadata: normalizeMetadata(request.metadata),
+  };
+}
+
 function ensureRecallAuthorizationForOperation(
   state: any,
   {
@@ -3680,6 +3787,326 @@ function ensureRecallAuthorizationForOperation(
     policy,
     policyAuditEventId: auditEvent.auditEventId,
   };
+}
+
+function limitUniqueStrings(values: any, maxItems: number) {
+  return asSortedUniqueStrings(values).slice(0, Math.max(maxItems, 0));
+}
+
+function buildShadowAttributionEntry(
+  state: any,
+  rule: any,
+  {
+    minSupport = DEFAULT_ATTRIBUTION_MIN_SUPPORT,
+    directionThreshold = DEFAULT_ATTRIBUTION_DIRECTION_THRESHOLD,
+  }: any = {}
+) {
+  const ruleId =
+    normalizeBoundedStringLenient(rule?.ruleId, 64) ??
+    makeId("rule", hash(stableStringify(rule)));
+  const candidateId =
+    normalizeBoundedStringLenient(rule?.promotedFromCandidateId, 64) ?? null;
+  const replayEvaluations = Array.isArray(state?.replayEvaluations)
+    ? state.replayEvaluations.filter(
+        (entry: any) => entry?.candidateId === candidateId
+      )
+    : [];
+  const latestReplayEvaluation =
+    sortByTimestampAndId(replayEvaluations, "evaluatedAt", "replayEvalId").at(
+      -1
+    ) ?? null;
+  const hasSafetyRegressionHistory = replayEvaluations.some(
+    (entry: any) =>
+      toNonNegativeInteger(entry?.safetyRegressionCount, 0) > 0 ||
+      entry?.pass === false
+  );
+  const relevantOutcomes = [];
+  let ignoredUntracedCount = 0;
+
+  for (const outcomeEntry of Array.isArray(state?.outcomes) ? state.outcomes : []) {
+    const usedRuleIds = asSortedUniqueStrings(outcomeEntry?.usedRuleIds);
+    if (!usedRuleIds.includes(ruleId)) {
+      continue;
+    }
+    const hasTraceLineage =
+      Boolean(normalizeBoundedStringLenient(outcomeEntry?.packId, 64)) ||
+      asSortedUniqueStrings(outcomeEntry?.usedUsageIds).length > 0;
+    if (!hasTraceLineage) {
+      ignoredUntracedCount += 1;
+      continue;
+    }
+    relevantOutcomes.push(outcomeEntry);
+  }
+
+  const settledOutcomes = relevantOutcomes.filter(
+    (outcomeEntry: any) => outcomeEntry?.status !== "provisional"
+  );
+  const pendingOutcomes = relevantOutcomes.filter(
+    (outcomeEntry: any) => outcomeEntry?.status === "provisional"
+  );
+  const helpfulCount = settledOutcomes.filter(
+    (outcomeEntry: any) => outcomeEntry?.outcome !== "failure"
+  ).length;
+  const harmfulCount = settledOutcomes.filter(
+    (outcomeEntry: any) => outcomeEntry?.outcome === "failure"
+  ).length;
+  const supportCount = settledOutcomes.length;
+  const pendingCount = pendingOutcomes.length;
+  const sampleSize = supportCount + pendingCount;
+  const effectSize =
+    supportCount > 0
+      ? roundNumber((helpfulCount - harmfulCount) / supportCount, 6)
+      : 0;
+  const supportConfidence = Math.min(
+    supportCount / Math.max(minSupport, 1),
+    1
+  );
+  const signalConfidence = 0.5 + Math.abs(effectSize) / 2;
+  const balancePenalty = helpfulCount > 0 && harmfulCount > 0 ? 0.5 : 1;
+  const pendingPenalty =
+    pendingCount > 0
+      ? Math.max(0.5, 1 - pendingCount / Math.max(sampleSize, 1))
+      : 1;
+  const attributionConfidence = roundNumber(
+    clamp01(
+      supportConfidence * signalConfidence * balancePenalty * pendingPenalty,
+      0
+    ),
+    6
+  );
+  const supportThresholdMet = supportCount >= minSupport;
+  const direction =
+    !supportThresholdMet
+      ? "neutral"
+      : effectSize >= directionThreshold
+        ? "helpful"
+        : effectSize <= -directionThreshold
+          ? "harmful"
+          : "neutral";
+  const recommendation =
+    direction === "neutral" || !supportThresholdMet ? "observe" : direction;
+  const evidenceTier = latestReplayEvaluation
+    ? "deterministic_replay"
+    : "observational";
+  const reasonCodes = ["advisory_only"];
+  reasonCodes.push(
+    supportThresholdMet ? "support_threshold_met" : "insufficient_support"
+  );
+  if (latestReplayEvaluation) {
+    reasonCodes.push("replay_supported");
+  }
+  if (pendingCount > 0) {
+    reasonCodes.push("pending_outcomes_present");
+  }
+  if (ignoredUntracedCount > 0) {
+    reasonCodes.push("untraced_outcomes_ignored");
+  }
+  if (hasSafetyRegressionHistory) {
+    reasonCodes.push("safety_regression_history");
+  }
+  if (helpfulCount > 0 && harmfulCount > 0) {
+    reasonCodes.push("mixed_outcomes");
+  } else if (helpfulCount > 0) {
+    reasonCodes.push("stable_positive_lift");
+  } else if (harmfulCount > 0) {
+    reasonCodes.push("stable_negative_lift");
+  } else {
+    reasonCodes.push("no_traced_outcomes");
+  }
+  const rankingNudgeEligible =
+    supportThresholdMet &&
+    attributionConfidence >= DEFAULT_ATTRIBUTION_RANKING_MIN_CONFIDENCE &&
+    !hasSafetyRegressionHistory &&
+    Math.abs(effectSize) >= DEFAULT_ATTRIBUTION_RANKING_MIN_EFFECT_SIZE;
+  if (rankingNudgeEligible) {
+    reasonCodes.push("ranking_nudge_candidate");
+  }
+
+  const lineage = stableSortObject({
+    outcomeIds: limitUniqueStrings(
+      relevantOutcomes.map((outcomeEntry: any) => outcomeEntry?.outcomeId),
+      MAX_ATTRIBUTION_LINEAGE_IDS
+    ),
+    packIds: limitUniqueStrings(
+      relevantOutcomes.map((outcomeEntry: any) => outcomeEntry?.packId),
+      MAX_ATTRIBUTION_LINEAGE_IDS
+    ),
+    usedUsageIds: limitUniqueStrings(
+      relevantOutcomes.flatMap((outcomeEntry: any) =>
+        Array.isArray(outcomeEntry?.usedUsageIds)
+          ? outcomeEntry.usedUsageIds
+          : []
+      ),
+      MAX_ATTRIBUTION_LINEAGE_IDS
+    ),
+    toolRefs: limitUniqueStrings(
+      relevantOutcomes.flatMap((outcomeEntry: any) =>
+        Array.isArray(outcomeEntry?.toolRefs) ? outcomeEntry.toolRefs : []
+      ),
+      MAX_ATTRIBUTION_LINEAGE_IDS
+    ),
+    testRefs: limitUniqueStrings(
+      relevantOutcomes.flatMap((outcomeEntry: any) =>
+        Array.isArray(outcomeEntry?.testRefs) ? outcomeEntry.testRefs : []
+      ),
+      MAX_ATTRIBUTION_LINEAGE_IDS
+    ),
+    artifactRefs: limitUniqueStrings(
+      relevantOutcomes.flatMap((outcomeEntry: any) =>
+        Array.isArray(outcomeEntry?.artifactRefs)
+          ? outcomeEntry.artifactRefs
+          : []
+      ),
+      MAX_ATTRIBUTION_LINEAGE_IDS
+    ),
+    replayEvalIds: limitUniqueStrings(
+      replayEvaluations.map((entry: any) => entry?.replayEvalId),
+      MAX_ATTRIBUTION_LINEAGE_IDS
+    ),
+  });
+  const rankingNudgeBand = hasSafetyRegressionHistory
+    ? "suppress"
+    : !rankingNudgeEligible || direction === "neutral"
+      ? "none"
+      : direction === "helpful"
+        ? "boost"
+        : "suppress";
+  const rankingNudge = stableSortObject({
+    eligible: rankingNudgeEligible,
+    band: rankingNudgeBand,
+    value:
+      rankingNudgeBand === "suppress" && hasSafetyRegressionHistory
+        ? -0.25
+        : rankingNudgeEligible
+          ? roundNumber(
+              Math.max(
+                -0.25,
+                Math.min(0.25, effectSize * attributionConfidence)
+              ),
+              6
+            )
+          : 0,
+    minConfidence: DEFAULT_ATTRIBUTION_RANKING_MIN_CONFIDENCE,
+    minEffectSize: DEFAULT_ATTRIBUTION_RANKING_MIN_EFFECT_SIZE,
+  });
+
+  const attributionId = makeId(
+    "attr",
+    hash(
+      stableStringify({
+        ruleId,
+        supportCount,
+        pendingCount,
+        effectSize,
+        attributionConfidence,
+        direction,
+        lineage,
+      })
+    )
+  );
+
+  return stableSortObject({
+    attributionId,
+    ruleId,
+    statement:
+      normalizeBoundedStringLenient(rule?.statement, 256) ??
+      String(rule?.statement ?? ""),
+    ruleConfidence: clamp01(rule?.confidence, 0.5),
+    recommendation,
+    direction,
+    effectSize,
+    attributionConfidence,
+    supportCount,
+    sampleSize,
+    helpfulCount,
+    harmfulCount,
+    pendingCount,
+    ignoredUntracedCount,
+    supportThresholdMet,
+    evidenceTier,
+    advisoryOnly: true,
+    automaticMutationAllowed: false,
+    reasonCodes: limitUniqueStrings(reasonCodes, MAX_LIST_ITEMS),
+    rankingNudge,
+    lineage,
+  });
+}
+
+function buildShadowAttributionEntries(
+  state: any,
+  {
+    targetRuleIds = [],
+    limit = MAX_ATTRIBUTION_REPORT_LIMIT,
+    minSupport = DEFAULT_ATTRIBUTION_MIN_SUPPORT,
+    directionThreshold = DEFAULT_ATTRIBUTION_DIRECTION_THRESHOLD,
+    includeZeroSupport = true,
+  }: any = {}
+) {
+  const rules = Array.isArray(state?.rules) ? state.rules : [];
+  const normalizedTargetRuleIds = asSortedUniqueStrings(targetRuleIds);
+  const selectedRules =
+    normalizedTargetRuleIds.length > 0
+      ? rules.filter((rule: any) =>
+          normalizedTargetRuleIds.includes(rule?.ruleId)
+        )
+      : rules;
+  return selectedRules
+    .map((rule: any) =>
+      buildShadowAttributionEntry(state, rule, {
+        minSupport,
+        directionThreshold,
+      })
+    )
+    .filter((entry: any) =>
+      includeZeroSupport ? true : entry.supportCount > 0 || entry.pendingCount > 0
+    )
+    .slice(0, Math.max(limit, 0));
+}
+
+function compareHelpfulAttributionEntries(left: any, right: any) {
+  if (right.effectSize !== left.effectSize) {
+    return right.effectSize - left.effectSize;
+  }
+  if (right.attributionConfidence !== left.attributionConfidence) {
+    return right.attributionConfidence - left.attributionConfidence;
+  }
+  if (right.supportCount !== left.supportCount) {
+    return right.supportCount - left.supportCount;
+  }
+  return String(left.ruleId ?? "").localeCompare(String(right.ruleId ?? ""));
+}
+
+function compareHarmfulAttributionEntries(left: any, right: any) {
+  if (left.effectSize !== right.effectSize) {
+    return left.effectSize - right.effectSize;
+  }
+  if (right.attributionConfidence !== left.attributionConfidence) {
+    return right.attributionConfidence - left.attributionConfidence;
+  }
+  if (right.supportCount !== left.supportCount) {
+    return right.supportCount - left.supportCount;
+  }
+  return String(left.ruleId ?? "").localeCompare(String(right.ruleId ?? ""));
+}
+
+function compareByAbsoluteAttributionSignal(left: any, right: any) {
+  const rightMagnitude = roundNumber(
+    Math.abs(toFiniteNumber(right?.effectSize, 0)) *
+      toFiniteNumber(right?.attributionConfidence, 0),
+    6
+  );
+  const leftMagnitude = roundNumber(
+    Math.abs(toFiniteNumber(left?.effectSize, 0)) *
+      toFiniteNumber(left?.attributionConfidence, 0),
+    6
+  );
+  if (rightMagnitude !== leftMagnitude) {
+    return rightMagnitude - leftMagnitude;
+  }
+  if (right.attributionConfidence !== left.attributionConfidence) {
+    return right.attributionConfidence - left.attributionConfidence;
+  }
+  return String(left.ruleId ?? "").localeCompare(String(right.ruleId ?? ""));
 }
 
 function appendPolicyAuditTrail(state: any, rawEvent: any) {
@@ -4859,6 +5286,8 @@ function runIngest(request: any) {
 function runContext(request: any) {
   const { storeId, profile, input } = normalizeRequest("context", request);
   const state = getProfileState(storeId, profile);
+  const meta = buildMeta("context", storeId, profile, input);
+  const packId = makeId("pack", meta.requestDigest);
   const requestTimestamp = normalizeIsoTimestamp(
     request.timestamp ?? request.requestedAt,
     "context.timestamp",
@@ -4898,13 +5327,23 @@ function runContext(request: any) {
     })
     .filter((item: any) => item.match)
     .slice(0, limit)
-    .map((item: any) => ({
-      eventId: item.event.eventId,
-      type: item.event.type,
-      source: item.event.source,
-      excerpt: item.event.content.slice(0, 180),
-      digest: item.event.digest,
-    }));
+    .map((item: any) => {
+      const usageSeed = hash(
+        stableStringify({
+          packId,
+          eventId: item.event.eventId,
+          digest: item.event.digest,
+        })
+      );
+      return {
+        eventId: item.event.eventId,
+        usageId: makeId("usage", usageSeed),
+        type: item.event.type,
+        source: item.event.source,
+        excerpt: item.event.content.slice(0, 180),
+        digest: item.event.digest,
+      };
+    });
   const chronologyHistory = Array.isArray(state.misconceptionChronologyHistory)
     ? sortByTimestampAndId(
         state.misconceptionChronologyHistory,
@@ -4964,9 +5403,147 @@ function runContext(request: any) {
     (note: any, index: any) =>
       `${index + 1}. ${note.timestamp} ${note.misconceptionKey} -> ${note.changedFields.join("|")}`
   );
+  const attributionRankingRequested =
+    request.enableAttributionRanking === true ||
+    request.attributionRanking === true ||
+    isPlainObject(request.attributionRanking);
+  const attributionRankingMinSupport = Math.max(
+    toPositiveInteger(
+      request.attributionMinSupport ??
+        request.attributionRanking?.minSupport,
+      DEFAULT_ATTRIBUTION_MIN_SUPPORT
+    ),
+    1
+  );
+  const attributionRankingPolicy = getAttributionRankingPolicy(
+    state,
+    storeId,
+    profile
+  );
+  const attributionRankingFailClosed =
+    request.attributionRankingFailClosed !== false &&
+    attributionRankingPolicy.failClosed !== false;
+  let rankedRules = state.rules;
+  const attributionRankingByRuleId = new Map();
+  let attributionRankingObservability = stableSortObject({
+    requested: attributionRankingRequested,
+    applied: false,
+    advisoryOnly: true,
+    policyEnabled: attributionRankingPolicy.enabled,
+    failClosed: attributionRankingFailClosed,
+    policyId: attributionRankingPolicy.policyId,
+    policyDigest: hash(stableStringify(attributionRankingPolicy)),
+    topK: 0,
+    baselineRuleIds: state.rules
+      .slice(0, Math.min(5, state.rules.length))
+      .map((rule: any) => rule.ruleId),
+    rankedRuleIds: state.rules
+      .slice(0, Math.min(5, state.rules.length))
+      .map((rule: any) => rule.ruleId),
+    changedRuleIds: [],
+    scoredRules: [],
+  });
+
+  if (attributionRankingRequested) {
+    if (!attributionRankingPolicy.enabled && attributionRankingFailClosed) {
+      const error = new Error(
+        `${ATTRIBUTION_RANKING_POLICY_DENY_ERROR} storeId=${storeId} profile=${profile}`
+      ) as Error & { code?: string };
+      error.code = "PERSONALIZATION_POLICY_DENY";
+      throw error;
+    }
+    if (attributionRankingPolicy.enabled) {
+      const attributionRankingTopK = Math.min(
+        Math.max(
+          toPositiveInteger(
+            request.attributionRankingTopK ?? request.attributionRanking?.topK,
+            DEFAULT_ATTRIBUTION_RANKING_TOP_K
+          ),
+          1
+        ),
+        Math.min(MAX_ATTRIBUTION_RANKING_TOP_K, Math.max(state.rules.length, 1))
+      );
+      const baselineHead = state.rules.slice(0, attributionRankingTopK);
+      const baselineTail = state.rules.slice(attributionRankingTopK);
+      const attributionEntries = buildShadowAttributionEntries(state, {
+        targetRuleIds: baselineHead.map((rule: any) => rule.ruleId),
+        minSupport: attributionRankingMinSupport,
+        limit: attributionRankingTopK,
+      });
+      for (const entry of attributionEntries) {
+        attributionRankingByRuleId.set(entry.ruleId, entry);
+      }
+      const rankedHead = baselineHead
+        .map((rule: any, baselineIndex: number) => {
+          const attributionEntry =
+            attributionRankingByRuleId.get(rule.ruleId) ??
+            buildShadowAttributionEntry(state, rule, {
+              minSupport: attributionRankingMinSupport,
+            });
+          const bandPriority =
+            attributionEntry.rankingNudge.band === "boost"
+              ? 2
+              : attributionEntry.rankingNudge.band === "none"
+                ? 1
+                : 0;
+          return {
+            rule,
+            baselineIndex,
+            bandPriority,
+            attributionEntry,
+            rankingNudge: attributionEntry.rankingNudge,
+          };
+        })
+        .sort((left: any, right: any) => {
+          if (right.bandPriority !== left.bandPriority) {
+            return right.bandPriority - left.bandPriority;
+          }
+          if (right.rankingNudge.value !== left.rankingNudge.value) {
+            return right.rankingNudge.value - left.rankingNudge.value;
+          }
+          return left.baselineIndex - right.baselineIndex;
+        });
+      rankedRules = [...rankedHead.map((entry: any) => entry.rule), ...baselineTail];
+      const baselineRuleIds = baselineHead
+        .slice(0, Math.min(5, baselineHead.length))
+        .map((rule: any) => rule.ruleId);
+      const rankedRuleIds = rankedRules
+        .slice(0, Math.min(5, rankedRules.length))
+        .map((rule: any) => rule.ruleId);
+      const changedRuleIds = rankedHead
+        .filter(
+          (entry: any, index: number) =>
+            entry.rule.ruleId !== baselineHead[index]?.ruleId
+        )
+        .map((entry: any) => entry.rule.ruleId);
+      attributionRankingObservability = stableSortObject({
+        ...attributionRankingObservability,
+        applied: changedRuleIds.length > 0,
+        topK: attributionRankingTopK,
+        baselineRuleIds,
+        rankedRuleIds,
+        changedRuleIds: asSortedUniqueStrings(changedRuleIds),
+        scoredRules: rankedHead
+          .slice(0, Math.min(5, rankedHead.length))
+          .map((entry: any) =>
+            stableSortObject({
+              ruleId: entry.rule.ruleId,
+              band: entry.rankingNudge.band,
+              nudgeValue: entry.rankingNudge.value,
+              direction: entry.attributionEntry.direction,
+              attributionConfidence:
+                entry.attributionEntry.attributionConfidence,
+              supportCount: entry.attributionEntry.supportCount,
+              evidenceTier: entry.attributionEntry.evidenceTier,
+            })
+          ),
+      });
+    }
+  }
 
   return {
-    ...buildMeta("context", storeId, profile, input),
+    ...meta,
+    packId,
     query,
     totalEvents: state.events.length,
     authorization: recallAuthorization
@@ -4977,11 +5554,28 @@ function runContext(request: any) {
         }
       : null,
     matches: matched,
-    rules: state.rules.slice(0, 5).map((rule: any) => ({
-      ruleId: rule.ruleId,
-      statement: rule.statement,
-      confidence: rule.confidence,
-    })),
+    rules: rankedRules.slice(0, 5).map((rule: any) => {
+      const baseRule = {
+        ruleId: rule.ruleId,
+        statement: rule.statement,
+        confidence: rule.confidence,
+      };
+      const attributionEntry = attributionRankingByRuleId.get(rule.ruleId);
+      if (!attributionEntry) {
+        return baseRule;
+      }
+      return {
+        ...baseRule,
+        attribution: {
+          direction: attributionEntry.direction,
+          effectSize: attributionEntry.effectSize,
+          attributionConfidence: attributionEntry.attributionConfidence,
+          supportCount: attributionEntry.supportCount,
+          evidenceTier: attributionEntry.evidenceTier,
+          advisoryOnly: true,
+        },
+      };
+    }),
     misconceptionChronology: {
       bounded: orderedChronology.length <= chronologyLimit,
       deterministicFormatting: true,
@@ -4992,6 +5586,9 @@ function runContext(request: any) {
       totalAvailable: chronologyHistory.length,
       notes: orderedChronology,
       formatting: chronologyFormatting,
+    },
+    observability: {
+      attributionRanking: attributionRankingObservability,
     },
   };
 }
@@ -9650,6 +10247,35 @@ function runOutcome(request: any) {
     request.usedRuleIds,
     "outcome.usedRuleIds"
   );
+  const packId = normalizeBoundedString(
+    request.packId ?? request.pack_id,
+    "outcome.packId",
+    64
+  );
+  const usedUsageIds = normalizeBoundedStringArray(
+    request.usedUsageIds ?? request.used_usage_ids,
+    "outcome.usedUsageIds",
+    MAX_LIST_ITEMS,
+    64
+  );
+  const toolRefs = normalizeBoundedStringArray(
+    request.toolRefs ?? request.tool_refs,
+    "outcome.toolRefs",
+    MAX_LIST_ITEMS,
+    128
+  );
+  const testRefs = normalizeBoundedStringArray(
+    request.testRefs ?? request.test_refs,
+    "outcome.testRefs",
+    MAX_LIST_ITEMS,
+    128
+  );
+  const artifactRefs = normalizeBoundedStringArray(
+    request.artifactRefs ?? request.artifact_refs,
+    "outcome.artifactRefs",
+    MAX_LIST_ITEMS,
+    128
+  );
   const actor =
     normalizeBoundedString(
       request.actor ?? request.userId,
@@ -9661,6 +10287,15 @@ function runOutcome(request: any) {
     "outcome.timestamp",
     DEFAULT_VERSION_TIMESTAMP
   );
+  const status = request.status === "provisional" ? "provisional" : "settled";
+  const settledAt =
+    status === "settled"
+      ? normalizeIsoTimestamp(
+          request.settledAt ?? request.resolvedAt ?? recordedAt,
+          "outcome.settledAt",
+          recordedAt
+        )
+      : null;
   const metadata = normalizeMetadata(request.metadata);
   const outcomeId =
     normalizeBoundedString(request.outcomeId, "outcome.outcomeId", 64) ??
@@ -9671,8 +10306,15 @@ function runOutcome(request: any) {
           task,
           outcome,
           usedRuleIds,
+          packId,
+          usedUsageIds,
+          toolRefs,
+          testRefs,
+          artifactRefs,
           actor,
           recordedAt,
+          status,
+          settledAt,
           metadata,
         })
       )
@@ -9682,8 +10324,15 @@ function runOutcome(request: any) {
     task,
     outcome,
     usedRuleIds,
+    packId,
+    usedUsageIds,
+    toolRefs,
+    testRefs,
+    artifactRefs,
     actor,
     recordedAt,
+    status,
+    settledAt,
     metadata,
   };
   const existingIndex = state.outcomes.findIndex(
@@ -9754,9 +10403,16 @@ function runOutcome(request: any) {
             task,
             outcome,
             usedRuleIds,
+            packId,
+            usedUsageIds,
+            toolRefs,
+            testRefs,
+            artifactRefs,
             updatedRuleIds: mapping.updatedRuleIds,
             updatedCandidateIds: mapping.updatedCandidateIds,
             actor,
+            status,
+            settledAt,
           },
           timestamp: recordedAt,
         });
@@ -9768,8 +10424,15 @@ function runOutcome(request: any) {
     task,
     outcome,
     usedRuleIds,
+    packId,
+    usedUsageIds,
+    toolRefs,
+    testRefs,
+    artifactRefs,
     actor,
     recordedAt,
+    status,
+    settledAt,
     totalOutcomes: state.outcomes.length,
     mapping,
     policyAuditEventId:
@@ -9779,6 +10442,203 @@ function runOutcome(request: any) {
       mappedUtilitySignals: mappingUpdatedCount,
       slo: buildSloObservability(meta.requestDigest, "outcome", 30),
     },
+  };
+}
+
+function runAttributionRankingPolicy(request: any) {
+  const { storeId, profile, input } = normalizeRequest(
+    "attribution_ranking_policy",
+    request
+  );
+  const state = getProfileState(storeId, profile);
+  const normalized = normalizeAttributionRankingPolicyRequest(request);
+  const meta = buildMeta("attribution_ranking_policy", storeId, profile, input);
+  const currentPolicy = getOrCreateAttributionRankingPolicy(
+    state,
+    storeId,
+    profile
+  );
+  const previousDigest = hash(stableStringify(currentPolicy));
+  const nextPolicy =
+    normalized.mode === "check"
+      ? currentPolicy
+      : {
+          ...currentPolicy,
+          enabled: normalized.mode === "enable",
+          failClosed: normalized.failClosed,
+          updatedAt: normalized.timestamp,
+          metadata: normalized.metadata,
+        };
+  const changed =
+    stableStringify(currentPolicy) !== stableStringify(nextPolicy);
+  if (changed) {
+    state.attributionRankingPolicy = nextPolicy;
+  }
+  const persistedPolicy = getAttributionRankingPolicy(state, storeId, profile);
+  const auditEvent = appendPolicyAuditTrail(state, {
+    operation: "attribution_ranking_policy",
+    storeId,
+    profile,
+    entityId: makeId(
+      "atrp",
+      hash(
+        stableStringify({
+          policyId: persistedPolicy.policyId,
+          mode: normalized.mode,
+          enabled: persistedPolicy.enabled,
+          failClosed: persistedPolicy.failClosed,
+          timestamp: normalized.timestamp,
+        })
+      )
+    ),
+    outcome: persistedPolicy.enabled ? "allow" : "deny",
+    reasonCodes: [
+      persistedPolicy.enabled
+        ? "attribution_ranking_enabled"
+        : "attribution_ranking_disabled",
+    ],
+    details: {
+      mode: normalized.mode,
+      actor: normalized.actor,
+      reason: normalized.reason,
+      failClosed: persistedPolicy.failClosed,
+    },
+    timestamp: normalized.timestamp,
+  });
+
+  return {
+    ...meta,
+    action:
+      normalized.mode === "check" ? "checked" : changed ? "updated" : "noop",
+    policy: {
+      ...persistedPolicy,
+      changed,
+      previousDigest,
+      digest: hash(stableStringify(persistedPolicy)),
+    },
+    policyAuditEventId: auditEvent.auditEventId,
+    observability: {
+      advisoryOnly: true,
+      enabled: persistedPolicy.enabled,
+      failClosed: persistedPolicy.failClosed,
+      slo: buildSloObservability(
+        meta.requestDigest,
+        "attribution_ranking_policy",
+        30
+      ),
+    },
+  };
+}
+
+function runShadowAttribution(request: any) {
+  const { storeId, profile, input } = normalizeRequest(
+    "shadow_attribution",
+    request
+  );
+  const state = getProfileState(storeId, profile);
+  const meta = buildMeta("shadow_attribution", storeId, profile, input);
+  const targetRuleIds = normalizeBoundedStringArray(
+    request.targetRuleIds ?? request.ruleIds ?? request.usedRuleIds,
+    "shadow_attribution.targetRuleIds"
+  );
+  const limit = Math.min(
+    Math.max(
+      toPositiveInteger(request.limit, Math.max(targetRuleIds.length, 1)),
+      1
+    ),
+    MAX_ATTRIBUTION_REPORT_LIMIT
+  );
+  const minSupport = Math.max(
+    toPositiveInteger(request.minSupport, DEFAULT_ATTRIBUTION_MIN_SUPPORT),
+    1
+  );
+  const includeZeroSupport = request.includeZeroSupport !== false;
+  const entries = buildShadowAttributionEntries(state, {
+    targetRuleIds,
+    limit,
+    minSupport,
+    includeZeroSupport,
+  });
+
+  return {
+    ...meta,
+    advisoryOnly: true,
+    automaticMutationAllowed: false,
+    thresholds: {
+      minSupport,
+      directionThreshold: DEFAULT_ATTRIBUTION_DIRECTION_THRESHOLD,
+      rankingMinConfidence: DEFAULT_ATTRIBUTION_RANKING_MIN_CONFIDENCE,
+      rankingMinEffectSize: DEFAULT_ATTRIBUTION_RANKING_MIN_EFFECT_SIZE,
+    },
+    entries,
+    summary: stableSortObject({
+      totalRules: Array.isArray(state.rules) ? state.rules.length : 0,
+      surfacedRules: entries.length,
+      helpfulRules: entries.filter((entry: any) => entry.direction === "helpful")
+        .length,
+      harmfulRules: entries.filter((entry: any) => entry.direction === "harmful")
+        .length,
+      observeRules: entries.filter(
+        (entry: any) => entry.recommendation === "observe"
+      ).length,
+      pendingRules: entries.filter((entry: any) => entry.pendingCount > 0).length,
+    }),
+  };
+}
+
+function runAttributionReport(request: any) {
+  const { storeId, profile, input } = normalizeRequest(
+    "attribution_report",
+    request
+  );
+  const state = getProfileState(storeId, profile);
+  const meta = buildMeta("attribution_report", storeId, profile, input);
+  const limit = Math.min(
+    Math.max(
+      toPositiveInteger(request.limit, DEFAULT_ATTRIBUTION_REPORT_LIMIT),
+      1
+    ),
+    MAX_ATTRIBUTION_REPORT_LIMIT
+  );
+  const minSupport = Math.max(
+    toPositiveInteger(request.minSupport, DEFAULT_ATTRIBUTION_MIN_SUPPORT),
+    1
+  );
+  const entries = buildShadowAttributionEntries(state, {
+    limit: Math.max(limit, DEFAULT_ATTRIBUTION_REPORT_LIMIT),
+    minSupport,
+    includeZeroSupport: request.includeZeroSupport !== false,
+  });
+  const topHelpful = entries
+    .filter((entry: any) => entry.direction === "helpful")
+    .sort(compareHelpfulAttributionEntries)
+    .slice(0, limit);
+  const topHarmful = entries
+    .filter((entry: any) => entry.direction === "harmful")
+    .sort(compareHarmfulAttributionEntries)
+    .slice(0, limit);
+  const pendingReview = entries
+    .filter(
+      (entry: any) =>
+        entry.recommendation === "observe" || entry.pendingCount > 0
+    )
+    .sort(compareByAbsoluteAttributionSignal)
+    .slice(0, limit);
+
+  return {
+    ...meta,
+    advisoryOnly: true,
+    readOnly: true,
+    summary: stableSortObject({
+      totalRules: entries.length,
+      helpfulRules: topHelpful.length,
+      harmfulRules: topHarmful.length,
+      pendingReviewRules: pendingReview.length,
+    }),
+    topHelpful,
+    topHarmful,
+    pendingReview,
+    entries: entries.sort(compareByAbsoluteAttributionSignal).slice(0, limit),
   };
 }
 
@@ -11929,6 +12789,7 @@ const runners: Record<string, (request: any) => any> = {
   policy_decision_update: runPolicyDecisionUpdate,
   recall_authorization: runRecallAuthorization,
   recall_authorize: runRecallAuthorization,
+  attribution_ranking_policy: runAttributionRankingPolicy,
   tutor_degraded: runTutorDegraded,
   degraded_tutor: runTutorDegraded,
   policy_audit_export: runPolicyAuditExport,
@@ -11950,6 +12811,8 @@ const runners: Record<string, (request: any) => any> = {
   console_anomaly_alerts: runMemoryConsoleAnomalyAlerts,
   feedback: runFeedback,
   outcome: runOutcome,
+  shadow_attribution: runShadowAttribution,
+  attribution_report: runAttributionReport,
   audit: runAudit,
   export: runExport,
   doctor: runDoctor,
@@ -12073,6 +12936,10 @@ export function snapshotProfile(
     schedulerClocks: cloneStable(state.schedulerClocks ?? {}, {}),
     reviewArchivalTiers: cloneStable(state.reviewArchivalTiers ?? {}, {}),
     recallAllowlistPolicy: cloneStable(state.recallAllowlistPolicy ?? {}, {}),
+    attributionRankingPolicy: cloneStable(
+      state.attributionRankingPolicy ?? {},
+      {}
+    ),
     degradedTutorSessions: cloneStable(state.degradedTutorSessions ?? [], []),
     policyDecisions: state.policyDecisions.map((decision: any) => ({
       ...decision,
@@ -12134,6 +13001,10 @@ function serializeState(state: any) {
     schedulerClocks: cloneStable(state.schedulerClocks ?? {}, {}),
     reviewArchivalTiers: cloneStable(state.reviewArchivalTiers ?? {}, {}),
     recallAllowlistPolicy: cloneStable(state.recallAllowlistPolicy ?? {}, {}),
+    attributionRankingPolicy: cloneStable(
+      state.attributionRankingPolicy ?? {},
+      {}
+    ),
     degradedTutorSessions: cloneStable(state.degradedTutorSessions ?? [], []),
     policyDecisions: state.policyDecisions.map((decision: any) => ({
       ...decision,
@@ -12217,9 +13088,14 @@ interface RawStateInput {
   schedulerClocks?: RawSchedulerClocksInput;
   reviewArchivalTiers?: RawReviewArchivalTiersInput;
   recallAllowlistPolicy?: RawRecallAllowlistPolicyInput;
+  attributionRankingPolicy?: unknown;
 }
 
-function normalizeState(rawState: any) {
+function normalizeState(
+  rawState: any,
+  storeId: any = DEFAULT_STORE_ID,
+  profile: any = INTERNAL_PROFILE_ID
+) {
   const state: RawStateInput =
     rawState && typeof rawState === "object" ? (rawState as RawStateInput) : {};
   const events = Array.isArray(state.events) ? state.events : [];
@@ -12324,6 +13200,17 @@ function normalizeState(rawState: any) {
           normalizeBoundedStringLenient(entry?.task, 128) ?? "unspecified-task",
         outcome: entry?.outcome === "failure" ? "failure" : "success",
         usedRuleIds: normalizeBoundedStringArrayLenient(entry?.usedRuleIds),
+        packId: normalizeBoundedStringLenient(entry?.packId, 64),
+        usedUsageIds: normalizeBoundedStringArrayLenient(
+          entry?.usedUsageIds,
+          64
+        ),
+        toolRefs: normalizeBoundedStringArrayLenient(entry?.toolRefs, 128),
+        testRefs: normalizeBoundedStringArrayLenient(entry?.testRefs, 128),
+        artifactRefs: normalizeBoundedStringArrayLenient(
+          entry?.artifactRefs,
+          128
+        ),
         actor:
           normalizeBoundedStringLenient(entry?.actor, 128) ??
           "human_unspecified",
@@ -12331,6 +13218,17 @@ function normalizeState(rawState: any) {
           entry?.recordedAt ?? entry?.timestamp,
           DEFAULT_VERSION_TIMESTAMP
         ),
+        status: entry?.status === "provisional" ? "provisional" : "settled",
+        settledAt:
+          entry?.status === "provisional"
+            ? null
+            : normalizeIsoTimestampOrFallback(
+                entry?.settledAt ?? entry?.resolvedAt ?? entry?.recordedAt,
+                normalizeIsoTimestampOrFallback(
+                  entry?.recordedAt ?? entry?.timestamp,
+                  DEFAULT_VERSION_TIMESTAMP
+                )
+              ),
         metadata: isPlainObject(entry?.metadata)
           ? stableSortObject(entry.metadata)
           : {},
@@ -12816,6 +13714,11 @@ function normalizeState(rawState: any) {
           }
         : {},
     },
+    attributionRankingPolicy: normalizeAttributionRankingPolicyState(
+      state.attributionRankingPolicy,
+      storeId,
+      profile
+    ),
     degradedTutorSessions: sortByTimestampAndId(
       degradedTutorSessions.map((session: any) => ({
         ...session,
@@ -12922,7 +13825,11 @@ function importProfiles(storeId: any, profiles: any) {
       typeof profile === "string" && profile.trim().length > 0
         ? profile.trim()
         : defaultProfile();
-    const normalizedState = normalizeState(source[profile]);
+    const normalizedState = normalizeState(
+      source[profile],
+      normalizedStore,
+      normalizedProfile
+    );
     profileMap.set(normalizedProfile, normalizedState);
     if (normalizedProfile !== defaultProfile()) {
       fallbackDefaultState = normalizedState;

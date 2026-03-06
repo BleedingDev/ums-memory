@@ -9,6 +9,8 @@ Operational runbook for delivering Phase 1 and Phase 2 epics under shared backen
 
 This runbook is paired with [ADR-0001](../adr/0001-phase1-phase2-baseline-constraints.md).
 Runtime architecture and persistence constraints are locked by [ADR-0008](../adr/0008-single-runtime-storage-adapter-architecture.md).
+Attribution evidence-tier and advisory rollout constraints are locked by [ADR-0009](../adr/0009-tiered-credit-assignment-safety-envelope.md).
+Usage-trace privacy, retention, and tenancy constraints are locked by [ADR-0010](../adr/0010-usage-trace-privacy-retention-tenancy.md).
 Operation-level persistence semantics are defined in [Runtime Operation-to-Persistence Contract Map](./runtime-operation-persistence-map.md).
 For source-domain partitioning, see [Multi-Store Source Ingestion](./multi-store-source-ingestion.md).
 

@@ -25,6 +25,40 @@ test.beforeEach(() => {
   resetPolicyPackPlugin();
 });
 
+function createPromotedRule(
+  storeId: string,
+  profile: string,
+  statement: string,
+  seed: string,
+  replayOverrides: Record<string, unknown> = {}
+) {
+  const shadow = executeOperation("shadow_write", {
+    storeId,
+    profile,
+    statement,
+    confidence: 0.5,
+    sourceEventIds: [`evt-${seed}`],
+    evidenceEventIds: [`evt-${seed}`],
+  });
+  const candidateId = shadow.applied[0].candidateId;
+  executeOperation("replay_eval", {
+    storeId,
+    profile,
+    candidateId,
+    successRateDelta: 1,
+    ...replayOverrides,
+  });
+  const promoted = executeOperation("promote", {
+    storeId,
+    profile,
+    candidateId,
+  });
+  return {
+    candidateId,
+    ruleId: promoted.rule.ruleId,
+  };
+}
+
 test("core exposes the full required operation surface", () => {
   assert.deepEqual(listOperations(), [
     "ingest",
@@ -52,6 +86,7 @@ test("core exposes the full required operation surface", () => {
     "review_set_rebalance",
     "curate_guarded",
     "recall_authorization",
+    "attribution_ranking_policy",
     "tutor_degraded",
     "policy_audit_export",
     "memory_console_search",
@@ -61,6 +96,8 @@ test("core exposes the full required operation surface", () => {
     "memory_console_anomaly_alerts",
     "feedback",
     "outcome",
+    "shadow_attribution",
+    "attribution_report",
     "audit",
     "export",
     "doctor",
@@ -1633,6 +1670,11 @@ test("ums-memory-hpl.6 outcome ingestion maps success/failure to utility signals
     task: "triage release incident",
     outcome: "failure",
     usedRuleIds: [targetRuleId],
+    packId: "pack_trace_hpl6",
+    usedUsageIds: ["usage_trace_hpl6_1", "usage_trace_hpl6_2"],
+    toolRefs: ["tool://triage/runbook"],
+    testRefs: ["test://release/incident-check"],
+    artifactRefs: ["artifact://ticket/INC-42"],
     actor: "oncall",
     timestamp: "2026-03-02T14:00:00.000Z",
   };
@@ -1645,6 +1687,16 @@ test("ums-memory-hpl.6 outcome ingestion maps success/failure to utility signals
   assert.equal(created.mapping.updatedCandidateIds.length, 1);
   assert.equal(created.policyAuditEventId, replay.policyAuditEventId);
   assert.deepEqual(created.usedRuleIds, [targetRuleId]);
+  assert.equal(created.packId, "pack_trace_hpl6");
+  assert.deepEqual(created.usedUsageIds, [
+    "usage_trace_hpl6_1",
+    "usage_trace_hpl6_2",
+  ]);
+  assert.deepEqual(created.toolRefs, ["tool://triage/runbook"]);
+  assert.deepEqual(created.testRefs, ["test://release/incident-check"]);
+  assert.deepEqual(created.artifactRefs, ["artifact://ticket/INC-42"]);
+  assert.equal(created.status, "settled");
+  assert.equal(created.settledAt, "2026-03-02T14:00:00.000Z");
 
   const snapshot = snapshotProfile(profile, storeId);
   const storedRule = snapshot.rules.find(
@@ -1662,6 +1714,465 @@ test("ums-memory-hpl.6 outcome ingestion maps success/failure to utility signals
     "outcome_failure"
   );
   assert.equal(storedCandidate.metadata.utilitySignal.score, 0.3);
+  assert.deepEqual(snapshot.outcomes[0]?.usedUsageIds, [
+    "usage_trace_hpl6_1",
+    "usage_trace_hpl6_2",
+  ]);
+  assert.deepEqual(snapshot.outcomes[0]?.toolRefs, ["tool://triage/runbook"]);
+  assert.deepEqual(snapshot.outcomes[0]?.testRefs, [
+    "test://release/incident-check",
+  ]);
+  assert.deepEqual(snapshot.outcomes[0]?.artifactRefs, [
+    "artifact://ticket/INC-42",
+  ]);
+  assert.equal(snapshot.outcomes[0]?.status, "settled");
+});
+
+test("outcome linkage supports provisional status updates and store isolation", () => {
+  const outcomeId = "outcome-trace-provisional";
+  const provisional = executeOperation("outcome", {
+    storeId: "tenant-link-a",
+    profile: "trace-profile",
+    outcomeId,
+    task: "delayed validation",
+    outcome: "success",
+    packId: "pack_trace_provisional",
+    usedUsageIds: ["usage_trace_provisional_1"],
+    status: "provisional",
+    actor: "agent",
+    timestamp: "2026-03-03T08:00:00.000Z",
+  });
+  const settled = executeOperation("outcome", {
+    storeId: "tenant-link-a",
+    profile: "trace-profile",
+    outcomeId,
+    task: "delayed validation",
+    outcome: "success",
+    packId: "pack_trace_provisional",
+    usedUsageIds: ["usage_trace_provisional_1"],
+    status: "settled",
+    settledAt: "2026-03-03T09:00:00.000Z",
+    actor: "agent",
+    timestamp: "2026-03-03T08:00:00.000Z",
+  });
+
+  assert.equal(provisional.action, "created");
+  assert.equal(provisional.status, "provisional");
+  assert.equal(provisional.settledAt, null);
+  assert.equal(settled.action, "updated");
+  assert.equal(settled.status, "settled");
+  assert.equal(settled.settledAt, "2026-03-03T09:00:00.000Z");
+
+  const tenantASnapshot = snapshotProfile("trace-profile", "tenant-link-a");
+  const tenantBSnapshot = snapshotProfile("trace-profile", "tenant-link-b");
+  assert.equal(tenantASnapshot.outcomes.length, 1);
+  assert.equal(tenantASnapshot.outcomes[0]?.packId, "pack_trace_provisional");
+  assert.deepEqual(tenantASnapshot.outcomes[0]?.usedUsageIds, [
+    "usage_trace_provisional_1",
+  ]);
+  assert.equal(tenantBSnapshot.outcomes.length, 0);
+});
+
+test("shadow_attribution scores traced outcomes with uncertainty fields without mutating memory state", () => {
+  const storeId = "tenant-shadow-attribution";
+  const profile = "shadow-attribution";
+  const promoted = createPromotedRule(
+    storeId,
+    profile,
+    "Attribution scoring should stay advisory-only.",
+    "shadow-attribution"
+  );
+
+  for (const hour of [0, 1, 2]) {
+    executeOperation("outcome", {
+      storeId,
+      profile,
+      task: `shadow-attribution-success-${hour}`,
+      outcome: "success",
+      usedRuleIds: [promoted.ruleId],
+      packId: "pack_shadow_attribution",
+      usedUsageIds: ["usage_shadow_attribution_1"],
+      toolRefs: ["tool://shadow-attribution"],
+      testRefs: ["test://shadow-attribution"],
+      artifactRefs: ["artifact://shadow-attribution"],
+      actor: "shadow-attribution-agent",
+      timestamp: `2026-03-04T0${hour}:00:00.000Z`,
+    });
+  }
+
+  const before = snapshotProfile(profile, storeId);
+  const scored = executeOperation("shadow_attribution", {
+    storeId,
+    profile,
+    targetRuleIds: [promoted.ruleId],
+    minSupport: 3,
+  });
+  const after = snapshotProfile(profile, storeId);
+
+  assert.deepEqual(after, before);
+  assert.equal(scored.advisoryOnly, true);
+  assert.equal(scored.automaticMutationAllowed, false);
+  assert.equal(scored.entries.length, 1);
+  assert.equal(scored.summary.helpfulRules, 1);
+  const entry = scored.entries[0];
+  assert.equal(entry.ruleId, promoted.ruleId);
+  assert.equal(entry.direction, "helpful");
+  assert.equal(entry.evidenceTier, "deterministic_replay");
+  assert.equal(entry.supportCount, 3);
+  assert.equal(entry.sampleSize, 3);
+  assert.equal(entry.pendingCount, 0);
+  assert.equal(entry.effectSize, 1);
+  assert.equal(entry.attributionConfidence, 1);
+  assert.equal(entry.rankingNudge.band, "boost");
+  assert.deepEqual(entry.lineage.toolRefs, ["tool://shadow-attribution"]);
+  assert.deepEqual(entry.lineage.testRefs, ["test://shadow-attribution"]);
+  assert.deepEqual(entry.lineage.artifactRefs, [
+    "artifact://shadow-attribution",
+  ]);
+});
+
+test("shadow_attribution stays low-confidence for irrelevant and synergy-like sparse memories", () => {
+  const storeId = "tenant-shadow-attribution-sparse";
+  const profile = "shadow-attribution-sparse";
+  const alpha = createPromotedRule(
+    storeId,
+    profile,
+    "Alpha memory depends on another rule.",
+    "shadow-alpha"
+  );
+  const beta = createPromotedRule(
+    storeId,
+    profile,
+    "Beta memory is only helpful with alpha.",
+    "shadow-beta"
+  );
+  const unused = createPromotedRule(
+    storeId,
+    profile,
+    "Unused memory should stay no-op.",
+    "shadow-unused"
+  );
+
+  executeOperation("outcome", {
+    storeId,
+    profile,
+    task: "synergy-success",
+    outcome: "success",
+    usedRuleIds: [alpha.ruleId, beta.ruleId],
+    packId: "pack_shadow_synergy",
+    usedUsageIds: ["usage_shadow_synergy_1"],
+    actor: "shadow-synergy-agent",
+    timestamp: "2026-03-04T10:00:00.000Z",
+  });
+  executeOperation("outcome", {
+    storeId,
+    profile,
+    task: "alpha-alone-failure",
+    outcome: "failure",
+    usedRuleIds: [alpha.ruleId],
+    packId: "pack_shadow_synergy",
+    usedUsageIds: ["usage_shadow_synergy_2"],
+    actor: "shadow-synergy-agent",
+    timestamp: "2026-03-04T11:00:00.000Z",
+  });
+
+  const scored = executeOperation("shadow_attribution", {
+    storeId,
+    profile,
+    targetRuleIds: [alpha.ruleId, beta.ruleId, unused.ruleId],
+    minSupport: 3,
+  });
+  const alphaEntry = scored.entries.find(
+    (entry: any) => entry.ruleId === alpha.ruleId
+  );
+  const betaEntry = scored.entries.find(
+    (entry: any) => entry.ruleId === beta.ruleId
+  );
+  const unusedEntry = scored.entries.find(
+    (entry: any) => entry.ruleId === unused.ruleId
+  );
+
+  assert.ok(alphaEntry);
+  assert.equal(alphaEntry.direction, "neutral");
+  assert.equal(alphaEntry.supportCount, 2);
+  assert.equal(alphaEntry.attributionConfidence <= 0.2, true);
+  assert.equal(alphaEntry.reasonCodes.includes("mixed_outcomes"), true);
+  assert.equal(alphaEntry.reasonCodes.includes("insufficient_support"), true);
+
+  assert.ok(betaEntry);
+  assert.equal(betaEntry.direction, "neutral");
+  assert.equal(betaEntry.supportCount, 1);
+  assert.equal(betaEntry.attributionConfidence, 0.333333);
+  assert.equal(betaEntry.reasonCodes.includes("insufficient_support"), true);
+
+  assert.ok(unusedEntry);
+  assert.equal(unusedEntry.direction, "neutral");
+  assert.equal(unusedEntry.supportCount, 0);
+  assert.equal(unusedEntry.attributionConfidence, 0);
+  assert.equal(unusedEntry.reasonCodes.includes("no_traced_outcomes"), true);
+});
+
+test("shadow_attribution treats provisional outcomes as pending until settled", () => {
+  const storeId = "tenant-shadow-attribution-delayed";
+  const profile = "shadow-attribution-delayed";
+  const promoted = createPromotedRule(
+    storeId,
+    profile,
+    "Delayed outcomes should not inflate attribution confidence.",
+    "shadow-delayed"
+  );
+
+  executeOperation("outcome", {
+    storeId,
+    profile,
+    outcomeId: "shadow-delayed-outcome",
+    task: "delayed-outcome",
+    outcome: "success",
+    usedRuleIds: [promoted.ruleId],
+    packId: "pack_shadow_delayed",
+    usedUsageIds: ["usage_shadow_delayed_1"],
+    status: "provisional",
+    actor: "shadow-delayed-agent",
+    timestamp: "2026-03-04T12:00:00.000Z",
+  });
+
+  const provisional = executeOperation("shadow_attribution", {
+    storeId,
+    profile,
+    targetRuleIds: [promoted.ruleId],
+    minSupport: 3,
+  });
+  const provisionalEntry = provisional.entries[0];
+  assert.equal(provisionalEntry.supportCount, 0);
+  assert.equal(provisionalEntry.pendingCount, 1);
+  assert.equal(provisionalEntry.attributionConfidence, 0);
+  assert.equal(
+    provisionalEntry.reasonCodes.includes("pending_outcomes_present"),
+    true
+  );
+
+  executeOperation("outcome", {
+    storeId,
+    profile,
+    outcomeId: "shadow-delayed-outcome",
+    task: "delayed-outcome",
+    outcome: "success",
+    usedRuleIds: [promoted.ruleId],
+    packId: "pack_shadow_delayed",
+    usedUsageIds: ["usage_shadow_delayed_1"],
+    status: "settled",
+    settledAt: "2026-03-04T13:00:00.000Z",
+    actor: "shadow-delayed-agent",
+    timestamp: "2026-03-04T12:00:00.000Z",
+  });
+
+  const settled = executeOperation("shadow_attribution", {
+    storeId,
+    profile,
+    targetRuleIds: [promoted.ruleId],
+    minSupport: 3,
+  });
+  const settledEntry = settled.entries[0];
+  assert.equal(settledEntry.supportCount, 1);
+  assert.equal(settledEntry.pendingCount, 0);
+  assert.equal(settledEntry.attributionConfidence, 0.333333);
+  assert.equal(settledEntry.reasonCodes.includes("insufficient_support"), true);
+});
+
+test("attribution_report surfaces helpful and harmful memories with advisory lineage", () => {
+  const storeId = "tenant-attribution-report";
+  const profile = "attribution-report";
+  const helpful = createPromotedRule(
+    storeId,
+    profile,
+    "Helpful memory should surface in the report.",
+    "attr-report-help"
+  );
+  const harmful = createPromotedRule(
+    storeId,
+    profile,
+    "Harmful memory should surface in the report.",
+    "attr-report-harm"
+  );
+
+  for (const hour of [0, 1, 2]) {
+    executeOperation("outcome", {
+      storeId,
+      profile,
+      task: `attr-report-helpful-${hour}`,
+      outcome: "success",
+      usedRuleIds: [helpful.ruleId],
+      packId: "pack_attr_report_help",
+      usedUsageIds: [`usage_attr_report_help_${hour}`],
+      toolRefs: ["tool://attr-report-help"],
+      testRefs: ["test://attr-report-help"],
+      actor: "attr-report-agent",
+      timestamp: `2026-03-05T0${hour}:00:00.000Z`,
+    });
+    executeOperation("outcome", {
+      storeId,
+      profile,
+      task: `attr-report-harmful-${hour}`,
+      outcome: "failure",
+      usedRuleIds: [harmful.ruleId],
+      packId: "pack_attr_report_harm",
+      usedUsageIds: [`usage_attr_report_harm_${hour}`],
+      testRefs: ["test://attr-report-harm"],
+      artifactRefs: ["artifact://attr-report-harm"],
+      actor: "attr-report-agent",
+      timestamp: `2026-03-05T1${hour}:00:00.000Z`,
+    });
+  }
+
+  const report = executeOperation("attribution_report", {
+    storeId,
+    profile,
+    limit: 2,
+    minSupport: 3,
+  });
+
+  assert.equal(report.advisoryOnly, true);
+  assert.equal(report.readOnly, true);
+  assert.equal(report.summary.helpfulRules, 1);
+  assert.equal(report.summary.harmfulRules, 1);
+  assert.equal(report.topHelpful[0]?.ruleId, helpful.ruleId);
+  assert.equal(report.topHarmful[0]?.ruleId, harmful.ruleId);
+  assert.equal(report.topHelpful[0]?.lineage.outcomeIds.length, 3);
+  assert.deepEqual(report.topHelpful[0]?.lineage.toolRefs, [
+    "tool://attr-report-help",
+  ]);
+  assert.deepEqual(report.topHarmful[0]?.lineage.testRefs, [
+    "test://attr-report-harm",
+  ]);
+  assert.deepEqual(report.topHarmful[0]?.lineage.artifactRefs, [
+    "artifact://attr-report-harm",
+  ]);
+});
+
+test("attribution ranking policy gates context nudges and suppresses safety-regressed rules", () => {
+  const storeId = "tenant-attribution-ranking";
+  const profile = "attribution-ranking";
+  const suppressed = createPromotedRule(
+    storeId,
+    profile,
+    "Safety-regressed memory should be down-ranked.",
+    "attr-rank-suppress"
+  );
+  const boosted = createPromotedRule(
+    storeId,
+    profile,
+    "Helpful memory should be boosted.",
+    "attr-rank-boost"
+  );
+  const neutral = createPromotedRule(
+    storeId,
+    profile,
+    "Neutral memory should stay between boost and suppress.",
+    "attr-rank-neutral"
+  );
+
+  for (const hour of [0, 1, 2]) {
+    executeOperation("outcome", {
+      storeId,
+      profile,
+      task: `attr-rank-boost-${hour}`,
+      outcome: "success",
+      usedRuleIds: [boosted.ruleId],
+      packId: "pack_attr_rank_boost",
+      usedUsageIds: [`usage_attr_rank_boost_${hour}`],
+      actor: "attr-rank-agent",
+      timestamp: `2026-03-05T2${hour}:00:00.000Z`,
+    });
+    executeOperation("outcome", {
+      storeId,
+      profile,
+      task: `attr-rank-suppress-${hour}`,
+      outcome: "success",
+      usedRuleIds: [suppressed.ruleId],
+      packId: "pack_attr_rank_suppress",
+      usedUsageIds: [`usage_attr_rank_suppress_${hour}`],
+      actor: "attr-rank-agent",
+      timestamp: `2026-03-05T1${hour}:30:00.000Z`,
+    });
+  }
+
+  executeOperation("replay_eval", {
+    storeId,
+    profile,
+    candidateId: suppressed.candidateId,
+    successRateDelta: 0.3,
+    policyViolationsDelta: 0.3,
+    hallucinationFlagDelta: 0.2,
+    canaryPolicyViolationsDelta: 0.4,
+    canaryHallucinationFlagDelta: 0.1,
+    safetyDeltaThreshold: 0.15,
+    canaryDeltaThreshold: 0.05,
+    gateThreshold: -100,
+    evaluatedAt: "2026-03-05T23:00:00.000Z",
+  });
+
+  assert.throws(
+    () =>
+      executeOperation("context", {
+        storeId,
+        profile,
+        query: "memory",
+        enableAttributionRanking: true,
+        attributionRankingTopK: 3,
+      }),
+    /PERSONALIZATION_POLICY_DENY/
+  );
+
+  const enabled = executeOperation("attribution_ranking_policy", {
+    storeId,
+    profile,
+    mode: "enable",
+    actor: "ops-reviewer",
+    reason: "Enable bounded advisory nudges.",
+    failClosed: true,
+    timestamp: "2026-03-06T00:00:00.000Z",
+  });
+  assert.equal(enabled.policy.enabled, true);
+  assert.equal(enabled.policy.failClosed, true);
+
+  const ranked = executeOperation("context", {
+    storeId,
+    profile,
+    query: "memory",
+    enableAttributionRanking: true,
+    attributionRankingTopK: 3,
+  });
+
+  assert.deepEqual(
+    ranked.observability.attributionRanking.baselineRuleIds,
+    [suppressed.ruleId, boosted.ruleId, neutral.ruleId]
+  );
+  assert.deepEqual(
+    ranked.observability.attributionRanking.rankedRuleIds,
+    [boosted.ruleId, neutral.ruleId, suppressed.ruleId]
+  );
+  assert.equal(ranked.observability.attributionRanking.applied, true);
+  assert.deepEqual(
+    ranked.rules.map((rule: any) => rule.ruleId),
+    [boosted.ruleId, neutral.ruleId, suppressed.ruleId]
+  );
+  assert.equal(ranked.rules[0]?.attribution.direction, "helpful");
+  assert.equal(
+    ranked.rules[2]?.attribution.advisoryOnly,
+    true
+  );
+
+  const suppressedAttribution = executeOperation("shadow_attribution", {
+    storeId,
+    profile,
+    targetRuleIds: [suppressed.ruleId],
+    minSupport: 3,
+  }).entries[0];
+  assert.equal(
+    suppressedAttribution.reasonCodes.includes("safety_regression_history"),
+    true
+  );
+  assert.equal(suppressedAttribution.rankingNudge.band, "suppress");
 });
 
 test("ums-memory-hpl.6 feedback supports candidate-only utility mapping without a rule target", () => {
@@ -2143,7 +2654,39 @@ test("context and curate operate on shared profile state", () => {
 
   assert.equal(curated.applied.length, 1);
   assert.equal(context.matches.length, 1);
+  assert.equal(typeof context.packId, "string");
+  assert.equal(context.packId.startsWith("pack_"), true);
+  assert.equal(typeof context.matches[0]?.usageId, "string");
+  assert.equal(context.matches[0]?.usageId.startsWith("usage_"), true);
   assert.equal(snapshotProfile("demo").rules.length, 1);
+});
+
+test("context pack and usage ids remain deterministic across repeated calls", () => {
+  executeOperation("ingest", {
+    storeId: "coding-agent",
+    profile: "trace-demo",
+    events: [
+      {
+        type: "note",
+        source: "codex",
+        content: "deterministic trace ids for context",
+      },
+    ],
+  });
+
+  const request = {
+    storeId: "coding-agent",
+    profile: "trace-demo",
+    query: "deterministic trace ids",
+    limit: 5,
+  };
+  const first = executeOperation("context", request);
+  const second = executeOperation("context", request);
+
+  assert.equal(first.packId, second.packId);
+  assert.deepEqual(first.matches, second.matches);
+  assert.equal(first.matches.length, 1);
+  assert.equal(first.matches[0]?.usageId.startsWith("usage_"), true);
 });
 
 test("store isolation prevents cross-store state bleed", () => {

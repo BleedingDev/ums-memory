@@ -363,6 +363,12 @@ test("http server exposes deterministic JSON operation routes", async () => {
       rootBody.operations.includes("/v1/memory_console_anomaly_alerts"),
       true
     );
+    assert.equal(
+      rootBody.operations.includes("/v1/attribution_ranking_policy"),
+      true
+    );
+    assert.equal(rootBody.operations.includes("/v1/shadow_attribution"), true);
+    assert.equal(rootBody.operations.includes("/v1/attribution_report"), true);
 
     const ingestRes = await fetch(`${base}/v1/ingest`, {
       method: "POST",
@@ -1730,6 +1736,10 @@ test("api and cli share persisted state file across restart boundaries", async (
       const contextBody = await contextRes.json();
       assert.equal(contextBody.ok, true);
       assert.equal(contextBody.data.matches.length, 1);
+      assert.equal(typeof contextBody.data.packId, "string");
+      assert.equal(contextBody.data.packId.startsWith("pack_"), true);
+      assert.equal(typeof contextBody.data.matches[0]?.usageId, "string");
+      assert.equal(contextBody.data.matches[0]?.usageId.startsWith("usage_"), true);
 
       const apiIngestRes = await fetch(`${firstBase}/v1/ingest`, {
         method: "POST",
@@ -1762,6 +1772,7 @@ test("api and cli share persisted state file across restart boundaries", async (
     const secondAddress = secondServer.server.address();
     assert.ok(secondAddress && typeof secondAddress === "object");
     const secondBase = `http://${secondServer.host}:${secondAddress.port}`;
+    let restartBody: any;
     try {
       const contextAfterRestart = await fetch(`${secondBase}/v1/context`, {
         method: "POST",
@@ -1775,9 +1786,19 @@ test("api and cli share persisted state file across restart boundaries", async (
         }),
       });
       assert.equal(contextAfterRestart.status, 200);
-      const restartBody = await contextAfterRestart.json();
+      restartBody = await contextAfterRestart.json();
       assert.equal(restartBody.ok, true);
       assert.equal(restartBody.data.matches.length, 1);
+      assert.equal(typeof restartBody.data.packId, "string");
+      assert.equal(restartBody.data.packId.startsWith("pack_"), true);
+      assert.equal(
+        typeof restartBody.data.matches[0]?.usageId,
+        "string"
+      );
+      assert.equal(
+        restartBody.data.matches[0]?.usageId.startsWith("usage_"),
+        true
+      );
     } finally {
       await new Promise<void>((resolvePromise, rejectPromise) => {
         secondServer.server.close((error) =>
@@ -1802,6 +1823,18 @@ test("api and cli share persisted state file across restart boundaries", async (
     const cliContextBody = JSON.parse((cliContext as any).stdout);
     assert.equal(cliContextBody.ok, true);
     assert.equal(cliContextBody.data.matches.length, 1);
+    assert.equal(typeof cliContextBody.data.packId, "string");
+    assert.equal(cliContextBody.data.packId.startsWith("pack_"), true);
+    assert.equal(typeof cliContextBody.data.matches[0]?.usageId, "string");
+    assert.equal(
+      cliContextBody.data.matches[0]?.usageId.startsWith("usage_"),
+      true
+    );
+    assert.equal(restartBody.data.packId, cliContextBody.data.packId);
+    assert.equal(
+      restartBody.data.matches[0]?.usageId,
+      cliContextBody.data.matches[0]?.usageId
+    );
   } finally {
     await rm(tempDir, { recursive: true, force: true });
   }

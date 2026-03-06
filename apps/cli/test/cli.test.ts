@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import test from "node:test";
 
 import { resetStore } from "../../api/src/core.ts";
-import { startApiServer } from "../../api/src/server.ts";
+import { writeDaemonConfig } from "../../ums/src/daemon-config.ts";
 
 const CLI_PATH = resolve(process.cwd(), "apps/cli/src/index.ts");
 const UMS_PATH = resolve(process.cwd(), "apps/ums/src/index.ts");
@@ -64,20 +64,6 @@ function runUms(args: any, stdin = "", { env = process.env } = {}) {
       proc.stdin.write(stdin);
     }
     proc.stdin.end();
-  });
-}
-
-async function stopApiServer(server: {
-  close: (callback: (error?: Error | null) => void) => void;
-}): Promise<void> {
-  await new Promise<void>((resolvePromise, rejectPromise) => {
-    server.close((error?: Error | null) => {
-      if (error) {
-        rejectPromise(error);
-        return;
-      }
-      resolvePromise();
-    });
   });
 }
 
@@ -256,128 +242,117 @@ test("cli store-id flag isolates memories across stores", async () => {
   }
 });
 
-test("ums connect requires prior login session", async () => {
-  const tempDir = await mkdtemp(resolve(tmpdir(), "ums-connect-no-login-"));
-  const accountFile = resolve(tempDir, "account.json");
-  try {
-    const connect = await runUms([
-      "connect",
-      "--account-file",
-      accountFile,
-      "--store-id",
-      "tenant-no-login",
-      "--no-auto-start",
-    ]);
-    assert.equal((connect as any).code, 1);
-    const stderr = JSON.parse((connect as any).stderr);
-    assert.equal(stderr.ok, false);
-    assert.equal(stderr.error.code, "UMS_RUNTIME_ERROR");
-    assert.match(stderr.error.message, /No account login found/i);
-  } finally {
-    await rm(tempDir, { recursive: true, force: true });
-  }
+test("ums login and connect are removed from the config-backed runtime", async () => {
+  const login = await runUms(["login"]);
+  assert.equal((login as any).code, 1);
+  const loginError = JSON.parse((login as any).stderr);
+  assert.equal(loginError.ok, false);
+  assert.equal(loginError.error.code, "UMS_RUNTIME_ERROR");
+  assert.match(loginError.error.message, /login is removed/i);
+
+  const connect = await runUms(["connect"]);
+  assert.equal((connect as any).code, 1);
+  const connectError = JSON.parse((connect as any).stderr);
+  assert.equal(connectError.ok, false);
+  assert.equal(connectError.error.code, "UMS_RUNTIME_ERROR");
+  assert.match(connectError.error.message, /connect is removed/i);
 });
 
-test("ums login + connect + sync ingests local codex history into authenticated API", async () => {
-  const tempDir = await mkdtemp(resolve(tmpdir(), "ums-account-sync-"));
+test("ums sync ingests local codex history into configured local memory", async () => {
+  const tempDir = await mkdtemp(resolve(tmpdir(), "ums-config-sync-local-"));
   const homeDir = resolve(tempDir, "home");
   const codexDir = resolve(homeDir, ".codex", "sessions");
-  const accountFile = resolve(tempDir, "account-session.json");
-  const serverStateFile = resolve(tempDir, "server-state.json");
-  const authToken = "sync-token-123";
-  await mkdir(codexDir, { recursive: true });
-  await writeFile(
-    resolve(codexDir, "session.jsonl"),
-    `${JSON.stringify({
-      timestamp: "2026-03-04T00:00:00.000Z",
-      event: {
-        role: "user",
-        content:
-          "Enterprise ingestion should auto-capture knowledge from developer sessions.",
-      },
-    })}\n`,
-    "utf8"
-  );
-
-  const server = await startApiServer({
-    host: "127.0.0.1",
-    port: 0,
-    stateFile: serverStateFile,
-    auth: {
-      required: true,
-      tokens: [authToken],
-    },
-  });
-
+  const projectRoot = resolve(tempDir, "projects", "personal-app");
+  const configFile = resolve(tempDir, "config.jsonc");
   try {
-    const apiBaseUrl = `http://${server.host}:${server.port}`;
-    const env = {
-      ...process.env,
-      HOME: homeDir,
-    };
-
-    const login = await runUms(
-      [
-        "login",
-        "--api-url",
-        apiBaseUrl,
-        "--token",
-        authToken,
-        "--verify-store-id",
-        "tenant-sync",
-        "--account-file",
-        accountFile,
-      ],
-      "",
-      { env }
+    await mkdir(codexDir, { recursive: true });
+    await mkdir(projectRoot, { recursive: true });
+    await writeFile(
+      resolve(codexDir, "session.jsonl"),
+      `${JSON.stringify({
+        type: "session_meta",
+        payload: {
+          id: "session-local-1",
+          cwd: projectRoot,
+        },
+      })}\n${JSON.stringify({
+        type: "response_item",
+        payload: {
+          type: "message",
+          role: "user",
+          content:
+            "Auto-capture knowledge from developer sessions into local memory.",
+        },
+      })}\n`,
+      "utf8"
     );
-    assert.equal((login as any).code, 0, (login as any).stderr);
-    const loginBody = JSON.parse((login as any).stdout);
-    assert.equal(loginBody.ok, true);
-    assert.equal(loginBody.data.operation, "login");
 
-    const connect = await runUms(
-      [
-        "connect",
-        "--account-file",
-        accountFile,
-        "--store-id",
-        "tenant-sync",
-        "--profile",
-        "developer-sync",
-        "--sources",
-        "codex",
-        "--no-auto-start",
+    await writeDaemonConfig(configFile, {
+      version: 1,
+      state: {
+        rootDir: resolve(tempDir, "ums-state"),
+        journalDir: resolve(tempDir, "ums-state", "journal"),
+        checkpointDir: resolve(tempDir, "ums-state", "checkpoints"),
+      },
+      accounts: {
+        local: { type: "local" },
+      },
+      memories: {
+        personal: {
+          account: "local",
+          storeId: "personal",
+          profile: "main",
+        },
+      },
+      sources: {
+        codex: {
+          roots: [codexDir],
+        },
+        claude: {
+          enabled: false,
+        },
+        plan: {
+          enabled: false,
+        },
+      },
+      routes: [
+        {
+          match: {
+            pathPrefix: projectRoot,
+            source: "codex",
+          },
+          memory: "personal",
+          priority: 10,
+        },
       ],
-      "",
-      { env }
-    );
-    assert.equal((connect as any).code, 0, (connect as any).stderr);
-    const connectBody = JSON.parse((connect as any).stdout);
-    assert.equal(connectBody.ok, true);
-    assert.equal(connectBody.data.operation, "connect");
-    assert.equal(connectBody.data.daemon.action, "disabled");
+      defaults: {
+        memory: "personal",
+        onAmbiguous: "default",
+      },
+    });
 
-    const sync = await runUms(["sync", "--account-file", accountFile], "", {
-      env,
+    const sync = await runUms(["sync", "--config-file", configFile], "", {
+      env: {
+        ...process.env,
+        HOME: homeDir,
+      },
     });
     assert.equal((sync as any).code, 0, (sync as any).stderr);
     const syncBody = JSON.parse((sync as any).stdout);
     assert.equal(syncBody.ok, true);
     assert.equal(syncBody.data.operation, "sync");
-    assert.equal(syncBody.data.storeId, "tenant-sync");
     assert.equal(syncBody.data.preparedEvents >= 1, true);
     assert.equal(syncBody.data.accepted >= 1, true);
 
     const context = await runCli([
       "context",
       "--state-file",
-      serverStateFile,
+      syncBody.data.runtimeStateFile,
       "--store-id",
-      "tenant-sync",
+      "personal",
       "--input",
       JSON.stringify({
-        profile: "developer-sync",
+        profile: "main",
         query: "auto-capture knowledge",
       }),
     ]);
@@ -386,7 +361,643 @@ test("ums login + connect + sync ingests local codex history into authenticated 
     assert.equal(contextBody.ok, true);
     assert.equal(contextBody.data.matches.length >= 1, true);
   } finally {
-    await stopApiServer(server.server);
+    await rm(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("ums sync-daemon updates local status and http memories stay blocked", async () => {
+  const tempDir = await mkdtemp(resolve(tmpdir(), "ums-config-sync-daemon-"));
+  const homeDir = resolve(tempDir, "home");
+  const codexDir = resolve(homeDir, ".codex", "sessions");
+  const localProjectRoot = resolve(tempDir, "projects", "personal-app");
+  const managedProjectRoot = resolve(tempDir, "projects", "new-engine");
+  const localConfigFile = resolve(tempDir, "local-config.jsonc");
+  const managedConfigFile = resolve(tempDir, "managed-config.jsonc");
+  try {
+    await mkdir(codexDir, { recursive: true });
+    await mkdir(localProjectRoot, { recursive: true });
+    await mkdir(managedProjectRoot, { recursive: true });
+    await writeFile(
+      resolve(codexDir, "session.jsonl"),
+      `${JSON.stringify({
+        type: "session_meta",
+        payload: {
+          id: "session-local-2",
+          cwd: localProjectRoot,
+        },
+      })}\n${JSON.stringify({
+        type: "response_item",
+        payload: {
+          type: "message",
+          role: "user",
+          content: "Daemon status should reflect a successful local sync cycle.",
+        },
+      })}\n`,
+      "utf8"
+    );
+
+    await writeDaemonConfig(localConfigFile, {
+      version: 1,
+      state: {
+        rootDir: resolve(tempDir, "local-state"),
+        journalDir: resolve(tempDir, "local-state", "journal"),
+        checkpointDir: resolve(tempDir, "local-state", "checkpoints"),
+      },
+      accounts: {
+        local: { type: "local" },
+      },
+      memories: {
+        personal: {
+          account: "local",
+          storeId: "personal",
+          profile: "main",
+        },
+      },
+      sources: {
+        codex: {
+          roots: [codexDir],
+        },
+        claude: { enabled: false },
+        plan: { enabled: false },
+      },
+      routes: [
+        {
+          match: {
+            pathPrefix: localProjectRoot,
+            source: "codex",
+          },
+          memory: "personal",
+          priority: 10,
+        },
+      ],
+      defaults: {
+        memory: "personal",
+        onAmbiguous: "default",
+      },
+    });
+
+    const daemon = await runUms(
+      [
+        "sync-daemon",
+        "--config-file",
+        localConfigFile,
+        "--max-cycles",
+        "1",
+        "--quiet",
+      ],
+      "",
+      {
+        env: {
+          ...process.env,
+          HOME: homeDir,
+        },
+      }
+    );
+    assert.equal((daemon as any).code, 0, (daemon as any).stderr);
+
+    const localStatus = await runUms(["status", "--config-file", localConfigFile]);
+    assert.equal((localStatus as any).code, 0, (localStatus as any).stderr);
+    const localStatusBody = JSON.parse((localStatus as any).stdout);
+    assert.equal(localStatusBody.ok, true);
+    assert.equal(localStatusBody.data.operation, "status");
+    assert.equal(localStatusBody.data.daemon.pid, null);
+    assert.equal(localStatusBody.data.sync.lastSuccessAt !== null, true);
+    assert.equal(localStatusBody.data.deliveries[0].accepted >= 1, true);
+
+    await writeFile(
+      resolve(codexDir, "session-managed.jsonl"),
+      `${JSON.stringify({
+        type: "session_meta",
+        payload: {
+          id: "session-managed-1",
+          cwd: managedProjectRoot,
+        },
+      })}\n${JSON.stringify({
+        type: "response_item",
+        payload: {
+          type: "message",
+          role: "user",
+          content: "Managed memories should stay blocked until remote delivery ships.",
+        },
+      })}\n`,
+      "utf8"
+    );
+
+    await writeDaemonConfig(managedConfigFile, {
+      version: 1,
+      state: {
+        rootDir: resolve(tempDir, "managed-state"),
+        journalDir: resolve(tempDir, "managed-state", "journal"),
+        checkpointDir: resolve(tempDir, "managed-state", "checkpoints"),
+      },
+      accounts: {
+        company: {
+          type: "http",
+          apiBaseUrl: "https://ums.company.internal",
+          auth: {
+            mode: "session-ref",
+            credentialRef: "keychain://ums/company",
+          },
+        },
+      },
+      memories: {
+        company: {
+          account: "company",
+          storeId: "coding-agent",
+          profile: "developer-main",
+          project: "new-engine",
+        },
+      },
+      sources: {
+        codex: {
+          roots: [codexDir],
+        },
+        claude: { enabled: false },
+        plan: { enabled: false },
+      },
+      routes: [
+        {
+          match: {
+            pathPrefix: managedProjectRoot,
+            source: "codex",
+          },
+          memory: "company",
+          priority: 10,
+        },
+      ],
+      defaults: {
+        memory: "company",
+        onAmbiguous: "default",
+      },
+      policy: {
+        allowEnvTokenFallback: false,
+      },
+    });
+
+    const managedSync = await runUms(
+      ["sync", "--config-file", managedConfigFile],
+      "",
+      {
+        env: {
+          ...process.env,
+          HOME: homeDir,
+        },
+      }
+    );
+    assert.equal((managedSync as any).code, 1);
+    const managedError = JSON.parse((managedSync as any).stderr);
+    assert.equal(managedError.ok, false);
+    assert.equal(managedError.error.code, "UMS_RUNTIME_ERROR");
+    assert.match(managedError.error.message, /delivery errors/i);
+
+    const managedStatus = await runUms([
+      "status",
+      "--config-file",
+      managedConfigFile,
+    ]);
+    assert.equal((managedStatus as any).code, 0, (managedStatus as any).stderr);
+    const managedStatusBody = JSON.parse((managedStatus as any).stdout);
+    assert.equal(managedStatusBody.ok, true);
+    assert.match(
+      managedStatusBody.data.deliveries[0].lastError,
+      /not yet supported by config-backed sync/i
+    );
+  } finally {
+    await rm(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("ums config init writes starter config and validate accepts it", async () => {
+  const tempDir = await mkdtemp(resolve(tmpdir(), "ums-config-init-"));
+  const configFile = resolve(tempDir, "config.jsonc");
+  try {
+    const init = await runUms(["config", "init", "--config-file", configFile]);
+    assert.equal((init as any).code, 0, (init as any).stderr);
+    const initBody = JSON.parse((init as any).stdout);
+    assert.equal(initBody.ok, true);
+    assert.equal(initBody.data.operation, "config.init");
+    assert.equal(initBody.data.summary.defaultMemory, "personal");
+
+    const written = JSON.parse(await readFile(configFile, "utf8"));
+    assert.equal(written.version, 1);
+    assert.equal(written.memories.personal.storeId, "personal");
+
+    const validate = await runUms([
+      "config",
+      "validate",
+      "--config-file",
+      configFile,
+    ]);
+    assert.equal((validate as any).code, 0, (validate as any).stderr);
+    const validateBody = JSON.parse((validate as any).stdout);
+    assert.equal(validateBody.ok, true);
+    assert.equal(validateBody.data.operation, "config.validate");
+    assert.equal(validateBody.data.summary.accounts, 1);
+    assert.equal(validateBody.data.summary.memories, 1);
+    assert.equal(validateBody.data.summary.routes, 1);
+  } finally {
+    await rm(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("ums config validate surfaces schema and cross-reference errors", async () => {
+  const tempDir = await mkdtemp(resolve(tmpdir(), "ums-config-validate-"));
+  const configFile = resolve(tempDir, "config.jsonc");
+  try {
+    await writeFile(
+      configFile,
+      JSON.stringify(
+        {
+          version: 1,
+          accounts: {
+            local: { type: "local" },
+          },
+          memories: {
+            personal: {
+              account: "local",
+              storeId: "personal",
+              profile: "main",
+            },
+          },
+          routes: [],
+          defaults: {
+            memory: "company",
+            onAmbiguous: "review",
+            sync: {
+              intervalMs: 60_000,
+              maxEventsPerCycle: 400,
+            },
+          },
+          policy: {},
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+
+    const validate = await runUms([
+      "config",
+      "validate",
+      "--config-file",
+      configFile,
+    ]);
+    assert.equal((validate as any).code, 1);
+    const errorBody = JSON.parse((validate as any).stderr);
+    assert.equal(errorBody.ok, false);
+    assert.equal(errorBody.error.code, "DAEMON_CONFIG_VALIDATION_ERROR");
+    assert.match(
+      errorBody.error.message,
+      /defaults\.memory: references unknown memory 'company'/
+    );
+    assert.match(
+      errorBody.error.message,
+      /routes: must contain at least one route/
+    );
+  } finally {
+    await rm(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("ums config doctor reports rewrite needs and can fix canonical output", async () => {
+  const tempDir = await mkdtemp(resolve(tmpdir(), "ums-config-doctor-"));
+  const configFile = resolve(tempDir, "config.jsonc");
+  try {
+    await writeFile(
+      configFile,
+      `{
+  // intentionally non-canonical ordering and trailing commas
+  "version": 1,
+  "memories": {
+    "personal": {
+      "profile": "main",
+      "storeId": "personal",
+      "account": "local",
+    },
+  },
+  "accounts": {
+    "local": {
+      "type": "local",
+    },
+  },
+  "routes": [
+    {
+      "memory": "personal",
+      "match": {
+        "pathPrefix": "${tempDir.replace(/\\/g, "\\\\")}"
+      },
+    },
+  ],
+  "defaults": {
+    "onAmbiguous": "review",
+    "memory": "personal",
+  },
+  "policy": {},
+  "sources": {}
+}
+`,
+      "utf8"
+    );
+
+    const doctor = await runUms([
+      "config",
+      "doctor",
+      "--config-file",
+      configFile,
+    ]);
+    assert.equal((doctor as any).code, 0, (doctor as any).stderr);
+    const doctorBody = JSON.parse((doctor as any).stdout);
+    assert.equal(doctorBody.ok, true);
+    assert.equal(doctorBody.data.operation, "config.doctor");
+    assert.equal(doctorBody.data.status, "needs_rewrite");
+    assert.equal(doctorBody.data.healthy, true);
+    assert.equal(doctorBody.data.canonical, false);
+
+    const fixed = await runUms([
+      "config",
+      "doctor",
+      "--config-file",
+      configFile,
+      "--fix",
+    ]);
+    assert.equal((fixed as any).code, 0, (fixed as any).stderr);
+    const fixedBody = JSON.parse((fixed as any).stdout);
+    assert.equal(fixedBody.ok, true);
+    assert.equal(fixedBody.data.status, "rewritten");
+    assert.equal(fixedBody.data.rewritten, true);
+
+    const written = await readFile(configFile, "utf8");
+    assert.doesNotMatch(written, /\/\/ intentionally non-canonical/);
+    assert.match(written, /"accounts"/);
+  } finally {
+    await rm(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("ums account/memory/route registry commands manage config and explain deterministic routing", async () => {
+  const tempDir = await mkdtemp(resolve(tmpdir(), "ums-registry-"));
+  const configFile = resolve(tempDir, "config.jsonc");
+  const developerRoot = resolve(tempDir, "Developer");
+  const engineRoot = resolve(developerRoot, "new-engine");
+  try {
+    await mkdir(engineRoot, { recursive: true });
+
+    const init = await runUms(["config", "init", "--config-file", configFile]);
+    assert.equal((init as any).code, 0, (init as any).stderr);
+
+    const addAccount = await runUms([
+      "account",
+      "add",
+      "--config-file",
+      configFile,
+      "--name",
+      "company",
+      "--type",
+      "http",
+      "--api-url",
+      "https://ums.company.internal",
+      "--auth-mode",
+      "session-ref",
+      "--credential-ref",
+      "keychain://ums/company",
+    ]);
+    assert.equal((addAccount as any).code, 0, (addAccount as any).stderr);
+
+    const addMemory = await runUms([
+      "memory",
+      "add",
+      "--config-file",
+      configFile,
+      "--name",
+      "company-new-engine",
+      "--account",
+      "company",
+      "--store-id",
+      "coding-agent",
+      "--profile",
+      "developer-main",
+      "--project",
+      "new-engine",
+    ]);
+    assert.equal((addMemory as any).code, 0, (addMemory as any).stderr);
+
+    const addPersonalRoute = await runUms([
+      "route",
+      "add",
+      "--config-file",
+      configFile,
+      "--path-prefix",
+      developerRoot,
+      "--memory",
+      "personal",
+    ]);
+    assert.equal(
+      (addPersonalRoute as any).code,
+      0,
+      (addPersonalRoute as any).stderr
+    );
+
+    const addCompanyRoute = await runUms([
+      "route",
+      "add",
+      "--config-file",
+      configFile,
+      "--path-prefix",
+      engineRoot,
+      "--memory",
+      "company-new-engine",
+      "--priority",
+      "25",
+    ]);
+    assert.equal(
+      (addCompanyRoute as any).code,
+      0,
+      (addCompanyRoute as any).stderr
+    );
+
+    const accounts = await runUms([
+      "account",
+      "list",
+      "--config-file",
+      configFile,
+    ]);
+    assert.equal((accounts as any).code, 0, (accounts as any).stderr);
+    const accountsBody = JSON.parse((accounts as any).stdout);
+    assert.equal(accountsBody.data.accounts.length, 2);
+
+    const memories = await runUms([
+      "memory",
+      "list",
+      "--config-file",
+      configFile,
+    ]);
+    assert.equal((memories as any).code, 0, (memories as any).stderr);
+    const memoriesBody = JSON.parse((memories as any).stdout);
+    assert.equal(
+      memoriesBody.data.memories.some(
+        (memory: { name: string }) => memory.name === "company-new-engine"
+      ),
+      true
+    );
+
+    const routeList = await runUms([
+      "route",
+      "list",
+      "--config-file",
+      configFile,
+    ]);
+    assert.equal((routeList as any).code, 0, (routeList as any).stderr);
+    const routeListBody = JSON.parse((routeList as any).stdout);
+    assert.equal(routeListBody.data.routes[0].memory, "company-new-engine");
+
+    const explain = await runUms([
+      "route",
+      "explain",
+      "--config-file",
+      configFile,
+      "--path",
+      resolve(engineRoot, "src/index.ts"),
+    ]);
+    assert.equal((explain as any).code, 0, (explain as any).stderr);
+    const explainBody = JSON.parse((explain as any).stdout);
+    assert.equal(explainBody.data.operation, "route.explain");
+    assert.equal(explainBody.data.status, "matched");
+    assert.equal(explainBody.data.memory, "company-new-engine");
+    assert.equal(explainBody.data.candidates.length >= 2, true);
+  } finally {
+    await rm(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("ums route explain respects review fallback and remove commands block referenced entities", async () => {
+  const tempDir = await mkdtemp(resolve(tmpdir(), "ums-registry-guard-"));
+  const configFile = resolve(tempDir, "config.jsonc");
+  const projectRoot = resolve(tempDir, "project");
+  try {
+    await mkdir(projectRoot, { recursive: true });
+
+    const init = await runUms(["config", "init", "--config-file", configFile]);
+    assert.equal((init as any).code, 0, (init as any).stderr);
+
+    const addAccount = await runUms([
+      "account",
+      "add",
+      "--config-file",
+      configFile,
+      "--name",
+      "company",
+      "--type",
+      "http",
+      "--api-url",
+      "https://ums.company.internal",
+      "--auth-mode",
+      "session-ref",
+      "--credential-ref",
+      "keychain://ums/company",
+    ]);
+    assert.equal((addAccount as any).code, 0, (addAccount as any).stderr);
+
+    const addMemory = await runUms([
+      "memory",
+      "add",
+      "--config-file",
+      configFile,
+      "--name",
+      "company-project",
+      "--account",
+      "company",
+      "--store-id",
+      "coding-agent",
+      "--profile",
+      "developer-main",
+    ]);
+    assert.equal((addMemory as any).code, 0, (addMemory as any).stderr);
+
+    const addRoute = await runUms([
+      "route",
+      "add",
+      "--config-file",
+      configFile,
+      "--path-prefix",
+      projectRoot,
+      "--memory",
+      "company-project",
+    ]);
+    assert.equal((addRoute as any).code, 0, (addRoute as any).stderr);
+
+    const unmatched = await runUms([
+      "route",
+      "explain",
+      "--config-file",
+      configFile,
+      "--path",
+      resolve(tempDir, "somewhere-else/file.ts"),
+    ]);
+    assert.equal((unmatched as any).code, 0, (unmatched as any).stderr);
+    const unmatchedBody = JSON.parse((unmatched as any).stdout);
+    assert.equal(unmatchedBody.data.status, "review");
+    assert.equal(unmatchedBody.data.memory, null);
+
+    const setDefault = await runUms([
+      "route",
+      "set-default",
+      "--config-file",
+      configFile,
+      "--memory",
+      "personal",
+      "--on-ambiguous",
+      "default",
+    ]);
+    assert.equal((setDefault as any).code, 0, (setDefault as any).stderr);
+
+    const showDefault = await runUms([
+      "route",
+      "show-default",
+      "--config-file",
+      configFile,
+    ]);
+    assert.equal((showDefault as any).code, 0, (showDefault as any).stderr);
+    const showDefaultBody = JSON.parse((showDefault as any).stdout);
+    assert.equal(showDefaultBody.data.defaults.memory, "personal");
+    assert.equal(showDefaultBody.data.defaults.onAmbiguous, "default");
+
+    const defaulted = await runUms([
+      "route",
+      "explain",
+      "--config-file",
+      configFile,
+      "--path",
+      resolve(tempDir, "another-place/file.ts"),
+    ]);
+    assert.equal((defaulted as any).code, 0, (defaulted as any).stderr);
+    const defaultedBody = JSON.parse((defaulted as any).stdout);
+    assert.equal(defaultedBody.data.status, "default");
+    assert.equal(defaultedBody.data.memory, "personal");
+
+    const removeMemory = await runUms([
+      "memory",
+      "remove",
+      "--config-file",
+      configFile,
+      "--name",
+      "company-project",
+    ]);
+    assert.equal((removeMemory as any).code, 1);
+    const removeMemoryError = JSON.parse((removeMemory as any).stderr);
+    assert.match(removeMemoryError.error.message, /routes still reference it/i);
+
+    const removeAccount = await runUms([
+      "account",
+      "remove",
+      "--config-file",
+      configFile,
+      "--name",
+      "company",
+    ]);
+    assert.equal((removeAccount as any).code, 1);
+    const removeAccountError = JSON.parse((removeAccount as any).stderr);
+    assert.match(removeAccountError.error.message, /memories still reference it/i);
+  } finally {
     await rm(tempDir, { recursive: true, force: true });
   }
 });

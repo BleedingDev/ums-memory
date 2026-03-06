@@ -13,18 +13,39 @@ Keep unrelated memory domains isolated so coding-agent workflows are not pollute
 - API also accepts `x-ums-store` header (used when request body omits `storeId`).
 - UMS engine ingest/recall accepts `storeId` and `space`.
 
-## Account-Linked Auto Ingestion (CLI)
-Use this when developers should continuously contribute local knowledge into a deployed tenant store.
+## Daemon-First Account-Linked Auto Ingestion (Target Model)
+Use this when developers should continuously contribute local knowledge into one or more local/managed memories.
 
-1. Login once per developer machine:
-   - `ums login --api-url https://ums.company.internal --token <api-token>`
-2. Bind the local machine to a tenant store/profile:
-   - `ums connect --store-id coding-agent --profile developer-main --sources codex,claude,plan`
-3. `connect` auto-starts `sync-daemon` by default (disable with `--no-auto-start`).
-4. Run one deterministic cycle manually:
-   - `ums sync`
-5. Inspect status/daemon health:
+ADR reference:
+- `docs/adr/0011-daemon-config-and-credential-model.md`
+- `docs/runbooks/daemon-jsonc-config-schema.md`
+
+Target operator flow:
+1. Install once per developer machine:
+   - `ums install`
+2. Authenticate the managed account when needed:
+   - `ums account login company`
+3. Define named memories:
+   - `ums memory add personal --account local --store-id personal --profile main`
+   - `ums memory add company --account company --store-id coding-agent --profile developer-main`
+4. Define deterministic routes:
+   - `ums route add --path ~/Developer/new-engine --memory company`
+   - `ums route add --path ~/Developer --memory personal`
+   - `ums route set-default --memory personal`
+5. Start or inspect the daemon:
    - `ums status`
+   - `ums sync`
+
+Target behavior:
+- The daemon loads a static JSONC config file, not an executable runtime config.
+- Named `accounts`, `memories`, and `routes` drive deterministic path/project routing.
+- Secrets are resolved through keychain-backed credential references instead of plaintext config tokens.
+- The daemon journals collected events locally before routing/delivery fan-out.
+- Solo and managed users see the same CLI concepts; only auth/enrollment differs.
+
+Current runtime note:
+- `ums sync`, `ums sync-daemon`, and `ums status` already use `config.jsonc` as the only supported daemon configuration source.
+- `ums login` and `ums connect` remain reserved placeholders until secure keychain-backed remote auth lands; they are not part of the active sync path.
 
 Current source adapters:
 - `codex`: tails `~/.codex/**/*.jsonl`
@@ -32,9 +53,66 @@ Current source adapters:
 - `plan`: snapshots local `PLAN.md`
 
 Security notes:
-- Session material is stored locally in `~/.ums/account-session.json` (override with `--account-file`).
+- The target model stores daemon config separately from credentials; the config file contains only credential references, not user-device secrets.
+- User-device credentials should live in OS secure storage by default.
+- Environment-variable or plaintext-token auth remains a dev/CI-only fallback, not the default managed-user path.
+- The old flat `account-session.json` prototype is not part of the intended release path.
 - Tokens are redacted from command output and never written to exported UMS state snapshots.
 - API authentication still enforces bearer/x-ums-api-key checks server-side.
+
+## Target JSONC Config Shape
+The accepted target direction is a schema-validated JSONC config:
+
+```jsonc
+{
+  "version": 1,
+  "accounts": {
+    "local": { "type": "local" },
+    "company": {
+      "type": "http",
+      "apiBaseUrl": "https://ums.company.internal",
+      "auth": {
+        "mode": "oauth-device",
+        "credentialRef": "keychain://ums/company"
+      }
+    }
+  },
+  "memories": {
+    "personal": {
+      "account": "local",
+      "storeId": "personal",
+      "profile": "main"
+    },
+    "company-new-engine": {
+      "account": "company",
+      "storeId": "coding-agent",
+      "profile": "developer-main",
+      "project": "new-engine"
+    }
+  },
+  "routes": [
+    {
+      "match": { "pathPrefix": "/Users/satan/Developer/new-engine" },
+      "memory": "company-new-engine"
+    },
+    {
+      "match": { "pathPrefix": "/Users/satan/Developer" },
+      "memory": "personal"
+    }
+  ],
+  "defaults": {
+    "memory": "personal",
+    "onAmbiguous": "review"
+  }
+}
+```
+
+Routing precedence must remain deterministic:
+1. explicit event/session override
+2. exact repo/workspace match
+3. longest path-prefix route
+4. source-specific default
+5. global default
 
 ## Supported Ingestion Shapes
 - Raw event or event array:
