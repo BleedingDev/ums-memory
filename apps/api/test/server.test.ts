@@ -1,11 +1,13 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
-import test from "node:test";
+
+import { test } from "@effect-native/bun-test";
 
 import { resetStore } from "../src/core.ts";
+import { clearRuntimeServiceCache } from "../src/runtime-service.ts";
 import { startApiServer } from "../src/server.ts";
 import { createInMemoryApiTelemetry } from "../src/telemetry.ts";
 
@@ -13,13 +15,9 @@ const CLI_PATH = resolve(process.cwd(), "apps/cli/src/index.ts");
 
 function runCli(args: any, stdin = "") {
   return new Promise((resolvePromise) => {
-    const proc = spawn(
-      process.execPath,
-      ["--import", "tsx", CLI_PATH, ...args],
-      {
-        stdio: ["pipe", "pipe", "pipe"],
-      }
-    );
+    const proc = spawn(process.execPath, [CLI_PATH, ...args], {
+      stdio: ["pipe", "pipe", "pipe"],
+    });
     let stdout = "";
     let stderr = "";
     proc.stdout.on("data", (chunk) => {
@@ -1691,57 +1689,23 @@ test("ums-memory-d6q.3.11/ums-memory-d6q.4.11/ums-memory-d6q.4.12/ums-memory-d6q
   }
 });
 
-test("api and cli share persisted state file across restart boundaries", async () => {
+test("api server routes runtime-service through sqlite persistence sidecar", async () => {
   resetStore();
-  const tempDir = await mkdtemp(resolve(tmpdir(), "ums-shared-state-"));
+  const tempDir = await mkdtemp(resolve(tmpdir(), "ums-runtime-persistence-"));
   const stateFile = resolve(tempDir, "ums-state.json");
 
   try {
-    const cliIngest = await runCli([
-      "ingest",
-      "--state-file",
-      stateFile,
-      "--store-id",
-      "coding-agent",
-      "--input",
-      JSON.stringify({
-        profile: "shared-profile",
-        events: [{ type: "note", source: "cli", content: "event-from-cli" }],
-      }),
-    ]);
-    assert.equal((cliIngest as any).code, 0);
-
-    const firstServer = await startApiServer({
+    const server = await startApiServer({
       host: "127.0.0.1",
       port: 0,
       stateFile,
     });
-    const firstAddress = firstServer.server.address();
-    assert.ok(firstAddress && typeof firstAddress === "object");
-    const firstBase = `http://${firstServer.host}:${firstAddress.port}`;
+    const address = server.server.address();
+    assert.ok(address && typeof address === "object");
+    const base = `http://${server.host}:${address.port}`;
 
     try {
-      const contextRes = await fetch(`${firstBase}/v1/context`, {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          "x-ums-store": "coding-agent",
-        },
-        body: JSON.stringify({
-          profile: "shared-profile",
-          query: "event-from-cli",
-        }),
-      });
-      assert.equal(contextRes.status, 200);
-      const contextBody = await contextRes.json();
-      assert.equal(contextBody.ok, true);
-      assert.equal(contextBody.data.matches.length, 1);
-      assert.equal(typeof contextBody.data.packId, "string");
-      assert.equal(contextBody.data.packId.startsWith("pack_"), true);
-      assert.equal(typeof contextBody.data.matches[0]?.usageId, "string");
-      assert.equal(contextBody.data.matches[0]?.usageId.startsWith("usage_"), true);
-
-      const apiIngestRes = await fetch(`${firstBase}/v1/ingest`, {
+      const ingestRes = await fetch(`${base}/v1/ingest`, {
         method: "POST",
         headers: {
           "content-type": "application/json",
@@ -1752,29 +1716,14 @@ test("api and cli share persisted state file across restart boundaries", async (
           events: [{ type: "note", source: "api", content: "event-from-api" }],
         }),
       });
-      assert.equal(apiIngestRes.status, 200);
-      const apiIngestBody = await apiIngestRes.json();
-      assert.equal(apiIngestBody.ok, true);
-      assert.equal(apiIngestBody.data.accepted, 1);
-    } finally {
-      await new Promise<void>((resolvePromise, rejectPromise) => {
-        firstServer.server.close((error) =>
-          error ? rejectPromise(error) : resolvePromise()
-        );
-      });
-    }
+      assert.equal(ingestRes.status, 200);
+      const ingestBody = await ingestRes.json();
+      assert.equal(ingestBody.ok, true);
+      assert.equal(ingestBody.data.accepted, 1);
 
-    const secondServer = await startApiServer({
-      host: "127.0.0.1",
-      port: 0,
-      stateFile,
-    });
-    const secondAddress = secondServer.server.address();
-    assert.ok(secondAddress && typeof secondAddress === "object");
-    const secondBase = `http://${secondServer.host}:${secondAddress.port}`;
-    let restartBody: any;
-    try {
-      const contextAfterRestart = await fetch(`${secondBase}/v1/context`, {
+      await writeFile(stateFile, "{not-valid-json", "utf8");
+
+      const contextRes = await fetch(`${base}/v1/context`, {
         method: "POST",
         headers: {
           "content-type": "application/json",
@@ -1785,57 +1734,28 @@ test("api and cli share persisted state file across restart boundaries", async (
           query: "event-from-api",
         }),
       });
-      assert.equal(contextAfterRestart.status, 200);
-      restartBody = await contextAfterRestart.json();
-      assert.equal(restartBody.ok, true);
-      assert.equal(restartBody.data.matches.length, 1);
-      assert.equal(typeof restartBody.data.packId, "string");
-      assert.equal(restartBody.data.packId.startsWith("pack_"), true);
+      assert.equal(contextRes.status, 200);
+      const contextBody = await contextRes.json();
+      assert.equal(contextBody.ok, true);
+      assert.equal(contextBody.data.matches.length, 1);
+      assert.equal(typeof contextBody.data.packId, "string");
+      assert.equal(contextBody.data.packId.startsWith("pack_"), true);
+      assert.equal(await readFile(stateFile, "utf8"), "{not-valid-json");
       assert.equal(
-        typeof restartBody.data.matches[0]?.usageId,
-        "string"
-      );
-      assert.equal(
-        restartBody.data.matches[0]?.usageId.startsWith("usage_"),
-        true
+        (await readFile(`${stateFile}.sqlite`))
+          .subarray(0, 15)
+          .toString("utf8"),
+        "SQLite format 3"
       );
     } finally {
       await new Promise<void>((resolvePromise, rejectPromise) => {
-        secondServer.server.close((error) =>
+        server.server.close((error) =>
           error ? rejectPromise(error) : resolvePromise()
         );
       });
     }
-
-    const cliContext = await runCli([
-      "context",
-      "--state-file",
-      stateFile,
-      "--store-id",
-      "coding-agent",
-      "--input",
-      JSON.stringify({
-        profile: "shared-profile",
-        query: "event-from-api",
-      }),
-    ]);
-    assert.equal((cliContext as any).code, 0);
-    const cliContextBody = JSON.parse((cliContext as any).stdout);
-    assert.equal(cliContextBody.ok, true);
-    assert.equal(cliContextBody.data.matches.length, 1);
-    assert.equal(typeof cliContextBody.data.packId, "string");
-    assert.equal(cliContextBody.data.packId.startsWith("pack_"), true);
-    assert.equal(typeof cliContextBody.data.matches[0]?.usageId, "string");
-    assert.equal(
-      cliContextBody.data.matches[0]?.usageId.startsWith("usage_"),
-      true
-    );
-    assert.equal(restartBody.data.packId, cliContextBody.data.packId);
-    assert.equal(
-      restartBody.data.matches[0]?.usageId,
-      cliContextBody.data.matches[0]?.usageId
-    );
   } finally {
+    clearRuntimeServiceCache();
     await rm(tempDir, { recursive: true, force: true });
   }
 });

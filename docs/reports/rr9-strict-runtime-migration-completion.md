@@ -21,9 +21,9 @@ Scope: `ums-memory-rr9.11` + `ums-memory-rr9.12`
 The full migration gate passed via:
 
 ```bash
-npm run lint:ts
-npm run typecheck -- --pretty false
-npm run ci:verify
+bun run lint:ts
+bun run typecheck -- --pretty false
+bun run ci:verify
 ```
 
 `ci:verify` completed successfully, including:

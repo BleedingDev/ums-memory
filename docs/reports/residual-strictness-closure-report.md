@@ -48,9 +48,9 @@ Result:
 Commands:
 
 ```bash
-npm run validate:runtime-ts-suppressions
-npm run validate:legacy-shims
-npm run validate:cutover
+bun run validate:runtime-ts-suppressions
+bun run validate:legacy-shims
+bun run validate:cutover
 ```
 
 Results:
@@ -91,7 +91,7 @@ Root project references (`tsconfig.json`):
 
 ## Residual Risk Register
 
-The full workspace strict typecheck (`npm run typecheck`) still reports a large
+The full workspace strict typecheck (`bun run typecheck`) still reports a large
 existing backlog in:
 
 - `scripts/**/*.ts`,

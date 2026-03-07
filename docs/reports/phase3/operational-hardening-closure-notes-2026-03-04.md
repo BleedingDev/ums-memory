@@ -3,6 +3,7 @@
 ## Scope
 
 This closure bundle records the evidence and remaining backlog for:
+
 - `ums-memory-d6q.1.10` learner-profile hardening backlog closeout
 - `ums-memory-d6q.2.10` misconception tracking runbook closeout
 - `ums-memory-d6q.3.10` curriculum planner runbook closeout
@@ -13,9 +14,9 @@ This closure bundle records the evidence and remaining backlog for:
 ## Validation Evidence
 
 - API/runtime quality gates:
-  - `npm run test:api`
-  - `npm run quality:ts`
-  - `npm run ci:verify`
+  - `bun run test:api`
+  - `bun run quality:ts`
+  - `bun run ci:verify`
 - Scheduling benchmark gate artifacts:
   - `docs/performance/phase3-review-scheduling-latency-gate.latest.json`
   - `docs/performance/phase3-review-scheduling-latency-gate.latest.md`

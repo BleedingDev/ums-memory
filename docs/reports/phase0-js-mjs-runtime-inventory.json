@@ -62,9 +62,7 @@
         "apps/api/test/server.sfe.test.mjs",
         "apps/api/test/server.test.mjs"
       ],
-      "benchmarks": [
-        "benchmarks/ums-latency-benchmark.mjs"
-      ],
+      "benchmarks": ["benchmarks/ums-latency-benchmark.mjs"],
       "cli": [
         "apps/cli/src/index.mjs",
         "apps/cli/test/cli.sfe.test.mjs",
@@ -108,9 +106,7 @@
         "tests/unit/recall-bounds-guardrails.test.mjs",
         "tests/unit/source-ingestion-normalization.test.mjs"
       ],
-      "ums": [
-        "apps/ums/src/index.mjs"
-      ]
+      "ums": ["apps/ums/src/index.mjs"]
     },
     "counts": {
       "api": 9,
@@ -127,10 +123,7 @@
     }
   },
   "packageEntrypoints": {
-    "packagesScanned": [
-      "libs/shared/package.json",
-      "package.json"
-    ],
+    "packagesScanned": ["libs/shared/package.json", "package.json"],
     "runtimeEntrypoints": [
       {
         "command": "node apps/api/src/server.mjs",
@@ -248,10 +241,10 @@
       },
       "package.json": {
         "api": "node apps/api/src/server.mjs",
-        "bench": "npm run bench:api && npm run bench:ums",
+        "bench": "bun run bench:api && bun run bench:ums",
         "bench:api": "node apps/api/bench/benchmark.mjs",
         "bench:ums": "UMS_IMPL_MODULE=./apps/api/src/ums/engine.mjs UMS_IMPL_EXPORT=createUmsEngine node benchmarks/ums-latency-benchmark.mjs",
-        "build:sfe": "npm run build:sfe:single",
+        "build:sfe": "bun run build:sfe:single",
         "build:sfe:api": "node -e \"require('node:fs').mkdirSync('dist',{recursive:true})\" && bun build --compile --minify --sourcemap --bytecode apps/api/src/server.mjs --outfile dist/ums-api",
         "build:sfe:api:linux-x64": "node scripts/build-sfe-matrix.mjs --targets bun-linux-x64 --apps api",
         "build:sfe:api:windows-x64": "node scripts/build-sfe-matrix.mjs --targets bun-windows-x64 --apps api",
@@ -265,7 +258,7 @@
         "build:sfe:windows-x64": "node scripts/build-sfe-matrix.mjs --targets bun-windows-x64",
         "cli": "node apps/cli/src/index.mjs",
         "ingest:coding-history": "node scripts/ingest-coding-history.mjs",
-        "test": "npm run test:api && npm run test:ums",
+        "test": "bun run test:api && bun run test:ums",
         "test:api": "node --test apps/api/test/*.test.mjs apps/cli/test/*.test.mjs",
         "test:sfe": "node --test apps/cli/test/cli.sfe.test.mjs apps/api/test/server.sfe.test.mjs apps/cli/test/single.sfe.test.mjs",
         "test:ums": "UMS_IMPL_MODULE=./apps/api/src/ums/engine.mjs UMS_IMPL_EXPORT=createUmsEngine node --test tests/unit/*.test.mjs tests/integration/*.test.mjs",
@@ -293,13 +286,8 @@
       }
     ],
     "matrixBuildDefaults": {
-      "defaultApps": [
-        "single"
-      ],
-      "defaultTargets": [
-        "bun-linux-x64",
-        "bun-windows-x64"
-      ],
+      "defaultApps": ["single"],
+      "defaultTargets": ["bun-linux-x64", "bun-windows-x64"],
       "defaultDeclaredOutputs": [
         "dist/bun-linux-x64/ums",
         "dist/bun-windows-x64/ums.exe"
@@ -332,15 +320,15 @@
   "migrationNotes": {
     "api": [
       "9 JS/MJS files under apps/api (runtime, benchmark, and tests).",
-      "Runtime API entrypoint is apps/api/src/server.mjs via npm script api.",
+      "Runtime API entrypoint is apps/api/src/server.mjs via the root script alias `api`.",
       "UMS engine runtime dependency surface includes apps/api/src/ums/engine.mjs."
     ],
     "cli": [
       "4 JS/MJS files under apps/cli (runtime and tests).",
-      "CLI runtime entrypoint is apps/cli/src/index.mjs via npm script cli."
+      "CLI runtime entrypoint is apps/cli/src/index.mjs via the root script alias `cli`."
     ],
     "ums": [
-      "Single UMS app runtime entrypoint: apps/ums/src/index.mjs via npm script ums.",
+      "Single UMS app runtime entrypoint: apps/ums/src/index.mjs via the root script alias `ums`.",
       "Also used as the direct compile entry for build:sfe:single."
     ],
     "shared": [
@@ -354,7 +342,7 @@
     ],
     "scripts": [
       "3 tracked automation scripts in scripts/: build-sfe-matrix.mjs, ingest-coding-history.mjs, validate-ingestion.mjs.",
-      "10 root npm scripts invoke these script files directly.",
+      "10 root script aliases invoke these script files directly.",
       "Root package has 24 scripts total; several scripts shell-chain into other scripts."
     ],
     "docs": [

@@ -5,13 +5,15 @@ import {
   Fiber,
   Layer,
   ManagedRuntime,
+  Predicate,
+  Schema,
 } from "effect";
 
-import { executeOperation, exportStoreSnapshot } from "./core.ts";
 import {
-  DEFAULT_SHARED_STATE_FILE,
-  executeOperationWithSharedState,
-} from "./persistence.ts";
+  DEFAULT_RUNTIME_STATE_FILE,
+  executeRuntimeOperation,
+  loadRuntimeStoreSnapshot,
+} from "./runtime-service.ts";
 
 const DEFAULT_REPLAY_EVAL_MAX_PER_PROFILE = 5;
 const DEFAULT_MAX_ERROR_ENTRIES = 25;
@@ -104,6 +106,15 @@ interface WorkerReplayEvalCounter extends WorkerCycleCounter {
   skippedByLimit: number;
 }
 
+const UnknownRecordSchema = Schema.Record(Schema.String, Schema.Unknown);
+const ErrorWithMessageSchema = Schema.Struct({
+  message: Schema.String,
+});
+
+const isString = Schema.is(Schema.String);
+const isUnknownRecord = Schema.is(UnknownRecordSchema);
+const isErrorWithMessage = Schema.is(ErrorWithMessageSchema);
+
 export interface WorkerCycleSummary {
   startedAt: string;
   completedAt: string | null;
@@ -143,18 +154,18 @@ function nowIso(): string {
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+  return isUnknownRecord(value) && !Array.isArray(value);
 }
 
 function toErrorMessage(cause: unknown): string {
-  if (cause instanceof Error) {
+  if (Predicate.isError(cause) || isErrorWithMessage(cause)) {
     return cause.message;
   }
   return String(cause);
 }
 
 function normalizeNonEmptyString(value: unknown): string | null {
-  if (typeof value !== "string") {
+  if (!isString(value)) {
     return null;
   }
   const normalized = value.trim();
@@ -192,13 +203,23 @@ function normalizePositiveInteger(
 }
 
 function loadSnapshotFromStateFile(
-  stateFile: string | null | undefined = DEFAULT_SHARED_STATE_FILE
+  stateFile: string | null | undefined = DEFAULT_RUNTIME_STATE_FILE
 ): Promise<WorkerStoreSnapshot> {
-  return executeOperationWithSharedState<WorkerStoreSnapshot>({
-    operation: "doctor",
-    stateFile,
-    executor: () => exportStoreSnapshot() as WorkerStoreSnapshot,
-  });
+  return Effect.runPromise(
+    Effect.tryPromise({
+      try: () => loadRuntimeStoreSnapshot({ stateFile }),
+      catch: (cause) =>
+        Predicate.isError(cause) ? cause : new Error(toErrorMessage(cause)),
+    }).pipe(
+      Effect.flatMap((snapshot) =>
+        isRecord(snapshot)
+          ? Effect.succeed(snapshot as WorkerStoreSnapshot)
+          : Effect.fail(
+              new Error("State file must contain a top-level object.")
+            )
+      )
+    )
+  );
 }
 
 function listStoreProfilePairs(
@@ -219,9 +240,15 @@ function listStoreProfilePairs(
         ? (storeEntry as WorkerStoreEntrySnapshot).profiles
         : undefined;
       const profileMap = isRecord(profiles) ? profiles : {};
-      for (const profile of Object.keys(profileMap).sort((left, right) =>
+      const sortedProfiles = Object.keys(profileMap).sort((left, right) =>
         left.localeCompare(right)
-      )) {
+      );
+      const nonDefaultProfiles = sortedProfiles.filter(
+        (profile) => profile !== "__store_default__"
+      );
+      const profilesToVisit =
+        nonDefaultProfiles.length > 0 ? nonDefaultProfiles : sortedProfiles;
+      for (const profile of profilesToVisit) {
         pairs.push({ storeId, profile });
       }
     }
@@ -229,9 +256,15 @@ function listStoreProfilePairs(
   }
 
   if (isRecord(snapshot["profiles"])) {
-    for (const profile of Object.keys(snapshot["profiles"]).sort(
+    const sortedProfiles = Object.keys(snapshot["profiles"]).sort(
       (left, right) => left.localeCompare(right)
-    )) {
+    );
+    const nonDefaultProfiles = sortedProfiles.filter(
+      (profile) => profile !== "__store_default__"
+    );
+    const profilesToVisit =
+      nonDefaultProfiles.length > 0 ? nonDefaultProfiles : sortedProfiles;
+    for (const profile of profilesToVisit) {
       pairs.push({ storeId: DEFAULT_STORE_ID, profile });
     }
   }
@@ -299,7 +332,7 @@ function roundNumber(value: number, precision = 6): number {
 }
 
 function normalizeFiniteNumber(value: unknown): number | null {
-  if (typeof value !== "number" || !Number.isFinite(value)) {
+  if (!Predicate.isNumber(value) || !Number.isFinite(value)) {
     return null;
   }
   return value;
@@ -310,7 +343,7 @@ function clamp(value: number, min: number, max: number): number {
 }
 
 function normalizeIsoMillis(value: unknown): number | null {
-  if (typeof value !== "string") {
+  if (!isString(value)) {
     return null;
   }
   const normalized = value.trim();
@@ -589,16 +622,15 @@ function deriveReplayEvalAutopilotMetrics(
   };
 }
 
-function runOperationWithSharedState({
+function runOperationWithRuntimeService({
   operation,
   requestBody,
-  stateFile = DEFAULT_SHARED_STATE_FILE,
+  stateFile = DEFAULT_RUNTIME_STATE_FILE,
 }: RunOperationInput): Promise<unknown> {
-  return executeOperationWithSharedState<unknown>({
+  return executeRuntimeOperation({
     operation,
     stateFile,
-    executor: () =>
-      executeOperation(operation, requestBody) as Promise<unknown> | unknown,
+    requestBody,
   });
 }
 
@@ -659,7 +691,7 @@ export async function runBackgroundWorkerCycle(
 ): Promise<WorkerCycleSummary> {
   const stateFile = Object.hasOwn(options, "stateFile")
     ? options.stateFile
-    : DEFAULT_SHARED_STATE_FILE;
+    : DEFAULT_RUNTIME_STATE_FILE;
   const replayEvalMaxPerProfile = normalizeNonNegativeInteger(
     options.replayEvalMaxPerProfile,
     DEFAULT_REPLAY_EVAL_MAX_PER_PROFILE,
@@ -670,15 +702,13 @@ export async function runBackgroundWorkerCycle(
     DEFAULT_MAX_ERROR_ENTRIES,
     "maxErrorEntries"
   );
-  const runOperation =
-    typeof options.runOperation === "function"
-      ? options.runOperation
-      : runOperationWithSharedState;
-  const loadSnapshot =
-    typeof options.loadSnapshot === "function"
-      ? options.loadSnapshot
-      : ({ stateFile: currentStateFile }: LoadSnapshotInput) =>
-          loadSnapshotFromStateFile(currentStateFile);
+  const runOperation = Predicate.isFunction(options.runOperation)
+    ? options.runOperation
+    : runOperationWithRuntimeService;
+  const loadSnapshot = Predicate.isFunction(options.loadSnapshot)
+    ? options.loadSnapshot
+    : ({ stateFile: currentStateFile }: LoadSnapshotInput) =>
+        loadSnapshotFromStateFile(currentStateFile);
 
   const startedAt = nowIso();
   const timestamp = normalizeNonEmptyString(options.timestamp) ?? startedAt;
@@ -701,7 +731,7 @@ export async function runBackgroundWorkerCycle(
     summary.errorCount += 1;
     if (summary.errors.length < maxErrorEntries) {
       const code =
-        isRecord(error) && "code" in error && typeof error["code"] === "string"
+        isRecord(error) && "code" in error && isString(error["code"])
           ? error["code"]
           : null;
       summary.errors.push({
@@ -890,7 +920,7 @@ export function createSupervisedWorkerService(
 ): SupervisedWorkerService {
   const stateFile = Object.hasOwn(options, "stateFile")
     ? options.stateFile
-    : (process.env["UMS_WORKER_STATE_FILE"] ?? DEFAULT_SHARED_STATE_FILE);
+    : (process.env["UMS_WORKER_STATE_FILE"] ?? DEFAULT_RUNTIME_STATE_FILE);
   const intervalMs = normalizePositiveInteger(
     options.intervalMs ?? process.env["UMS_WORKER_INTERVAL_MS"],
     DEFAULT_WORKER_INTERVAL_MS,
@@ -918,19 +948,18 @@ export function createSupervisedWorkerService(
     "maxErrorEntries"
   );
   const captureProcessSignals = options.captureProcessSignals !== false;
-  const runCycle: RunCycle =
-    typeof options.runCycle === "function"
-      ? options.runCycle
-      : (cycleOptions: Partial<RunBackgroundWorkerCycleOptions> = {}) =>
-          runBackgroundWorkerCycle({
-            stateFile,
-            replayEvalMaxPerProfile,
-            maxErrorEntries,
-            ...(typeof options.runOperation === "function"
-              ? { runOperation: options.runOperation }
-              : {}),
-            ...cycleOptions,
-          });
+  const runCycle: RunCycle = Predicate.isFunction(options.runCycle)
+    ? options.runCycle
+    : (cycleOptions: Partial<RunBackgroundWorkerCycleOptions> = {}) =>
+        runBackgroundWorkerCycle({
+          stateFile,
+          replayEvalMaxPerProfile,
+          maxErrorEntries,
+          ...(Predicate.isFunction(options.runOperation)
+            ? { runOperation: options.runOperation }
+            : {}),
+          ...cycleOptions,
+        });
 
   const runtime = ManagedRuntime.make(Layer.empty);
   const readySignal = runtime.runSync(
@@ -1014,7 +1043,7 @@ export function createSupervisedWorkerService(
         const cycleResult: WorkerCycleResult = yield* Effect.tryPromise({
           try: () => runCycle({ stateFile }),
           catch: (cause) =>
-            cause instanceof Error
+            Predicate.isError(cause)
               ? cause
               : new Error(`Worker cycle failed: ${toErrorMessage(cause)}`),
         }).pipe(
@@ -1202,12 +1231,14 @@ export function createSupervisedWorkerService(
       return;
     }
 
+    const activeServiceFiber = serviceFiber;
     await requestShutdown();
-    try {
-      await runtime.runPromise(Fiber.await(serviceFiber).pipe(Effect.ignore));
-    } catch {
-      // no-op; status is tracked by supervisor program
-    }
+    await runtime.runPromise(
+      Effect.matchCause(Fiber.await(activeServiceFiber), {
+        onFailure: () => null,
+        onSuccess: () => null,
+      })
+    );
     serviceFiber = null;
     if (status.phase !== "failed") {
       updateStatus({

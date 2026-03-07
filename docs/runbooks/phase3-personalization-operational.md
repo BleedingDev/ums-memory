@@ -3,6 +3,7 @@
 This runbook captures the minimum documentation and telemetry expectations tied to the Phase P3 ADRs so that backend teams can satisfy the acceptance criteria referenced by the `ums-memory-d6q` beads. It leans on the baseline constraints from `ADR-0001` (backend-only/local-first/security/determinism/bounded recall/observability) and lists the concrete operational touchpoints for the highlighted beads.
 
 See also:
+
 - `docs/adr/0002-p3-learner-profile-identity-graph-scope.md`
 - `docs/adr/0003-p3-misconception-tracking-scope.md`
 - `docs/adr/0004-p3-curriculum-planner-scope.md`
@@ -11,6 +12,7 @@ See also:
 - `mcp_agent_mail/docs/observability.md` (log shipping + Loki/Prometheus guidance)
 
 Operational evidence bundle (2026-03-04):
+
 - `docs/reports/phase3/operational-hardening-closure-notes-2026-03-04.md`
 - `docs/reports/phase3/operational-hardening-backlog-2026-03-04.csv`
 - `docs/reports/phase3/domain-slo-rejection-validation-2026-03-04.md`
@@ -39,6 +41,7 @@ Operational evidence bundle (2026-03-04):
 ### `learner_profile_update` contract examples (`ums-memory-d6q.1.11`)
 
 Evidence-backed mutation:
+
 ```json
 {
   "storeId": "tenant-a",
@@ -65,12 +68,15 @@ Evidence-backed mutation:
 ```
 
 Policy exception (no evidence pointer available yet):
+
 ```json
 {
   "storeId": "tenant-a",
   "profile": "learner-alpha",
   "learnerId": "learner-42",
-  "identityRefs": [{ "namespace": "agent", "value": "claude:session-444", "isPrimary": true }],
+  "identityRefs": [
+    { "namespace": "agent", "value": "claude:session-444", "isPrimary": true }
+  ],
   "goals": ["graph-traversal"],
   "metadata": {
     "policyException": {
@@ -86,6 +92,7 @@ Policy exception (no evidence pointer available yet):
 ```
 
 Deterministic rejection envelope (missing both evidence and exception):
+
 ```json
 {
   "ok": false,
@@ -117,16 +124,16 @@ Deterministic rejection envelope (missing both evidence and exception):
 
 ### Codex/Claude normalization field mapping summary (`ums-memory-d6q.1.13`)
 
-| Canonical field | Codex-style input | Claude-style input | Normalization rule |
-| --- | --- | --- | --- |
-| `storeId` | `store`, `memoryStore`, `namespace` | `storeId` | Trim; fallback to default store. |
-| `profile/space` | `project`, `channel` | `profile`, `space` | Trim; fallback to default profile/space. |
-| `metadata.platform` | `platform=codex-cli` | `platform=claude-code` | Keep lowercase canonical program token. |
-| `metadata.role` | `speaker` or `authorRole` | `role` | Lowercase; fallback `unknown`. |
-| `id` | `messageId` or `id` | `id` | Fallback `<conversationId>-msg-<index>`. |
-| `timestamp` | `time`, `ts`, `timestamp` | `createdAt`, `timestamp` | Normalize to ISO string when possible. |
-| `content` | `message`, `text`, `body`, `payload` | `content`, `text`, `message` | Flatten object payloads to stable text. |
-| `identityRefs[].value` | `codex:<agent-or-session>` | `claude:<agent-or-session>` | Store under `namespace=agent`, keep deterministic primary ref. |
+| Canonical field        | Codex-style input                    | Claude-style input           | Normalization rule                                             |
+| ---------------------- | ------------------------------------ | ---------------------------- | -------------------------------------------------------------- |
+| `storeId`              | `store`, `memoryStore`, `namespace`  | `storeId`                    | Trim; fallback to default store.                               |
+| `profile/space`        | `project`, `channel`                 | `profile`, `space`           | Trim; fallback to default profile/space.                       |
+| `metadata.platform`    | `platform=codex-cli`                 | `platform=claude-code`       | Keep lowercase canonical program token.                        |
+| `metadata.role`        | `speaker` or `authorRole`            | `role`                       | Lowercase; fallback `unknown`.                                 |
+| `id`                   | `messageId` or `id`                  | `id`                         | Fallback `<conversationId>-msg-<index>`.                       |
+| `timestamp`            | `time`, `ts`, `timestamp`            | `createdAt`, `timestamp`     | Normalize to ISO string when possible.                         |
+| `content`              | `message`, `text`, `body`, `payload` | `content`, `text`, `message` | Flatten object payloads to stable text.                        |
+| `identityRefs[].value` | `codex:<agent-or-session>`           | `claude:<agent-or-session>`  | Store under `namespace=agent`, keep deterministic primary ref. |
 
 - **`ums-memory-d6q.1.9` – Observability and SLOs for learner profile + identity graph**
   - Emit structured logs and metrics for both `learner_profile_update` and `identity_graph_update`.
@@ -198,7 +205,7 @@ Deterministic rejection envelope (missing both evidence and exception):
   - Runbook checklist:
     - [x] Interaction/sleep clock semantics, fatigue thresholds, and novelty-write triggers are documented with deterministic consolidation causes.
     - [x] Active-set/archival tier rebalance policies are documented with bounded limits and replay expectations.
-    - [x] Scheduling benchmark gate usage is documented (`npm run bench`, report paths, threshold overrides via env vars).
+    - [x] Scheduling benchmark gate usage is documented (`bun run bench`, report paths, threshold overrides via env vars).
   - Hardening backlog (tracked follow-ups):
     - `ums-memory-d6q.4.10.1` Adaptive active-limit policy experiments for large stores.
     - `ums-memory-d6q.4.10.2` Deterministic archival compaction for long-lived review histories.

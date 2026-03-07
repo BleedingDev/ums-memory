@@ -4,10 +4,12 @@ import { constants as fsConstants } from "node:fs";
 import { access, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
-import test from "node:test";
+
+import { afterAll, beforeAll, test } from "@effect-native/bun-test";
 const ROOT = process.cwd();
 const BUN_AVAILABLE =
   spawnSync("bun", ["--version"], { encoding: "utf8" }).status === 0;
+const testIfBunAvailable = BUN_AVAILABLE ? test : test.skip;
 
 let buildDir: string | null = null;
 let umsBinaryPath: string | null = null;
@@ -131,7 +133,7 @@ async function stopBinaryServer(proc: ChildProcess | undefined): Promise<void> {
   });
 }
 
-test.before(async () => {
+beforeAll(async () => {
   if (!BUN_AVAILABLE) {
     return;
   }
@@ -161,15 +163,14 @@ test.before(async () => {
   await access(umsBinaryPath, fsConstants.X_OK);
 });
 
-test.after(async () => {
+afterAll(async () => {
   if (buildDir) {
     await rm(buildDir, { recursive: true, force: true });
   }
 });
 
-test(
+testIfBunAvailable(
   "compiled single executable runs CLI operations",
-  { skip: !BUN_AVAILABLE },
   async () => {
     const tempDir = await mkdtemp(resolve(tmpdir(), "ums-single-cli-"));
     const stateFile = resolve(tempDir, "state.json");
@@ -214,9 +215,8 @@ test(
   }
 );
 
-test(
+testIfBunAvailable(
   "compiled single executable runs API server mode via serve command",
-  { skip: !BUN_AVAILABLE },
   async () => {
     const tempDir = await mkdtemp(resolve(tmpdir(), "ums-single-serve-"));
     const stateFile = resolve(tempDir, "state.json");
@@ -262,9 +262,8 @@ test(
   }
 );
 
-test(
+testIfBunAvailable(
   "compiled single executable shares default .ums-state.json between CLI and serve",
-  { skip: !BUN_AVAILABLE },
   async () => {
     const tempDir = await mkdtemp(
       resolve(tmpdir(), "ums-single-default-shared-")

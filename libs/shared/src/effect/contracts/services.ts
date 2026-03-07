@@ -73,7 +73,22 @@ export const AdapterSourceSchema = Schema.Literals([
   "cursor",
   "opencode",
   "vscode",
+  "codex-native",
+  "plan",
 ]);
+
+export const normalizeAdapterSourceAlias = (
+  value: string
+): AdapterSource | null =>
+  value === "codex"
+    ? "codex-cli"
+    : value === "claude"
+      ? "claude-code"
+      : value === "vscode-copilot"
+        ? "vscode"
+        : Schema.is(AdapterSourceSchema)(value)
+          ? value
+          : null;
 
 export const AdapterSessionMessageRoleSchema = Schema.Literals([
   "system",

@@ -4,7 +4,7 @@
 
 - Current deployment target is Docker + Docker Compose only.
 - Kubernetes manifests are intentionally out of scope for this architecture.
-- Runtime topology is one `api` service + one `worker` service sharing one state file.
+- Runtime topology is one `api` service + one `worker` service sharing one runtime state base plus companion files.
 - This runbook assumes one environment per host because `deploy/compose.yml` binds host port `8787`.
 - For automated game day restore drills, see [UMS Disaster-Recovery Game Day Automation Runbook](./disaster-recovery-game-day-automation.md).
 
@@ -13,25 +13,27 @@
 1. Compose asset: `deploy/compose.yml`.
 2. API service endpoint: `GET /` on port `8787`.
 3. Observability endpoint: `GET /metrics` on port `8787` (requires auth header).
-4. Shared state file: `UMS_STATE_FILE=/var/lib/ums/.ums-state.json`.
-5. Shared volume name pattern: `<project>_ums_shared_state` (for example `ums-prod_ums_shared_state`).
+4. Runtime state base: `UMS_RUNTIME_STATE_FILE=/var/lib/ums/.ums-runtime-state` (materialized snapshot `/var/lib/ums/.ums-runtime-state.json`, ledger `/var/lib/ums/.ums-runtime-state.sqlite`).
+5. Legacy shared JSON compatibility is explicit-only via `UMS_STATE_FILE` or the `scripts/import-legacy-shared-state.ts` / `scripts/export-legacy-shared-state.ts` tooling.
+6. Shared volume name pattern: `<project>_ums_shared_state` (for example `ums-prod_ums_shared_state`).
 
 ## Environment Variables (Current Compose)
 
-| Variable                    | Service         | Current value in `deploy/compose.yml` |
-| --------------------------- | --------------- | ------------------------------------- |
-| `UMS_API_HOST`              | `api`           | `0.0.0.0`                             |
-| `UMS_API_PORT`              | `api`           | `8787`                                |
-| `UMS_API_MAX_JSON_BODY_BYTES` | `api`         | _unset_ (defaults to `1048576`)       |
-| `UMS_STATE_FILE`            | `api`, `worker` | `/var/lib/ums/.ums-state.json`        |
-| `UMS_STATE_LOCK_TIMEOUT_MS` | `api`           | `8000`                                |
-| `UMS_STATE_LOCK_RETRY_MS`   | `api`           | `25`                                  |
-| `UMS_API_AUTH_REQUIRED`     | `api`           | `true`                                |
-| `UMS_API_AUTH_TOKENS`       | `api`           | `${UMS_API_AUTH_TOKENS:?required}`    |
-| `UMS_API_HOST`              | `worker`        | `api`                                 |
-| `UMS_API_PORT`              | `worker`        | `8787`                                |
-| `UMS_API_HEALTH_PATH`       | `worker`        | `/`                                   |
-| `UMS_API_READY_TIMEOUT_MS`  | `worker`        | `90000`                               |
+| Variable                      | Service         | Current value in `deploy/compose.yml`         |
+| ----------------------------- | --------------- | --------------------------------------------- |
+| `UMS_API_HOST`                | `api`           | `0.0.0.0`                                     |
+| `UMS_API_PORT`                | `api`           | `8787`                                        |
+| `UMS_API_MAX_JSON_BODY_BYTES` | `api`           | _unset_ (defaults to `1048576`)               |
+| `UMS_RUNTIME_STATE_FILE`      | `api`, `worker` | `/var/lib/ums/.ums-runtime-state`             |
+| `UMS_STATE_FILE`              | compat tooling  | _unset_ unless running legacy import/export\_ |
+| `UMS_STATE_LOCK_TIMEOUT_MS`   | `api`           | `8000`                                        |
+| `UMS_STATE_LOCK_RETRY_MS`     | `api`           | `25`                                          |
+| `UMS_API_AUTH_REQUIRED`       | `api`           | `true`                                        |
+| `UMS_API_AUTH_TOKENS`         | `api`           | `${UMS_API_AUTH_TOKENS:?required}`            |
+| `UMS_API_HOST`                | `worker`        | `api`                                         |
+| `UMS_API_PORT`                | `worker`        | `8787`                                        |
+| `UMS_API_HEALTH_PATH`         | `worker`        | `/`                                           |
+| `UMS_API_READY_TIMEOUT_MS`    | `worker`        | `90000`                                       |
 
 ## Local Deploy
 
@@ -111,9 +113,9 @@ docker run --rm \
   -v "${VOLUME}:/var/lib/ums" \
   -v "${BACKUP_DIR}:/backup" \
   ums-memory-api:local \
-  sh -ec "test -f /var/lib/ums/.ums-state.json; cp /var/lib/ums/.ums-state.json /backup/ums-state-${TS}.json"
+  sh -ec "test -f /var/lib/ums/.ums-runtime-state.json; cp /var/lib/ums/.ums-runtime-state.json /backup/ums-runtime-state-${TS}.json && test -f /var/lib/ums/.ums-runtime-state.sqlite; cp /var/lib/ums/.ums-runtime-state.sqlite /backup/ums-runtime-state-${TS}.sqlite"
 docker compose -p "$PROJECT" -f deploy/compose.yml start worker
-ls -lh "$BACKUP_DIR/ums-state-${TS}.json"
+ls -lh "$BACKUP_DIR/ums-runtime-state-${TS}.json" "$BACKUP_DIR/ums-runtime-state-${TS}.sqlite"
 ```
 
 Backup success criteria:
@@ -130,7 +132,7 @@ Use only during controlled recovery:
 export PROJECT=ums-prod
 export VOLUME="${PROJECT}_ums_shared_state"
 export BACKUP_DIR="$PWD/backups"
-export BACKUP_FILE="ums-state-<timestamp>.json"
+export BACKUP_BASENAME="ums-runtime-state-<timestamp>"
 export UMS_API_AUTH_TOKENS="<configured-shared-api-token>"
 
 docker compose -p "$PROJECT" -f deploy/compose.yml down
@@ -138,7 +140,7 @@ docker run --rm \
   -v "${VOLUME}:/var/lib/ums" \
   -v "${BACKUP_DIR}:/backup" \
   ums-memory-api:local \
-  sh -ec "cp /backup/${BACKUP_FILE} /var/lib/ums/.ums-state.json; rm -f /var/lib/ums/.ums-state.json.lock"
+  sh -ec "cp /backup/${BACKUP_BASENAME}.json /var/lib/ums/.ums-runtime-state.json && cp /backup/${BACKUP_BASENAME}.sqlite /var/lib/ums/.ums-runtime-state.sqlite && rm -f /var/lib/ums/.ums-runtime-state.json.lock"
 docker compose -p "$PROJECT" -f deploy/compose.yml up -d
 docker compose -p "$PROJECT" -f deploy/compose.yml ps
 curl -fsS http://127.0.0.1:8787/

@@ -10,21 +10,73 @@ import {
   writeFileSync,
 } from "node:fs";
 import { dirname, join } from "node:path";
-import { DatabaseSync } from "node:sqlite";
-import test from "node:test";
 import { pathToFileURL } from "node:url";
 
+import { test } from "@effect-native/bun-test";
 import { Effect as EffectOriginal } from "effect";
 import ts from "typescript";
 
-import { ContractValidationError } from "../../libs/shared/src/effect/errors.ts";
+import type { ContractValidationError } from "../../libs/shared/src/effect/errors.ts";
+import type {
+  SqliteBackupReplicationController as BackupReplicationController,
+  SqliteBackupReplicationMetadata as BackupReplicationMetadata,
+} from "../../libs/shared/src/effect/storage/sqlite/backup-replication.ts";
+import { DatabaseSync } from "../../libs/shared/src/effect/storage/sqlite/database.ts";
+import type {
+  SqliteProvenanceHealthAlert,
+  TenantIsolationViolationAuditEvent,
+} from "../../libs/shared/src/effect/storage/sqlite/storage-repository.ts";
+import { sqliteAll, sqliteGet } from "./sqlite-test-helpers.ts";
 
-const either = (effect: any) =>
+type RuntimeStorageService = {
+  readonly upsertMemory: (
+    request: Record<string, unknown>
+  ) => EffectOriginal.Effect<any, any, never>;
+  readonly deleteMemory: (
+    request: Record<string, unknown>
+  ) => EffectOriginal.Effect<any, any, never>;
+  readonly exportSnapshot: (
+    request: Record<string, unknown>
+  ) => EffectOriginal.Effect<any, any, never>;
+  readonly importSnapshot: (
+    request: Record<string, unknown>
+  ) => EffectOriginal.Effect<any, any, never>;
+};
+type StorageServiceModule = {
+  readonly makeSqliteStorageService: (
+    database: DatabaseSync,
+    options?: unknown
+  ) => RuntimeStorageService;
+  readonly makeSqliteStorageLayer: (
+    database: DatabaseSync,
+    options?: unknown
+  ) => any;
+  readonly StorageServiceTag: any;
+};
+type StorageRepositoryModule = {
+  readonly evaluateSqliteProvenanceHealth: (
+    database: DatabaseSync,
+    options?: unknown
+  ) => any;
+};
+type TestEither<Left, Right = unknown> =
+  | {
+      readonly _tag: "Left";
+      readonly left: Left;
+    }
+  | {
+      readonly _tag: "Right";
+      readonly right: Right;
+    };
+
+const either = <Success, Error>(
+  effect: EffectOriginal.Effect<Success, Error, never>
+): EffectOriginal.Effect<TestEither<Error, Success>, never, never> =>
   EffectOriginal.result(effect).pipe(
     EffectOriginal.map((result) =>
       result._tag === "Failure"
-        ? { _tag: "Left", left: result.failure }
-        : { _tag: "Right", right: result.success }
+        ? ({ _tag: "Left", left: result.failure } as const)
+        : ({ _tag: "Right", right: result.success } as const)
     )
   );
 
@@ -35,7 +87,10 @@ const effectModuleDirectory = new URL(
   import.meta.url
 );
 
-const transpileEffectModule = (sourceFilename: any, tempDirectory: any) => {
+const transpileEffectModule = (
+  sourceFilename: string,
+  tempDirectory: string
+) => {
   const sourceFileUrl = new URL(sourceFilename, effectModuleDirectory);
   const source = readFileSync(sourceFileUrl, "utf8");
   const transpiled = ts.transpileModule(source, {
@@ -80,21 +135,28 @@ const transpileManifest = Object.freeze([
   "contracts/services.ts",
   "contracts/index.ts",
   "errors.ts",
+  "services/runtime-persistence-service.ts",
   "storage/sqlite/schema-metadata.ts",
   "storage/sqlite/enterprise-schema.ts",
   "storage/sqlite/migrations.ts",
   "storage/sqlite/backup-replication.ts",
+  "storage/sqlite/runtime-persistence-repository.ts",
   "storage/sqlite/snapshot-codec.ts",
   "storage/sqlite/storage-repository.ts",
   "storage/sqlite/index.ts",
   "services/storage-service.ts",
 ]);
 
-let storageServiceModulePromise: any;
-let storageRepositoryModulePromise: any;
-let transpiledDirectoryPath: any;
+let storageServiceModulePromise: Promise<StorageServiceModule> | null = null;
+let storageRepositoryModulePromise: Promise<StorageRepositoryModule> | null =
+  null;
+let transpiledDirectoryPath: string | undefined;
+const expectString = (value: string | undefined): string => {
+  assert.ok(typeof value === "string");
+  return value;
+};
 
-const loadStorageServiceModule = async () => {
+const loadStorageServiceModule = async (): Promise<StorageServiceModule> => {
   if (!storageServiceModulePromise) {
     const tempRootDirectory = join(process.cwd(), "dist", "tmp");
     mkdirSync(tempRootDirectory, { recursive: true });
@@ -109,22 +171,30 @@ const loadStorageServiceModule = async () => {
     const storageServiceModuleUrl = pathToFileURL(
       join(transpiledDirectoryPath, "services/storage-service.js")
     ).href;
-    storageServiceModulePromise = import(storageServiceModuleUrl);
+    storageServiceModulePromise = import(
+      storageServiceModuleUrl
+    ) as Promise<StorageServiceModule>;
   }
 
   return storageServiceModulePromise;
 };
 
-const loadStorageRepositoryModule = async () => {
-  await loadStorageServiceModule();
-  if (!storageRepositoryModulePromise) {
-    const moduleUrl = pathToFileURL(
-      join(transpiledDirectoryPath, "storage/sqlite/storage-repository.js")
-    ).href;
-    storageRepositoryModulePromise = import(moduleUrl);
-  }
-  return storageRepositoryModulePromise;
-};
+const loadStorageRepositoryModule =
+  async (): Promise<StorageRepositoryModule> => {
+    await loadStorageServiceModule();
+    if (!storageRepositoryModulePromise) {
+      const moduleUrl = pathToFileURL(
+        join(
+          expectString(transpiledDirectoryPath),
+          "storage/sqlite/storage-repository.js"
+        )
+      ).href;
+      storageRepositoryModulePromise = import(
+        moduleUrl
+      ) as Promise<StorageRepositoryModule>;
+    }
+    return storageRepositoryModulePromise;
+  };
 
 process.on("exit", () => {
   if (transpiledDirectoryPath) {
@@ -132,9 +202,9 @@ process.on("exit", () => {
   }
 });
 
-const unwrapFailure = (eitherResult: any) => {
+const unwrapFailure = (eitherResult: TestEither<any>): any => {
   assert.equal(eitherResult?._tag, "Left");
-  return eitherResult.left;
+  return expectSqliteRow(eitherResult.left);
 };
 
 const redactedTokenPatternByCategory = Object.freeze({
@@ -143,10 +213,12 @@ const redactedTokenPatternByCategory = Object.freeze({
   PHONE: /^\[REDACTED_PHONE:[0-9a-f]{12,64}\]$/,
 });
 
-const containsRedactedTokenCategory = (text: any, category: any) =>
-  text.includes(`[REDACTED_${category}:`);
+const containsRedactedTokenCategory = (
+  text: string,
+  category: keyof typeof redactedTokenPatternByCategory
+) => text.includes(`[REDACTED_${category}:`);
 
-const toSha256Hex = (value: any) =>
+const toSha256Hex = (value: string) =>
   createHash("sha256").update(value).digest("hex");
 const sqlitePayloadEncryptionEnvelopeFormat =
   "ums-memory/sqlite-memory-payload-encrypted/v1";
@@ -173,32 +245,164 @@ interface ContractErrorShape {
   readonly message?: string;
 }
 
-interface BackupReplicationMetadata {
-  readonly sequence: number;
-  readonly trigger: string;
-  readonly createdAtMillis: number;
-  readonly snapshotFilename: string;
-  readonly snapshotPath: string;
-  readonly retainedSnapshotCount: number;
-  readonly deletedSnapshotFilenames: readonly string[];
-}
+type AuditEventRow = {
+  readonly operation: string;
+  readonly outcome: string;
+  readonly owner_tenant_id: string | null;
+  readonly reason: string;
+  readonly recorded_at_ms?: number;
+  readonly reference_id: string | null;
+  readonly reference_kind: string | null;
+};
 
-interface BackupReplicationController {
-  readonly stop: () => void;
-  readonly isRunning: () => boolean;
-  readonly replicateNow: (
-    trigger?: "manual" | "interval"
-  ) => BackupReplicationMetadata;
-}
+type EvidenceLinkRow = {
+  readonly evidence_id?: string;
+  readonly memory_id: string;
+  readonly relation_kind: string;
+};
+
+type EvidenceProvenanceRow = {
+  readonly provenance_id: string;
+  readonly source_ref: string;
+};
+
+type EvidenceRow = {
+  readonly digest_sha256: string;
+  readonly payload_json: string;
+  readonly source_ref: string;
+};
+
+type IdempotencyLedgerRow = {
+  readonly request_hash_sha256: string;
+  readonly response_json: string;
+};
+
+type JoinedEvidenceRow = {
+  readonly created_at_ms: number;
+  readonly observed_at_ms: number;
+  readonly relation_kind: string;
+  readonly source_ref: string;
+};
+
+type PayloadJsonRow = {
+  readonly payload_json: string;
+};
+
+type PayloadTextRow = {
+  readonly payload_text: string;
+};
+
+type ProvenanceEnvelopeRow = {
+  readonly agent_id: string;
+  readonly batch_id: string;
+  readonly conversation_id: string;
+  readonly message_id: string;
+  readonly project_id: string;
+  readonly provenance_id: string;
+  readonly role_id: string;
+  readonly source_id: string;
+  readonly user_id: string;
+};
+
+type ProvenanceLinkRow = {
+  readonly details?: string;
+  readonly memory_id?: string;
+  readonly provenance_id: string;
+  readonly source_id?: string;
+  readonly batch_id?: string;
+  readonly project_id?: string;
+  readonly role_id?: string;
+  readonly user_id?: string;
+};
+
+type RowCountRow = {
+  readonly row_count: number;
+};
+
+type ReasonRow = {
+  readonly reason: string;
+};
+
+type ScopeCountRow = {
+  readonly row_count: number;
+  readonly scope_level: string;
+};
+
+type ScopeIdAuditRow = {
+  readonly created_by_user_id: string | null;
+  readonly scope_id: string;
+};
+
+type ScopeMemoryRow = {
+  readonly memory_id: string;
+  readonly scope_id: string;
+};
+
+type ScopeRow = {
+  readonly parent_scope_id: string | null;
+  readonly scope_id: string;
+};
+
+type ScopeOnlyRow = {
+  readonly scope_id: string;
+};
+
+type StorageMemoryRow = {
+  readonly created_at_ms: number;
+  readonly memory_kind: string;
+  readonly memory_layer: string;
+  readonly payload_json: string;
+  readonly scope_id: string;
+  readonly status: string;
+  readonly title: string;
+  readonly tombstoned_at_ms: number | null;
+  readonly updated_at_ms: number;
+};
+
+type TitlePayloadRow = {
+  readonly payload_json: string;
+  readonly title: string;
+};
+
+type TitleUpdatedAtRow = {
+  readonly title: string;
+  readonly updated_at_ms: number;
+};
+
+type TombstonedMemoryRow = {
+  readonly status: string;
+  readonly title: string;
+  readonly tombstoned_at_ms: number | null;
+  readonly updated_at_ms: number;
+};
 
 const asContractErrorShape = (value: unknown): ContractErrorShape =>
   value && typeof value === "object" ? (value as ContractErrorShape) : {};
 
-const toBase64EncryptionKey = (seedByte: any) =>
+const expectSqliteRow = <TRow>(row: TRow | undefined): TRow => {
+  assert.ok(row);
+  return row;
+};
+
+const firstSqliteRow = <TRow>(rows: readonly TRow[]): TRow => {
+  const row = rows[0];
+  assert.ok(row);
+  return row;
+};
+
+const toBase64EncryptionKey = (seedByte: number) =>
   Buffer.alloc(32, seedByte).toString("base64");
 
-const readEncryptedPayloadEnvelope = (payloadJson: any) => {
-  const parsedEnvelope = JSON.parse(payloadJson);
+const readEncryptedPayloadEnvelope = (payloadJson: string) => {
+  const parsedEnvelope = JSON.parse(payloadJson) as {
+    readonly algorithm: string;
+    readonly authTagBase64: string;
+    readonly ciphertextBase64: string;
+    readonly format: string;
+    readonly ivBase64: string;
+    readonly keyId: string;
+    readonly version: number;
+  };
   assert.equal(parsedEnvelope.format, sqlitePayloadEncryptionEnvelopeFormat);
   assert.equal(parsedEnvelope.version, 1);
   assert.equal(
@@ -228,12 +432,12 @@ const toCanonicalJsonValue = (value: unknown): CanonicalJsonValue => {
   return value as CanonicalJsonValue;
 };
 
-const toCanonicalPayloadJson = (payload: any) =>
+const toCanonicalPayloadJson = (payload: unknown) =>
   JSON.stringify(toCanonicalJsonValue(payload));
 
 const seedScopeLatticeAnchors = (
-  db: any,
-  tenantId: any,
+  db: DatabaseSync,
+  tenantId: string,
   {
     projectIds = [],
     roleIds = [],
@@ -291,22 +495,22 @@ const createDeterministicBackupClock = (startMillis = 1_700_000_000_000) => {
 
 const createDeterministicIntervalScheduler = () => {
   let nextHandle = 0;
-  const callbacksByHandle = new Map();
+  const callbacksByHandle = new Map<number, () => void>();
   return {
     scheduler: {
-      setInterval: (task: any) => {
+      setInterval: (task: () => void) => {
         nextHandle += 1;
         callbacksByHandle.set(nextHandle, task);
         return nextHandle;
       },
-      clearInterval: (handle: any) => {
+      clearInterval: (handle: unknown) => {
         if (typeof handle === "number") {
           callbacksByHandle.delete(handle);
         }
       },
     },
     tick: () => {
-      for (const callback of [...callbacksByHandle.values()]) {
+      for (const callback of callbacksByHandle.values()) {
         callback();
       }
     },
@@ -346,11 +550,12 @@ test("ums-memory-5cb.7: promoted procedural memory without evidence pointers is 
       /requires at least one evidence pointer/i
     );
 
-    const evidenceRowCount = db
-      .prepare(
-        "SELECT COUNT(*) AS row_count FROM evidence WHERE tenant_id = ?;"
-      )
-      .get("tenant-promoted-evidence-required");
+    const evidenceRowCount = sqliteGet<RowCountRow>(
+      db,
+      "SELECT COUNT(*) AS row_count FROM evidence WHERE tenant_id = ?;",
+      "tenant-promoted-evidence-required"
+    );
+    assert.ok(evidenceRowCount);
     assert.equal(Number(evidenceRowCount.row_count), 0);
   } finally {
     db.close();
@@ -469,16 +674,16 @@ test("ums-memory-5cb.7: promoted procedural memory writes evidence and memory_ev
     assert.equal(firstResponse.accepted, true);
     assert.equal(secondReplayResponse.accepted, true);
 
-    const evidenceRows = db
-      .prepare(
-        [
-          "SELECT source_kind, source_ref, digest_sha256, payload_json",
-          "FROM evidence",
-          "WHERE tenant_id = ?",
-          "ORDER BY source_kind ASC, source_ref ASC, digest_sha256 ASC;",
-        ].join("\n")
-      )
-      .all("tenant-promoted-evidence-links");
+    const evidenceRows = sqliteAll<EvidenceRow>(
+      db,
+      [
+        "SELECT source_kind, source_ref, digest_sha256, payload_json",
+        "FROM evidence",
+        "WHERE tenant_id = ?",
+        "ORDER BY source_kind ASC, source_ref ASC, digest_sha256 ASC;",
+      ].join("\n"),
+      "tenant-promoted-evidence-links"
+    );
     assert.equal(evidenceRows.length, 2);
     assert.deepEqual(
       evidenceRows.map((row) => row.source_ref),
@@ -489,16 +694,16 @@ test("ums-memory-5cb.7: promoted procedural memory writes evidence and memory_ev
       ["a".repeat(64), "b".repeat(64)]
     );
 
-    const linkRows = db
-      .prepare(
-        [
-          "SELECT memory_id, evidence_id, relation_kind",
-          "FROM memory_evidence_links",
-          "WHERE tenant_id = ?",
-          "ORDER BY memory_id ASC, evidence_id ASC;",
-        ].join("\n")
-      )
-      .all("tenant-promoted-evidence-links");
+    const linkRows = sqliteAll<EvidenceLinkRow>(
+      db,
+      [
+        "SELECT memory_id, evidence_id, relation_kind",
+        "FROM memory_evidence_links",
+        "WHERE tenant_id = ?",
+        "ORDER BY memory_id ASC, evidence_id ASC;",
+      ].join("\n"),
+      "tenant-promoted-evidence-links"
+    );
     assert.equal(linkRows.length, 2);
     assert.ok(
       linkRows.every(
@@ -575,37 +780,39 @@ test("ums-memory-i6m.3: storage upsert persists deterministic provenance envelop
       })
     );
 
-    const provenanceRows = db
-      .prepare(
-        [
-          "SELECT provenance_id, project_id, role_id, user_id, agent_id, conversation_id, message_id, source_id, batch_id",
-          "FROM provenance_envelopes",
-          "WHERE tenant_id = ?",
-          "ORDER BY provenance_id ASC;",
-        ].join("\n")
-      )
-      .all(tenantId);
+    const provenanceRows = sqliteAll<ProvenanceEnvelopeRow>(
+      db,
+      [
+        "SELECT provenance_id, project_id, role_id, user_id, agent_id, conversation_id, message_id, source_id, batch_id",
+        "FROM provenance_envelopes",
+        "WHERE tenant_id = ?",
+        "ORDER BY provenance_id ASC;",
+      ].join("\n"),
+      tenantId
+    );
     assert.equal(provenanceRows.length, 1);
-    const provenanceId = String(provenanceRows[0].provenance_id);
-    assert.equal(provenanceRows[0].project_id, projectId);
-    assert.equal(provenanceRows[0].role_id, roleId);
-    assert.equal(provenanceRows[0].user_id, userId);
-    assert.equal(provenanceRows[0].agent_id, "agent-i6m3");
-    assert.equal(provenanceRows[0].conversation_id, "conversation-i6m3");
-    assert.equal(provenanceRows[0].message_id, "message-i6m3");
-    assert.equal(provenanceRows[0].source_id, "source-i6m3");
-    assert.equal(provenanceRows[0].batch_id, "batch-i6m3");
+    const provenanceRow = firstSqliteRow(provenanceRows);
+    const provenanceId = String(provenanceRow.provenance_id);
+    assert.equal(provenanceRow.project_id, projectId);
+    assert.equal(provenanceRow.role_id, roleId);
+    assert.equal(provenanceRow.user_id, userId);
+    assert.equal(provenanceRow.agent_id, "agent-i6m3");
+    assert.equal(provenanceRow.conversation_id, "conversation-i6m3");
+    assert.equal(provenanceRow.message_id, "message-i6m3");
+    assert.equal(provenanceRow.source_id, "source-i6m3");
+    assert.equal(provenanceRow.batch_id, "batch-i6m3");
 
-    const memoryProvenanceLinks = db
-      .prepare(
-        [
-          "SELECT memory_id, provenance_id",
-          "FROM memory_provenance_links",
-          "WHERE tenant_id = ? AND memory_id = ?",
-          "ORDER BY provenance_id ASC;",
-        ].join("\n")
-      )
-      .all(tenantId, "memory-i6m3-provenance");
+    const memoryProvenanceLinks = sqliteAll<ProvenanceLinkRow>(
+      db,
+      [
+        "SELECT memory_id, provenance_id",
+        "FROM memory_provenance_links",
+        "WHERE tenant_id = ? AND memory_id = ?",
+        "ORDER BY provenance_id ASC;",
+      ].join("\n"),
+      tenantId,
+      "memory-i6m3-provenance"
+    );
     assert.deepEqual(
       memoryProvenanceLinks.map((row) => ({
         memory_id: String(row.memory_id),
@@ -619,17 +826,17 @@ test("ums-memory-i6m.3: storage upsert persists deterministic provenance envelop
       ]
     );
 
-    const evidenceProvenanceLinks = db
-      .prepare(
-        [
-          "SELECT e.source_ref, epl.provenance_id",
-          "FROM evidence_provenance_links epl",
-          "INNER JOIN evidence e ON e.tenant_id = epl.tenant_id AND e.evidence_id = epl.evidence_id",
-          "WHERE epl.tenant_id = ?",
-          "ORDER BY e.source_ref ASC;",
-        ].join("\n")
-      )
-      .all(tenantId);
+    const evidenceProvenanceLinks = sqliteAll<EvidenceProvenanceRow>(
+      db,
+      [
+        "SELECT e.source_ref, epl.provenance_id",
+        "FROM evidence_provenance_links epl",
+        "INNER JOIN evidence e ON e.tenant_id = epl.tenant_id AND e.evidence_id = epl.evidence_id",
+        "WHERE epl.tenant_id = ?",
+        "ORDER BY e.source_ref ASC;",
+      ].join("\n"),
+      tenantId
+    );
     assert.deepEqual(
       evidenceProvenanceLinks.map((row) => row.source_ref),
       ["event://evt-i6m3-a", "event://evt-i6m3-b"]
@@ -823,52 +1030,53 @@ test("ums-memory-i6m.8: sqlite repository runOnInit backfills provenance rows de
       },
     });
 
-    const provenanceRows = db
-      .prepare(
-        [
-          "SELECT p.provenance_id, p.source_id, p.batch_id, p.project_id, p.role_id, p.user_id",
-          "FROM provenance_envelopes p",
-          "INNER JOIN memory_provenance_links mpl ON mpl.tenant_id = p.tenant_id AND mpl.provenance_id = p.provenance_id",
-          "WHERE p.tenant_id = ? AND mpl.memory_id = ?",
-          "ORDER BY p.provenance_id ASC;",
-        ].join("\n")
-      )
-      .all(tenantId, memoryId);
-    assert.equal(provenanceRows.length, 1);
-    assert.equal(provenanceRows[0].source_id, `legacy-backfill:${memoryId}`);
-    assert.equal(provenanceRows[0].batch_id, "batch-i6m8");
-    assert.equal(provenanceRows[0].project_id, "project-i6m8");
-    assert.equal(provenanceRows[0].role_id, "role-i6m8");
-    assert.equal(provenanceRows[0].user_id, "user-i6m8");
-
-    const evidenceLinkRows = db
-      .prepare(
-        [
-          "SELECT e.source_ref, epl.provenance_id",
-          "FROM evidence_provenance_links epl",
-          "INNER JOIN evidence e ON e.tenant_id = epl.tenant_id AND e.evidence_id = epl.evidence_id",
-          "WHERE epl.tenant_id = ?",
-          "ORDER BY e.source_ref ASC;",
-        ].join("\n")
-      )
-      .all(tenantId);
-    assert.equal(evidenceLinkRows.length, 1);
-    assert.equal(evidenceLinkRows[0].source_ref, "event://evt-i6m8-a");
-    assert.equal(
-      evidenceLinkRows[0].provenance_id,
-      provenanceRows[0].provenance_id
+    const provenanceRows = sqliteAll<ProvenanceLinkRow>(
+      db,
+      [
+        "SELECT p.provenance_id, p.source_id, p.batch_id, p.project_id, p.role_id, p.user_id",
+        "FROM provenance_envelopes p",
+        "INNER JOIN memory_provenance_links mpl ON mpl.tenant_id = p.tenant_id AND mpl.provenance_id = p.provenance_id",
+        "WHERE p.tenant_id = ? AND mpl.memory_id = ?",
+        "ORDER BY p.provenance_id ASC;",
+      ].join("\n"),
+      tenantId,
+      memoryId
     );
+    assert.equal(provenanceRows.length, 1);
+    const provenanceRow = firstSqliteRow(provenanceRows);
+    assert.equal(provenanceRow.source_id, `legacy-backfill:${memoryId}`);
+    assert.equal(provenanceRow.batch_id, "batch-i6m8");
+    assert.equal(provenanceRow.project_id, "project-i6m8");
+    assert.equal(provenanceRow.role_id, "role-i6m8");
+    assert.equal(provenanceRow.user_id, "user-i6m8");
 
-    const auditRows = db
-      .prepare(
-        [
-          "SELECT details",
-          "FROM audit_events",
-          "WHERE tenant_id = ? AND memory_id = ? AND operation = 'upsert'",
-          "ORDER BY recorded_at_ms ASC;",
-        ].join("\n")
-      )
-      .all(tenantId, memoryId);
+    const evidenceLinkRows = sqliteAll<EvidenceProvenanceRow>(
+      db,
+      [
+        "SELECT e.source_ref, epl.provenance_id",
+        "FROM evidence_provenance_links epl",
+        "INNER JOIN evidence e ON e.tenant_id = epl.tenant_id AND e.evidence_id = epl.evidence_id",
+        "WHERE epl.tenant_id = ?",
+        "ORDER BY e.source_ref ASC;",
+      ].join("\n"),
+      tenantId
+    );
+    assert.equal(evidenceLinkRows.length, 1);
+    const evidenceLinkRow = firstSqliteRow(evidenceLinkRows);
+    assert.equal(evidenceLinkRow.source_ref, "event://evt-i6m8-a");
+    assert.equal(evidenceLinkRow.provenance_id, provenanceRow.provenance_id);
+
+    const auditRows = sqliteAll<ProvenanceLinkRow>(
+      db,
+      [
+        "SELECT details",
+        "FROM audit_events",
+        "WHERE tenant_id = ? AND memory_id = ? AND operation = 'upsert'",
+        "ORDER BY recorded_at_ms ASC;",
+      ].join("\n"),
+      tenantId,
+      memoryId
+    );
     assert.ok(
       auditRows.some((row) =>
         String(row.details).startsWith("provenance_backfill:")
@@ -1083,20 +1291,18 @@ test("ums-memory-5cb.7: promoted procedural memory merges explicit pointers with
       })
     );
 
-    const joinedRows = db
-      .prepare(
-        [
-          "SELECT e.source_ref, e.observed_at_ms, e.created_at_ms, l.relation_kind",
-          "FROM evidence e",
-          "INNER JOIN memory_evidence_links l ON l.tenant_id = e.tenant_id AND l.evidence_id = e.evidence_id",
-          "WHERE e.tenant_id = ? AND l.memory_id = ?",
-          "ORDER BY e.source_ref ASC;",
-        ].join("\n")
-      )
-      .all(
-        "tenant-promoted-evidence-fallbacks",
-        "memory-procedural-evidence-fallbacks"
-      );
+    const joinedRows = sqliteAll<JoinedEvidenceRow>(
+      db,
+      [
+        "SELECT e.source_ref, e.observed_at_ms, e.created_at_ms, l.relation_kind",
+        "FROM evidence e",
+        "INNER JOIN memory_evidence_links l ON l.tenant_id = e.tenant_id AND l.evidence_id = e.evidence_id",
+        "WHERE e.tenant_id = ? AND l.memory_id = ?",
+        "ORDER BY e.source_ref ASC;",
+      ].join("\n"),
+      "tenant-promoted-evidence-fallbacks",
+      "memory-procedural-evidence-fallbacks"
+    );
 
     assert.equal(joinedRows.length, 3);
     assert.deepEqual(
@@ -1179,20 +1385,20 @@ test("ums-memory-5cb.7: promoted procedural memory reconciles evidence links on 
       })
     );
 
-    const linkRows = db
-      .prepare(
-        [
-          "SELECT e.source_ref, l.relation_kind",
-          "FROM memory_evidence_links l",
-          "INNER JOIN evidence e ON e.tenant_id = l.tenant_id AND e.evidence_id = l.evidence_id",
-          "WHERE l.tenant_id = ? AND l.memory_id = ?",
-          "ORDER BY e.source_ref ASC;",
-        ].join("\n")
-      )
-      .all(
-        "tenant-promoted-evidence-reconcile",
-        "memory-procedural-evidence-reconcile"
-      );
+    const linkRows = sqliteAll<
+      EvidenceLinkRow & { readonly source_ref: string }
+    >(
+      db,
+      [
+        "SELECT e.source_ref, l.relation_kind",
+        "FROM memory_evidence_links l",
+        "INNER JOIN evidence e ON e.tenant_id = l.tenant_id AND e.evidence_id = l.evidence_id",
+        "WHERE l.tenant_id = ? AND l.memory_id = ?",
+        "ORDER BY e.source_ref ASC;",
+      ].join("\n"),
+      "tenant-promoted-evidence-reconcile",
+      "memory-procedural-evidence-reconcile"
+    );
     const normalizedLinkRows = linkRows.map((row) => ({
       source_ref: row.source_ref,
       relation_kind: row.relation_kind,
@@ -1268,20 +1474,20 @@ test("ums-memory-5cb.7: stale procedural replay does not rewrite evidence links 
     assert.equal(latestResponse.persistedAtMillis, latestUpdatedAtMillis);
     assert.equal(staleReplayResponse.persistedAtMillis, latestUpdatedAtMillis);
 
-    const linkRows = db
-      .prepare(
-        [
-          "SELECT e.source_ref, l.relation_kind",
-          "FROM memory_evidence_links l",
-          "INNER JOIN evidence e ON e.tenant_id = l.tenant_id AND e.evidence_id = l.evidence_id",
-          "WHERE l.tenant_id = ? AND l.memory_id = ?",
-          "ORDER BY e.source_ref ASC;",
-        ].join("\n")
-      )
-      .all(
-        "tenant-promoted-evidence-stale-replay",
-        "memory-procedural-evidence-stale-replay"
-      );
+    const linkRows = sqliteAll<
+      EvidenceLinkRow & { readonly source_ref: string }
+    >(
+      db,
+      [
+        "SELECT e.source_ref, l.relation_kind",
+        "FROM memory_evidence_links l",
+        "INNER JOIN evidence e ON e.tenant_id = l.tenant_id AND e.evidence_id = l.evidence_id",
+        "WHERE l.tenant_id = ? AND l.memory_id = ?",
+        "ORDER BY e.source_ref ASC;",
+      ].join("\n"),
+      "tenant-promoted-evidence-stale-replay",
+      "memory-procedural-evidence-stale-replay"
+    );
     const normalizedLinkRows = linkRows.map((row) => ({
       source_ref: row.source_ref,
       relation_kind: row.relation_kind,
@@ -1358,15 +1564,14 @@ test("ums-memory-5cb.7: promoted procedural provenance metadata is immutable on 
     assert.equal(upsertFailure.contract, "StorageUpsertRequest.payload");
     assert.match(upsertFailure.details, /provenance metadata is immutable/i);
 
-    const persistedPayloadRow = db
-      .prepare(
-        "SELECT payload_json FROM memory_items WHERE tenant_id = ? AND memory_id = ?;"
-      )
-      .get(
+    const persistedPayloadRow = expectSqliteRow(
+      sqliteGet<PayloadJsonRow>(
+        db,
+        "SELECT payload_json FROM memory_items WHERE tenant_id = ? AND memory_id = ?;",
         "tenant-promoted-provenance-immutable",
         "memory-procedural-provenance-immutable"
-      );
-    assert.ok(persistedPayloadRow);
+      )
+    );
     const persistedPayload = JSON.parse(persistedPayloadRow.payload_json);
     assert.equal(persistedPayload.provenance.decisionId, "decision-1");
   } finally {
@@ -1565,15 +1770,14 @@ test("ums-memory-5cb.7: procedural provenance redaction is stable when replaying
       })
     );
 
-    const firstPersistedPayloadRow = db
-      .prepare(
-        "SELECT payload_json FROM memory_items WHERE tenant_id = ? AND memory_id = ?;"
-      )
-      .get(
+    const firstPersistedPayloadRow = expectSqliteRow(
+      sqliteGet<PayloadJsonRow>(
+        db,
+        "SELECT payload_json FROM memory_items WHERE tenant_id = ? AND memory_id = ?;",
         "tenant-provenance-redacted-token-replay",
         "memory-provenance-redacted-token-replay"
-      );
-    assert.ok(firstPersistedPayloadRow);
+      )
+    );
     const firstPersistedPayload = JSON.parse(
       firstPersistedPayloadRow.payload_json
     );
@@ -1597,15 +1801,14 @@ test("ums-memory-5cb.7: procedural provenance redaction is stable when replaying
     );
     assert.equal(replayResponse.accepted, true);
 
-    const replayPersistedPayloadRow = db
-      .prepare(
-        "SELECT payload_json FROM memory_items WHERE tenant_id = ? AND memory_id = ?;"
-      )
-      .get(
+    const replayPersistedPayloadRow = expectSqliteRow(
+      sqliteGet<PayloadJsonRow>(
+        db,
+        "SELECT payload_json FROM memory_items WHERE tenant_id = ? AND memory_id = ?;",
         "tenant-provenance-redacted-token-replay",
         "memory-provenance-redacted-token-replay"
-      );
-    assert.ok(replayPersistedPayloadRow);
+      )
+    );
     const replayPersistedPayload = JSON.parse(
       replayPersistedPayloadRow.payload_json
     );
@@ -1648,15 +1851,14 @@ test("ums-memory-5cb.7: procedural provenance immutability tolerates legacy unsa
       })
     );
 
-    const persistedPayloadRow = db
-      .prepare(
-        "SELECT payload_json FROM memory_items WHERE tenant_id = ? AND memory_id = ?;"
-      )
-      .get(
+    const persistedPayloadRow = expectSqliteRow(
+      sqliteGet<PayloadJsonRow>(
+        db,
+        "SELECT payload_json FROM memory_items WHERE tenant_id = ? AND memory_id = ?;",
         "tenant-provenance-legacy-unsanitized",
         "memory-provenance-legacy-unsanitized"
-      );
-    assert.ok(persistedPayloadRow);
+      )
+    );
     const legacyPayload = JSON.parse(persistedPayloadRow.payload_json);
     legacyPayload.provenance.ownerEmail = "alpha@example.com";
     db.prepare(
@@ -1692,15 +1894,14 @@ test("ums-memory-5cb.7: procedural provenance immutability tolerates legacy unsa
     );
     assert.equal(replayResponse.accepted, true);
 
-    const replayPersistedPayloadRow = db
-      .prepare(
-        "SELECT payload_json FROM memory_items WHERE tenant_id = ? AND memory_id = ?;"
-      )
-      .get(
+    const replayPersistedPayloadRow = expectSqliteRow(
+      sqliteGet<PayloadJsonRow>(
+        db,
+        "SELECT payload_json FROM memory_items WHERE tenant_id = ? AND memory_id = ?;",
         "tenant-provenance-legacy-unsanitized",
         "memory-provenance-legacy-unsanitized"
-      );
-    assert.ok(replayPersistedPayloadRow);
+      )
+    );
     const replayPersistedPayload = JSON.parse(
       replayPersistedPayloadRow.payload_json
     );
@@ -1767,15 +1968,14 @@ test("ums-memory-5cb.7: promoted procedural memory can set provenance metadata o
     );
 
     assert.equal(replayResponse.accepted, true);
-    const persistedPayloadRow = db
-      .prepare(
-        "SELECT payload_json FROM memory_items WHERE tenant_id = ? AND memory_id = ?;"
-      )
-      .get(
+    const persistedPayloadRow = expectSqliteRow(
+      sqliteGet<PayloadJsonRow>(
+        db,
+        "SELECT payload_json FROM memory_items WHERE tenant_id = ? AND memory_id = ?;",
         "tenant-promoted-provenance-bootstrap",
         "memory-procedural-provenance-bootstrap"
-      );
-    assert.ok(persistedPayloadRow);
+      )
+    );
     const persistedPayload = JSON.parse(persistedPayloadRow.payload_json);
     assert.equal(persistedPayload.provenance.decisionId, "decision-bootstrap");
   } finally {
@@ -1853,11 +2053,11 @@ test("ums-memory-5cb.4: sqlite storage service resolves common/project/job_role/
       })
     );
 
-    const persistedScopeRows = db
-      .prepare(
-        "SELECT memory_id, scope_id FROM memory_items WHERE tenant_id = ? ORDER BY memory_id ASC;"
-      )
-      .all(tenantId);
+    const persistedScopeRows = sqliteAll<ScopeMemoryRow>(
+      db,
+      "SELECT memory_id, scope_id FROM memory_items WHERE tenant_id = ? ORDER BY memory_id ASC;",
+      tenantId
+    );
     const scopeIdByMemoryId = new Map(
       persistedScopeRows.map((row) => [row.memory_id, row.scope_id])
     );
@@ -1875,26 +2075,29 @@ test("ums-memory-5cb.4: sqlite storage service resolves common/project/job_role/
       `user:${tenantId}:${userId}`
     );
 
-    const commonScopeRow = db
-      .prepare(
-        "SELECT scope_id, parent_scope_id FROM scopes WHERE tenant_id = ? AND scope_level = 'common';"
-      )
-      .get(tenantId);
-    const projectScopeRow = db
-      .prepare(
-        "SELECT scope_id, parent_scope_id FROM scopes WHERE tenant_id = ? AND scope_level = 'project' AND project_id = ?;"
-      )
-      .get(tenantId, projectId);
-    const roleScopeRow = db
-      .prepare(
-        "SELECT scope_id, parent_scope_id FROM scopes WHERE tenant_id = ? AND scope_level = 'job_role' AND role_id = ?;"
-      )
-      .get(tenantId, roleId);
-    const userScopeRow = db
-      .prepare(
-        "SELECT scope_id, parent_scope_id FROM scopes WHERE tenant_id = ? AND scope_level = 'user' AND user_id = ?;"
-      )
-      .get(tenantId, userId);
+    const commonScopeRow = sqliteGet<ScopeRow>(
+      db,
+      "SELECT scope_id, parent_scope_id FROM scopes WHERE tenant_id = ? AND scope_level = 'common';",
+      tenantId
+    );
+    const projectScopeRow = sqliteGet<ScopeRow>(
+      db,
+      "SELECT scope_id, parent_scope_id FROM scopes WHERE tenant_id = ? AND scope_level = 'project' AND project_id = ?;",
+      tenantId,
+      projectId
+    );
+    const roleScopeRow = sqliteGet<ScopeRow>(
+      db,
+      "SELECT scope_id, parent_scope_id FROM scopes WHERE tenant_id = ? AND scope_level = 'job_role' AND role_id = ?;",
+      tenantId,
+      roleId
+    );
+    const userScopeRow = sqliteGet<ScopeRow>(
+      db,
+      "SELECT scope_id, parent_scope_id FROM scopes WHERE tenant_id = ? AND scope_level = 'user' AND user_id = ?;",
+      tenantId,
+      userId
+    );
 
     assert.ok(commonScopeRow);
     assert.ok(projectScopeRow);
@@ -1986,11 +2189,11 @@ test("ums-memory-5cb.4: sqlite storage service applies deterministic precedence 
       })
     );
 
-    const scopeIdRows = db
-      .prepare(
-        "SELECT memory_id, scope_id FROM memory_items WHERE tenant_id = ? ORDER BY memory_id ASC;"
-      )
-      .all(tenantId);
+    const scopeIdRows = sqliteAll<ScopeMemoryRow>(
+      db,
+      "SELECT memory_id, scope_id FROM memory_items WHERE tenant_id = ? ORDER BY memory_id ASC;",
+      tenantId
+    );
     const scopeIdByMemoryId = new Map(
       scopeIdRows.map((row) => [row.memory_id, row.scope_id])
     );
@@ -2011,11 +2214,12 @@ test("ums-memory-5cb.4: sqlite storage service applies deterministic precedence 
       `project:${tenantId}:${projectId}`
     );
 
-    const userScopeRow = db
-      .prepare(
-        "SELECT scope_id, parent_scope_id FROM scopes WHERE tenant_id = ? AND scope_level = 'user' AND user_id = ?;"
-      )
-      .get(tenantId, userId);
+    const userScopeRow = sqliteGet<ScopeRow>(
+      db,
+      "SELECT scope_id, parent_scope_id FROM scopes WHERE tenant_id = ? AND scope_level = 'user' AND user_id = ?;",
+      tenantId,
+      userId
+    );
     assert.ok(userScopeRow);
     assert.equal(userScopeRow.scope_id, `user:${tenantId}:${userId}`);
     assert.equal(
@@ -2023,11 +2227,11 @@ test("ums-memory-5cb.4: sqlite storage service applies deterministic precedence 
       `job_role:${tenantId}:${roleId}`
     );
 
-    const scopeCountRows = db
-      .prepare(
-        "SELECT scope_level, COUNT(*) AS row_count FROM scopes WHERE tenant_id = ? GROUP BY scope_level ORDER BY scope_level ASC;"
-      )
-      .all(tenantId);
+    const scopeCountRows = sqliteAll<ScopeCountRow>(
+      db,
+      "SELECT scope_level, COUNT(*) AS row_count FROM scopes WHERE tenant_id = ? GROUP BY scope_level ORDER BY scope_level ASC;",
+      tenantId
+    );
     const rowCountByScopeLevel = new Map(
       scopeCountRows.map((row) => [row.scope_level, Number(row.row_count)])
     );
@@ -2072,12 +2276,14 @@ test("ums-memory-5cb.4: createdByUserId remains audit-only and does not select s
       })
     );
 
-    const persistedRow = db
-      .prepare(
-        "SELECT scope_id, created_by_user_id FROM memory_items WHERE tenant_id = ? AND memory_id = ?;"
+    const persistedRow = expectSqliteRow(
+      sqliteGet<ScopeIdAuditRow>(
+        db,
+        "SELECT scope_id, created_by_user_id FROM memory_items WHERE tenant_id = ? AND memory_id = ?;",
+        tenantId,
+        "memory-metadata-opaque"
       )
-      .get(tenantId, "memory-metadata-opaque");
-    assert.ok(persistedRow);
+    );
     assert.equal(persistedRow.scope_id, `common:${tenantId}`);
     assert.equal(persistedRow.created_by_user_id, userId);
   } finally {
@@ -2177,12 +2383,14 @@ test("ums-memory-5cb.4: accepts legacy root scopeId when payload.scope is absent
       })
     );
 
-    const persistedRow = db
-      .prepare(
-        "SELECT scope_id FROM memory_items WHERE tenant_id = ? AND memory_id = ?;"
+    const persistedRow = expectSqliteRow(
+      sqliteGet<ScopeOnlyRow>(
+        db,
+        "SELECT scope_id FROM memory_items WHERE tenant_id = ? AND memory_id = ?;",
+        tenantId,
+        "memory-legacy-root-scope-id"
       )
-      .get(tenantId, "memory-legacy-root-scope-id");
-    assert.ok(persistedRow);
+    );
     assert.equal(persistedRow.scope_id, commonScopeId);
   } finally {
     db.close();
@@ -2463,12 +2671,14 @@ test("ums-memory-a9v.2: sqlite storage upsert enforces scope authorization for a
     );
     assert.equal(acceptedProjectResponse.accepted, true);
 
-    const persistedScopeRow = db
-      .prepare(
-        "SELECT scope_id FROM memory_items WHERE tenant_id = ? AND memory_id = ?;"
+    const persistedScopeRow = expectSqliteRow(
+      sqliteGet<ScopeOnlyRow>(
+        db,
+        "SELECT scope_id FROM memory_items WHERE tenant_id = ? AND memory_id = ?;",
+        tenantId,
+        "memory-authz-allowed-project-anchor"
       )
-      .get(tenantId, "memory-authz-allowed-project-anchor");
-    assert.ok(persistedScopeRow);
+    );
     assert.equal(
       persistedScopeRow.scope_id,
       `project:${tenantId}:${projectId}`
@@ -2555,11 +2765,11 @@ test("ums-memory-a9v.2: sqlite storage delete enforces scope authorization using
       deleted: true,
     });
 
-    const remainingMemoryRows = db
-      .prepare(
-        "SELECT memory_id FROM memory_items WHERE tenant_id = ? ORDER BY memory_id ASC;"
-      )
-      .all(tenantId);
+    const remainingMemoryRows = sqliteAll<{ readonly memory_id: string }>(
+      db,
+      "SELECT memory_id FROM memory_items WHERE tenant_id = ? ORDER BY memory_id ASC;",
+      tenantId
+    );
     assert.deepEqual(
       remainingMemoryRows.map((row) => row.memory_id),
       ["memory-authz-delete-role"]
@@ -2726,16 +2936,16 @@ test("ums-memory-5cb.5: upsert denies cross-tenant references and emits audit ev
     assert.equal(tenantIsolationEvents[3].ownerTenantId, ownerTenantId);
     assert.equal(tenantIsolationEvents[3].reason, "cross_tenant_reference");
 
-    const persistedAuditRows = db
-      .prepare(
-        [
-          "SELECT operation, outcome, reason, reference_kind, reference_id, owner_tenant_id",
-          "FROM audit_events",
-          "WHERE tenant_id = ?",
-          "ORDER BY event_id ASC;",
-        ].join("\n")
-      )
-      .all(requesterTenantId);
+    const persistedAuditRows = sqliteAll<AuditEventRow>(
+      db,
+      [
+        "SELECT operation, outcome, reason, reference_kind, reference_id, owner_tenant_id",
+        "FROM audit_events",
+        "WHERE tenant_id = ?",
+        "ORDER BY event_id ASC;",
+      ].join("\n"),
+      requesterTenantId
+    );
     assert.equal(persistedAuditRows.length, 4);
     assert.ok(persistedAuditRows.every((row) => row.operation === "upsert"));
     assert.ok(persistedAuditRows.every((row) => row.outcome === "denied"));
@@ -2804,22 +3014,24 @@ test("ums-memory-5cb.5: delete keeps not-found semantics and audits cross-tenant
     assert.equal(tenantIsolationEvents[0].ownerTenantId, ownerTenantId);
     assert.equal(tenantIsolationEvents[0].reason, "cross_tenant_delete_probe");
 
-    const persistedAuditRows = db
-      .prepare(
-        [
-          "SELECT operation, outcome, reason, reference_kind, reference_id, owner_tenant_id",
-          "FROM audit_events",
-          "WHERE tenant_id = ? AND memory_id = ?;",
-        ].join("\n")
-      )
-      .all(requesterTenantId, memoryId);
+    const persistedAuditRows = sqliteAll<AuditEventRow>(
+      db,
+      [
+        "SELECT operation, outcome, reason, reference_kind, reference_id, owner_tenant_id",
+        "FROM audit_events",
+        "WHERE tenant_id = ? AND memory_id = ?;",
+      ].join("\n"),
+      requesterTenantId,
+      memoryId
+    );
     assert.equal(persistedAuditRows.length, 1);
-    assert.equal(persistedAuditRows[0].operation, "delete");
-    assert.equal(persistedAuditRows[0].outcome, "not_found");
-    assert.equal(persistedAuditRows[0].reason, "cross_tenant_delete_probe");
-    assert.equal(persistedAuditRows[0].reference_kind, "memory");
-    assert.equal(persistedAuditRows[0].reference_id, memoryId);
-    assert.equal(persistedAuditRows[0].owner_tenant_id, ownerTenantId);
+    const persistedAuditRow = firstSqliteRow(persistedAuditRows);
+    assert.equal(persistedAuditRow.operation, "delete");
+    assert.equal(persistedAuditRow.outcome, "not_found");
+    assert.equal(persistedAuditRow.reason, "cross_tenant_delete_probe");
+    assert.equal(persistedAuditRow.reference_kind, "memory");
+    assert.equal(persistedAuditRow.reference_id, memoryId);
+    assert.equal(persistedAuditRow.owner_tenant_id, ownerTenantId);
   } finally {
     db.close();
   }
@@ -2855,8 +3067,9 @@ test("ums-memory-5cb.3: sqlite storage service upsert maps payload deterministic
     assert.equal(firstResponse.persistedAtMillis, 1_700_000_000_200);
     assert.equal(firstResponse.version, 1);
 
-    const initialPersistedRow = db
-      .prepare(
+    const initialPersistedRow = expectSqliteRow(
+      sqliteGet<StorageMemoryRow>(
+        db,
         [
           "SELECT",
           "  tenant_id,",
@@ -2872,11 +3085,11 @@ test("ums-memory-5cb.3: sqlite storage service upsert maps payload deterministic
           "  tombstoned_at_ms",
           "FROM memory_items",
           "WHERE tenant_id = ? AND memory_id = ?;",
-        ].join("\n")
+        ].join("\n"),
+        "tenant-storage",
+        "memory-a"
       )
-      .get("tenant-storage", "memory-a");
-
-    assert.ok(initialPersistedRow);
+    );
     assert.equal(initialPersistedRow.scope_id, "common:tenant-storage");
     assert.equal(initialPersistedRow.memory_layer, "working");
     assert.equal(initialPersistedRow.memory_kind, "summary");
@@ -2986,20 +3199,24 @@ test("ums-memory-5cb.3: sqlite storage service upsert maps payload deterministic
       1_700_000_000_400
     );
 
-    const rowCountAfterUpsert = db
-      .prepare(
-        "SELECT COUNT(*) AS row_count FROM memory_items WHERE tenant_id = ? AND memory_id = ?;"
+    const rowCountAfterUpsert = expectSqliteRow(
+      sqliteGet<RowCountRow>(
+        db,
+        "SELECT COUNT(*) AS row_count FROM memory_items WHERE tenant_id = ? AND memory_id = ?;",
+        "tenant-storage",
+        "memory-a"
       )
-      .get("tenant-storage", "memory-a");
+    );
     assert.equal(rowCountAfterUpsert.row_count, 1);
 
-    const tombstonedRow = db
-      .prepare(
-        "SELECT status, title, updated_at_ms, tombstoned_at_ms FROM memory_items WHERE tenant_id = ? AND memory_id = ?;"
+    const tombstonedRow = expectSqliteRow(
+      sqliteGet<TombstonedMemoryRow>(
+        db,
+        "SELECT status, title, updated_at_ms, tombstoned_at_ms FROM memory_items WHERE tenant_id = ? AND memory_id = ?;",
+        "tenant-storage",
+        "memory-a"
       )
-      .get("tenant-storage", "memory-a");
-
-    assert.ok(tombstonedRow);
+    );
     assert.equal(tombstonedRow.status, "tombstoned");
     assert.equal(
       tombstonedRow.title,
@@ -3008,12 +3225,14 @@ test("ums-memory-5cb.3: sqlite storage service upsert maps payload deterministic
     assert.equal(tombstonedRow.updated_at_ms, 1_700_000_000_400);
     assert.equal(tombstonedRow.tombstoned_at_ms, 1_700_000_000_350);
 
-    const persistedPayloadRow = db
-      .prepare(
-        "SELECT payload_json FROM memory_items WHERE tenant_id = ? AND memory_id = ?;"
+    const persistedPayloadRow = expectSqliteRow(
+      sqliteGet<PayloadJsonRow>(
+        db,
+        "SELECT payload_json FROM memory_items WHERE tenant_id = ? AND memory_id = ?;",
+        "tenant-storage",
+        "memory-a"
       )
-      .get("tenant-storage", "memory-a");
-    assert.ok(persistedPayloadRow);
+    );
     assert.equal(
       persistedPayloadRow.payload_json,
       '{"createdAtMillis":1700000000100,"status":"tombstoned","title":"Deterministic Storage Item (tombstoned)","tombstonedAtMillis":1700000000350,"updatedAtMillis":1700000000400}'
@@ -3031,23 +3250,27 @@ test("ums-memory-5cb.3: sqlite storage service upsert maps payload deterministic
       deleted: true,
     });
 
-    const rowCountAfterDelete = db
-      .prepare(
-        "SELECT COUNT(*) AS row_count FROM memory_items WHERE tenant_id = ? AND memory_id = ?;"
+    const rowCountAfterDelete = expectSqliteRow(
+      sqliteGet<RowCountRow>(
+        db,
+        "SELECT COUNT(*) AS row_count FROM memory_items WHERE tenant_id = ? AND memory_id = ?;",
+        "tenant-storage",
+        "memory-a"
       )
-      .get("tenant-storage", "memory-a");
+    );
     assert.equal(rowCountAfterDelete.row_count, 0);
 
-    const persistedAuditRows = db
-      .prepare(
-        [
-          "SELECT operation, outcome, reason, recorded_at_ms",
-          "FROM audit_events",
-          "WHERE tenant_id = ? AND memory_id = ?",
-          "ORDER BY operation ASC, reason ASC;",
-        ].join("\n")
-      )
-      .all("tenant-storage", "memory-a");
+    const persistedAuditRows = sqliteAll<AuditEventRow>(
+      db,
+      [
+        "SELECT operation, outcome, reason, recorded_at_ms",
+        "FROM audit_events",
+        "WHERE tenant_id = ? AND memory_id = ?",
+        "ORDER BY operation ASC, reason ASC;",
+      ].join("\n"),
+      "tenant-storage",
+      "memory-a"
+    );
     assert.equal(persistedAuditRows.length, 5);
     assert.deepEqual(
       persistedAuditRows.map((row) => row.reason),
@@ -3100,15 +3323,16 @@ test("ums-memory-5cb.3: sqlite storage service maps missing deletes to StorageNo
     assert.equal(replayDeleteFailure.spaceId, "tenant-storage");
     assert.equal(replayDeleteFailure.memoryId, "any-memory");
 
-    const persistedAuditRows = db
-      .prepare(
-        [
-          "SELECT operation, outcome, reason, reference_kind, reference_id, owner_tenant_id",
-          "FROM audit_events",
-          "WHERE tenant_id = ? AND memory_id = ?;",
-        ].join("\n")
-      )
-      .all("tenant-storage", "any-memory");
+    const persistedAuditRows = sqliteAll<AuditEventRow>(
+      db,
+      [
+        "SELECT operation, outcome, reason, reference_kind, reference_id, owner_tenant_id",
+        "FROM audit_events",
+        "WHERE tenant_id = ? AND memory_id = ?;",
+      ].join("\n"),
+      "tenant-storage",
+      "any-memory"
+    );
     assert.equal(persistedAuditRows.length, 2);
     assert.ok(persistedAuditRows.every((row) => row.operation === "delete"));
     assert.ok(persistedAuditRows.every((row) => row.outcome === "not_found"));
@@ -3150,12 +3374,14 @@ test("ums-memory-a9v.3: sqlite storage redacts secret and pii-like payload conte
       })
     );
 
-    const persistedMemoryRow = db
-      .prepare(
-        "SELECT title, payload_json FROM memory_items WHERE tenant_id = ? AND memory_id = ?;"
+    const persistedMemoryRow = expectSqliteRow(
+      sqliteGet<TitlePayloadRow>(
+        db,
+        "SELECT title, payload_json FROM memory_items WHERE tenant_id = ? AND memory_id = ?;",
+        "tenant-redaction-basics",
+        "memory-redaction-basics"
       )
-      .get("tenant-redaction-basics", "memory-redaction-basics");
-    assert.ok(persistedMemoryRow);
+    );
     assert.match(
       persistedMemoryRow.title,
       /^Credential dump password=\[REDACTED_SECRET:[0-9a-f]{12,64}\]$/
@@ -3215,12 +3441,14 @@ test("ums-memory-a9v.3: sqlite storage redacts quoted multi-word secret assignme
       })
     );
 
-    const persistedMemoryRow = db
-      .prepare(
-        "SELECT title, payload_json FROM memory_items WHERE tenant_id = ? AND memory_id = ?;"
+    const persistedMemoryRow = expectSqliteRow(
+      sqliteGet<TitlePayloadRow>(
+        db,
+        "SELECT title, payload_json FROM memory_items WHERE tenant_id = ? AND memory_id = ?;",
+        "tenant-redaction-quoted-secret",
+        "memory-redaction-quoted-secret"
       )
-      .get("tenant-redaction-quoted-secret", "memory-redaction-quoted-secret");
-    assert.ok(persistedMemoryRow);
+    );
     assert.ok(!persistedMemoryRow.title.includes("alpha beta gamma"));
     assert.match(
       persistedMemoryRow.title,
@@ -3260,15 +3488,14 @@ test("ums-memory-a9v.3: sqlite storage does not over-redact benign token-like fi
       })
     );
 
-    const persistedMemoryRow = db
-      .prepare(
-        "SELECT payload_json FROM memory_items WHERE tenant_id = ? AND memory_id = ?;"
-      )
-      .get(
+    const persistedMemoryRow = expectSqliteRow(
+      sqliteGet<PayloadJsonRow>(
+        db,
+        "SELECT payload_json FROM memory_items WHERE tenant_id = ? AND memory_id = ?;",
         "tenant-redaction-benign-field-names",
         "memory-redaction-benign-field-names"
-      );
-    assert.ok(persistedMemoryRow);
+      )
+    );
     const persistedPayload = JSON.parse(persistedMemoryRow.payload_json);
     assert.equal(persistedPayload.stats.tokenCount, "42");
     assert.equal(persistedPayload.stats.detokenized, "hello-world");
@@ -3315,16 +3542,17 @@ test("ums-memory-a9v.3: sqlite storage keeps evidence traceability fields while 
       })
     );
 
-    const evidenceRow = db
-      .prepare(
+    const evidenceRow = expectSqliteRow(
+      sqliteGet<EvidenceRow>(
+        db,
         [
           "SELECT source_ref, digest_sha256, payload_json",
           "FROM evidence",
           "WHERE tenant_id = ?;",
-        ].join("\n")
+        ].join("\n"),
+        "tenant-redaction-traceability"
       )
-      .get("tenant-redaction-traceability");
-    assert.ok(evidenceRow);
+    );
     assert.equal(evidenceRow.source_ref, "event://evt-trace-001");
     assert.equal(evidenceRow.digest_sha256, "a".repeat(64));
     assert.ok(!evidenceRow.payload_json.includes("analyst@example.com"));
@@ -3336,12 +3564,14 @@ test("ums-memory-a9v.3: sqlite storage keeps evidence traceability fields while 
       containsRedactedTokenCategory(evidenceRow.payload_json, "SECRET")
     );
 
-    const persistedMemoryRow = db
-      .prepare(
-        "SELECT payload_json FROM memory_items WHERE tenant_id = ? AND memory_id = ?;"
+    const persistedMemoryRow = expectSqliteRow(
+      sqliteGet<PayloadJsonRow>(
+        db,
+        "SELECT payload_json FROM memory_items WHERE tenant_id = ? AND memory_id = ?;",
+        "tenant-redaction-traceability",
+        "memory-redaction-traceability"
       )
-      .get("tenant-redaction-traceability", "memory-redaction-traceability");
-    assert.ok(persistedMemoryRow);
+    );
     const persistedPayload = JSON.parse(persistedMemoryRow.payload_json);
     assert.equal(
       persistedPayload.evidencePointers[0].sourceRef,
@@ -3374,16 +3604,18 @@ test("ums-memory-a9v.3: sqlite storage keeps evidence traceability fields while 
       /^mailto:\[REDACTED_EMAIL:[0-9a-f]{12,64}\]$/
     );
 
-    const evidenceLinkRow = db
-      .prepare(
+    const evidenceLinkRow = expectSqliteRow(
+      sqliteGet<EvidenceLinkRow>(
+        db,
         [
           "SELECT relation_kind",
           "FROM memory_evidence_links",
           "WHERE tenant_id = ? AND memory_id = ?;",
-        ].join("\n")
+        ].join("\n"),
+        "tenant-redaction-traceability",
+        "memory-redaction-traceability"
       )
-      .get("tenant-redaction-traceability", "memory-redaction-traceability");
-    assert.ok(evidenceLinkRow);
+    );
     assert.equal(evidenceLinkRow.relation_kind, "supports");
   } finally {
     db.close();
@@ -3422,15 +3654,14 @@ test("ums-memory-a9v.3: sqlite storage preserves ref/reference alias traceabilit
       })
     );
 
-    const persistedMemoryRow = db
-      .prepare(
-        "SELECT payload_json FROM memory_items WHERE tenant_id = ? AND memory_id = ?;"
-      )
-      .get(
+    const persistedMemoryRow = expectSqliteRow(
+      sqliteGet<PayloadJsonRow>(
+        db,
+        "SELECT payload_json FROM memory_items WHERE tenant_id = ? AND memory_id = ?;",
         "tenant-redaction-traceability-alias",
         "memory-redaction-traceability-alias"
-      );
-    assert.ok(persistedMemoryRow);
+      )
+    );
     const persistedPayload = JSON.parse(persistedMemoryRow.payload_json);
     assert.equal(
       persistedPayload.evidencePointers[0].ref,
@@ -3450,19 +3681,20 @@ test("ums-memory-a9v.3: sqlite storage preserves ref/reference alias traceabilit
     );
     assert.equal(replayResponse.accepted, true);
 
-    const sourceRefRows = db
-      .prepare(
-        [
-          "SELECT source_ref",
-          "FROM evidence",
-          "WHERE tenant_id = ?",
-          "ORDER BY source_ref ASC;",
-        ].join("\n")
-      )
-      .all("tenant-redaction-traceability-alias");
+    const sourceRefRows = sqliteAll<{ readonly source_ref: string }>(
+      db,
+      [
+        "SELECT source_ref",
+        "FROM evidence",
+        "WHERE tenant_id = ?",
+        "ORDER BY source_ref ASC;",
+      ].join("\n"),
+      "tenant-redaction-traceability-alias"
+    );
     assert.equal(sourceRefRows.length, 1);
-    assert.equal(sourceRefRows[0].source_ref, "mailto:analyst@example.com");
-    assert.ok(!sourceRefRows[0].source_ref.includes("[REDACTED_"));
+    const sourceRefRow = firstSqliteRow(sourceRefRows);
+    assert.equal(sourceRefRow.source_ref, "mailto:analyst@example.com");
+    assert.ok(!sourceRefRow.source_ref.includes("[REDACTED_"));
   } finally {
     db.close();
   }
@@ -3505,15 +3737,14 @@ test("ums-memory-a9v.3: sqlite storage preserves metadata.evidencePointers trace
     const replayResponse = Effect.runSync(storageService.upsertMemory(request));
     assert.deepEqual(replayResponse, firstResponse);
 
-    const persistedMemoryRow = db
-      .prepare(
-        "SELECT payload_json FROM memory_items WHERE tenant_id = ? AND memory_id = ?;"
-      )
-      .get(
+    const persistedMemoryRow = expectSqliteRow(
+      sqliteGet<PayloadJsonRow>(
+        db,
+        "SELECT payload_json FROM memory_items WHERE tenant_id = ? AND memory_id = ?;",
         "tenant-redaction-metadata-pointers",
         "memory-redaction-metadata-pointers"
-      );
-    assert.ok(persistedMemoryRow);
+      )
+    );
     const persistedPayload = JSON.parse(persistedMemoryRow.payload_json);
     assert.equal(
       persistedPayload.metadata.evidencePointers[0].sourceRef,
@@ -3541,16 +3772,17 @@ test("ums-memory-a9v.3: sqlite storage preserves metadata.evidencePointers trace
       )
     );
 
-    const evidenceRow = db
-      .prepare(
+    const evidenceRow = expectSqliteRow(
+      sqliteGet<EvidenceRow>(
+        db,
         [
           "SELECT source_ref, digest_sha256, payload_json",
           "FROM evidence",
           "WHERE tenant_id = ?;",
-        ].join("\n")
+        ].join("\n"),
+        "tenant-redaction-metadata-pointers"
       )
-      .get("tenant-redaction-metadata-pointers");
-    assert.ok(evidenceRow);
+    );
     assert.equal(evidenceRow.source_ref, "event://evt-meta-001");
     assert.equal(evidenceRow.digest_sha256, "d".repeat(64));
     assert.ok(containsRedactedTokenCategory(evidenceRow.payload_json, "EMAIL"));
@@ -3594,15 +3826,14 @@ test("ums-memory-a9v.3: sqlite storage replay from persisted payload keeps evide
       })
     );
 
-    const persistedPayloadRow = db
-      .prepare(
-        "SELECT payload_json FROM memory_items WHERE tenant_id = ? AND memory_id = ?;"
-      )
-      .get(
+    const persistedPayloadRow = expectSqliteRow(
+      sqliteGet<PayloadJsonRow>(
+        db,
+        "SELECT payload_json FROM memory_items WHERE tenant_id = ? AND memory_id = ?;",
         "tenant-redaction-evidence-digest-replay",
         "memory-redaction-evidence-digest-replay"
-      );
-    assert.ok(persistedPayloadRow);
+      )
+    );
     const persistedPayload = JSON.parse(persistedPayloadRow.payload_json);
     const persistedDigest = persistedPayload.evidencePointers[0].digestSha256;
     assert.match(String(persistedDigest), /^[0-9a-f]{64}$/);
@@ -3621,21 +3852,22 @@ test("ums-memory-a9v.3: sqlite storage replay from persisted payload keeps evide
     );
     assert.equal(replayResponse.accepted, true);
 
-    const evidenceDigestRows = db
-      .prepare(
-        [
-          "SELECT digest_sha256",
-          "FROM evidence",
-          "WHERE tenant_id = ? AND source_ref = ?",
-          "ORDER BY digest_sha256 ASC;",
-        ].join("\n")
-      )
-      .all(
-        "tenant-redaction-evidence-digest-replay",
-        "event://evt-digest-replay-001"
-      );
+    const evidenceDigestRows = sqliteAll<{ readonly digest_sha256: string }>(
+      db,
+      [
+        "SELECT digest_sha256",
+        "FROM evidence",
+        "WHERE tenant_id = ? AND source_ref = ?",
+        "ORDER BY digest_sha256 ASC;",
+      ].join("\n"),
+      "tenant-redaction-evidence-digest-replay",
+      "event://evt-digest-replay-001"
+    );
     assert.equal(evidenceDigestRows.length, 1);
-    assert.equal(evidenceDigestRows[0].digest_sha256, persistedDigest);
+    assert.equal(
+      firstSqliteRow(evidenceDigestRows).digest_sha256,
+      persistedDigest
+    );
   } finally {
     db.close();
   }
@@ -3674,37 +3906,42 @@ test("ums-memory-a9v.3: sqlite storage redaction remains deterministic for idemp
 
     assert.deepEqual(replayResponse, firstResponse);
 
-    const idempotencyRow = db
-      .prepare(
+    const idempotencyRow = expectSqliteRow(
+      sqliteGet<IdempotencyLedgerRow>(
+        db,
         [
           "SELECT request_hash_sha256, response_json",
           "FROM storage_idempotency_ledger",
           "WHERE tenant_id = ? AND operation = 'upsert' AND idempotency_key = ?;",
-        ].join("\n")
+        ].join("\n"),
+        "tenant-redaction-idempotent",
+        "redaction-idempotency-key-001"
       )
-      .get("tenant-redaction-idempotent", "redaction-idempotency-key-001");
-    assert.ok(idempotencyRow);
+    );
     assert.match(String(idempotencyRow.request_hash_sha256), /^[0-9a-f]{64}$/i);
     assert.deepEqual(JSON.parse(idempotencyRow.response_json), firstResponse);
 
-    const upsertAuditRows = db
-      .prepare(
-        [
-          "SELECT reason",
-          "FROM audit_events",
-          "WHERE tenant_id = ? AND memory_id = ? AND operation = 'upsert';",
-        ].join("\n")
-      )
-      .all("tenant-redaction-idempotent", "memory-redaction-idempotent");
+    const upsertAuditRows = sqliteAll<ReasonRow>(
+      db,
+      [
+        "SELECT reason",
+        "FROM audit_events",
+        "WHERE tenant_id = ? AND memory_id = ? AND operation = 'upsert';",
+      ].join("\n"),
+      "tenant-redaction-idempotent",
+      "memory-redaction-idempotent"
+    );
     assert.equal(upsertAuditRows.length, 1);
-    assert.equal(upsertAuditRows[0].reason, "inserted");
+    assert.equal(firstSqliteRow(upsertAuditRows).reason, "inserted");
 
-    const persistedPayloadRow = db
-      .prepare(
-        "SELECT payload_json FROM memory_items WHERE tenant_id = ? AND memory_id = ?;"
+    const persistedPayloadRow = expectSqliteRow(
+      sqliteGet<PayloadJsonRow>(
+        db,
+        "SELECT payload_json FROM memory_items WHERE tenant_id = ? AND memory_id = ?;",
+        "tenant-redaction-idempotent",
+        "memory-redaction-idempotent"
       )
-      .get("tenant-redaction-idempotent", "memory-redaction-idempotent");
-    assert.ok(persistedPayloadRow);
+    );
     assert.ok(!persistedPayloadRow.payload_json.includes("hunter2"));
     assert.ok(!persistedPayloadRow.payload_json.includes("replay@example.com"));
     assert.ok(!persistedPayloadRow.payload_json.includes("+1 415-555-0133"));
@@ -3806,13 +4043,14 @@ test("ums-memory-a9v.4: sqlite storage encrypts memory payload_json at rest and 
 
     assert.deepEqual(replayResponse, firstResponse);
 
-    const persistedRow = db
-      .prepare(
-        "SELECT payload_json FROM memory_items WHERE tenant_id = ? AND memory_id = ?;"
+    const persistedRow = expectSqliteRow(
+      sqliteGet<PayloadJsonRow>(
+        db,
+        "SELECT payload_json FROM memory_items WHERE tenant_id = ? AND memory_id = ?;",
+        request.spaceId,
+        request.memoryId
       )
-      .get(request.spaceId, request.memoryId);
-    assert.ok(persistedRow);
-    assert.ok(typeof persistedRow.payload_json === "string");
+    );
     assert.ok(
       !persistedRow.payload_json.includes("Encrypted at-rest payload baseline")
     );
@@ -3820,30 +4058,34 @@ test("ums-memory-a9v.4: sqlite storage encrypts memory payload_json at rest and 
     assert.ok(!persistedRow.payload_json.includes("atrest@example.com"));
     const envelope = readEncryptedPayloadEnvelope(persistedRow.payload_json);
     assert.equal(envelope.keyId, "key-v1");
-    const persistedFtsRow = db
-      .prepare(
+    const persistedFtsRow = expectSqliteRow(
+      sqliteGet<PayloadTextRow>(
+        db,
         [
           "SELECT payload_text FROM memory_items_fts",
           "WHERE rowid = (",
           "  SELECT rowid FROM memory_items WHERE tenant_id = ? AND memory_id = ?",
           "  LIMIT 1",
           ");",
-        ].join("\n")
+        ].join("\n"),
+        request.spaceId,
+        request.memoryId
       )
-      .get(request.spaceId, request.memoryId);
-    assert.ok(persistedFtsRow);
+    );
     assert.equal(persistedFtsRow.payload_text, "");
 
-    const idempotencyRow = db
-      .prepare(
+    const idempotencyRow = expectSqliteRow(
+      sqliteGet<IdempotencyLedgerRow>(
+        db,
         [
           "SELECT request_hash_sha256, response_json",
           "FROM storage_idempotency_ledger",
           "WHERE tenant_id = ? AND operation = 'upsert' AND idempotency_key = ?;",
-        ].join("\n")
+        ].join("\n"),
+        request.spaceId,
+        request.idempotencyKey
       )
-      .get(request.spaceId, request.idempotencyKey);
-    assert.ok(idempotencyRow);
+    );
     assert.match(String(idempotencyRow.request_hash_sha256), /^[0-9a-f]{64}$/);
     assert.deepEqual(JSON.parse(idempotencyRow.response_json), firstResponse);
   } finally {
@@ -3870,18 +4112,20 @@ test("ums-memory-a9v.4: sqlite storage scrubs legacy FTS payload text when encry
       })
     );
 
-    const ftsBefore = db
-      .prepare(
+    const ftsBefore = expectSqliteRow(
+      sqliteGet<PayloadTextRow>(
+        db,
         [
           "SELECT payload_text FROM memory_items_fts",
           "WHERE rowid = (",
           "  SELECT rowid FROM memory_items WHERE tenant_id = ? AND memory_id = ?",
           "  LIMIT 1",
           ");",
-        ].join("\n")
+        ].join("\n"),
+        "tenant-a9v4-fts-scrub",
+        "memory-a9v4-fts-scrub"
       )
-      .get("tenant-a9v4-fts-scrub", "memory-a9v4-fts-scrub");
-    assert.ok(ftsBefore);
+    );
     assert.match(ftsBefore.payload_text, /legacy plaintext payload term/i);
 
     storageServiceModule.makeSqliteStorageService(db, {
@@ -3895,18 +4139,20 @@ test("ums-memory-a9v.4: sqlite storage scrubs legacy FTS payload text when encry
       },
     });
 
-    const ftsAfter = db
-      .prepare(
+    const ftsAfter = expectSqliteRow(
+      sqliteGet<PayloadTextRow>(
+        db,
         [
           "SELECT payload_text FROM memory_items_fts",
           "WHERE rowid = (",
           "  SELECT rowid FROM memory_items WHERE tenant_id = ? AND memory_id = ?",
           "  LIMIT 1",
           ");",
-        ].join("\n")
+        ].join("\n"),
+        "tenant-a9v4-fts-scrub",
+        "memory-a9v4-fts-scrub"
       )
-      .get("tenant-a9v4-fts-scrub", "memory-a9v4-fts-scrub");
-    assert.ok(ftsAfter);
+    );
     assert.equal(ftsAfter.payload_text, "");
   } finally {
     db.close();
@@ -3988,12 +4234,14 @@ test("ums-memory-a9v.4: sqlite storage decrypts older key ids from keyRing and r
       })
     );
 
-    const initialPersistedRow = db
-      .prepare(
-        "SELECT payload_json FROM memory_items WHERE tenant_id = ? AND memory_id = ?;"
+    const initialPersistedRow = expectSqliteRow(
+      sqliteGet<PayloadJsonRow>(
+        db,
+        "SELECT payload_json FROM memory_items WHERE tenant_id = ? AND memory_id = ?;",
+        "tenant-a9v4-rotation",
+        "memory-a9v4-rotation"
       )
-      .get("tenant-a9v4-rotation", "memory-a9v4-rotation");
-    assert.ok(initialPersistedRow);
+    );
     const initialEnvelope = readEncryptedPayloadEnvelope(
       initialPersistedRow.payload_json
     );
@@ -4037,12 +4285,14 @@ test("ums-memory-a9v.4: sqlite storage decrypts older key ids from keyRing and r
     assert.equal(rotatedResponse.accepted, true);
     assert.equal(rotatedResponse.persistedAtMillis, 1_700_000_130_101);
 
-    const rotatedPersistedRow = db
-      .prepare(
-        "SELECT payload_json FROM memory_items WHERE tenant_id = ? AND memory_id = ?;"
+    const rotatedPersistedRow = expectSqliteRow(
+      sqliteGet<PayloadJsonRow>(
+        db,
+        "SELECT payload_json FROM memory_items WHERE tenant_id = ? AND memory_id = ?;",
+        "tenant-a9v4-rotation",
+        "memory-a9v4-rotation"
       )
-      .get("tenant-a9v4-rotation", "memory-a9v4-rotation");
-    assert.ok(rotatedPersistedRow);
+    );
     const rotatedEnvelope = readEncryptedPayloadEnvelope(
       rotatedPersistedRow.payload_json
     );
@@ -4162,18 +4412,20 @@ test("ums-memory-a9v.4: sqlite storage snapshot import scrubs FTS payload text w
     assert.equal(importResponse.imported, true);
     assert.equal(importResponse.replayed, false);
 
-    const importedFtsRow = targetDb
-      .prepare(
+    const importedFtsRow = expectSqliteRow(
+      sqliteGet<PayloadTextRow>(
+        targetDb,
         [
           "SELECT payload_text FROM memory_items_fts",
           "WHERE rowid = (",
           "  SELECT rowid FROM memory_items WHERE tenant_id = ? AND memory_id = ?",
           "  LIMIT 1",
           ");",
-        ].join("\n")
+        ].join("\n"),
+        "tenant-a9v4-snapshot-fts",
+        "memory-a9v4-snapshot-fts"
       )
-      .get("tenant-a9v4-snapshot-fts", "memory-a9v4-snapshot-fts");
-    assert.ok(importedFtsRow);
+    );
     assert.equal(importedFtsRow.payload_text, "");
   } finally {
     sourceDb.close();
@@ -4214,30 +4466,33 @@ test("ums-memory-5cb.10: sqlite storage service replays upsert responses determi
 
     assert.deepEqual(replayResponse, firstResponse);
 
-    const upsertAuditRows = db
-      .prepare(
-        [
-          "SELECT reason FROM audit_events",
-          "WHERE tenant_id = ? AND memory_id = ? AND operation = 'upsert'",
-          "ORDER BY event_id ASC;",
-        ].join("\n")
-      )
-      .all("tenant-idempotency-upsert", "memory-idempotency-upsert");
+    const upsertAuditRows = sqliteAll<ReasonRow>(
+      db,
+      [
+        "SELECT reason FROM audit_events",
+        "WHERE tenant_id = ? AND memory_id = ? AND operation = 'upsert'",
+        "ORDER BY event_id ASC;",
+      ].join("\n"),
+      "tenant-idempotency-upsert",
+      "memory-idempotency-upsert"
+    );
     assert.deepEqual(
       upsertAuditRows.map((row) => row.reason),
       ["inserted"]
     );
 
-    const idempotencyRow = db
-      .prepare(
+    const idempotencyRow = expectSqliteRow(
+      sqliteGet<IdempotencyLedgerRow>(
+        db,
         [
           "SELECT request_hash_sha256, response_json",
           "FROM storage_idempotency_ledger",
           "WHERE tenant_id = ? AND operation = 'upsert' AND idempotency_key = ?;",
-        ].join("\n")
+        ].join("\n"),
+        "tenant-idempotency-upsert",
+        "upsert-key-001"
       )
-      .get("tenant-idempotency-upsert", "upsert-key-001");
-    assert.ok(idempotencyRow);
+    );
     assert.match(String(idempotencyRow.request_hash_sha256), /^[0-9a-f]{64}$/i);
     assert.deepEqual(JSON.parse(idempotencyRow.response_json), firstResponse);
   } finally {
@@ -4352,14 +4607,14 @@ test("ums-memory-5cb.10: sqlite storage service rejects upsert idempotency key r
     );
     assert.match(conflictFailure.message, /reuse conflict/i);
 
-    const persistedMemoryRow = db
-      .prepare(
-        "SELECT title, updated_at_ms FROM memory_items WHERE tenant_id = ? AND memory_id = ?;"
-      )
-      .get(
+    const persistedMemoryRow = expectSqliteRow(
+      sqliteGet<TitleUpdatedAtRow>(
+        db,
+        "SELECT title, updated_at_ms FROM memory_items WHERE tenant_id = ? AND memory_id = ?;",
         "tenant-idempotency-upsert-conflict",
         "memory-idempotency-upsert-conflict"
-      );
+      )
+    );
     assert.equal(
       persistedMemoryRow.title,
       "Idempotent upsert conflict baseline"
@@ -4405,30 +4660,33 @@ test("ums-memory-5cb.10: sqlite storage service replays delete responses determi
 
     assert.deepEqual(replayDeleteResponse, firstDeleteResponse);
 
-    const deleteAuditRows = db
-      .prepare(
-        [
-          "SELECT reason FROM audit_events",
-          "WHERE tenant_id = ? AND memory_id = ? AND operation = 'delete'",
-          "ORDER BY event_id ASC;",
-        ].join("\n")
-      )
-      .all("tenant-idempotency-delete", "memory-idempotency-delete");
+    const deleteAuditRows = sqliteAll<ReasonRow>(
+      db,
+      [
+        "SELECT reason FROM audit_events",
+        "WHERE tenant_id = ? AND memory_id = ? AND operation = 'delete'",
+        "ORDER BY event_id ASC;",
+      ].join("\n"),
+      "tenant-idempotency-delete",
+      "memory-idempotency-delete"
+    );
     assert.deepEqual(
       deleteAuditRows.map((row) => row.reason),
       ["deleted"]
     );
 
-    const idempotencyRow = db
-      .prepare(
+    const idempotencyRow = expectSqliteRow(
+      sqliteGet<IdempotencyLedgerRow>(
+        db,
         [
           "SELECT request_hash_sha256, response_json",
           "FROM storage_idempotency_ledger",
           "WHERE tenant_id = ? AND operation = 'delete' AND idempotency_key = ?;",
-        ].join("\n")
+        ].join("\n"),
+        "tenant-idempotency-delete",
+        "delete-key-001"
       )
-      .get("tenant-idempotency-delete", "delete-key-001");
-    assert.ok(idempotencyRow);
+    );
     assert.match(String(idempotencyRow.request_hash_sha256), /^[0-9a-f]{64}$/i);
     assert.deepEqual(
       JSON.parse(idempotencyRow.response_json),
@@ -4494,11 +4752,14 @@ test("ums-memory-5cb.10: sqlite storage service rejects delete idempotency key r
     );
     assert.match(conflictFailure.message, /reuse conflict/i);
 
-    const remainingMemoryRow = db
-      .prepare(
-        "SELECT memory_id FROM memory_items WHERE tenant_id = ? AND memory_id = ?;"
+    const remainingMemoryRow = expectSqliteRow(
+      sqliteGet<{ readonly memory_id: string }>(
+        db,
+        "SELECT memory_id FROM memory_items WHERE tenant_id = ? AND memory_id = ?;",
+        "tenant-idempotency-delete-conflict",
+        "memory-idempotency-delete-b"
       )
-      .get("tenant-idempotency-delete-conflict", "memory-idempotency-delete-b");
+    );
     assert.equal(remainingMemoryRow.memory_id, "memory-idempotency-delete-b");
   } finally {
     db.close();
@@ -5221,8 +5482,9 @@ test("ums-memory-yji.4: sqlite storage repository enables WAL journal mode when 
       },
     });
 
-    const journalModeRow = db.prepare("PRAGMA journal_mode;").get();
-    assert.ok(journalModeRow);
+    const journalModeRow = expectSqliteRow(
+      sqliteGet<{ readonly journal_mode: string }>(db, "PRAGMA journal_mode;")
+    );
     assert.equal(String(journalModeRow.journal_mode).toLowerCase(), "wal");
   } finally {
     db.close();

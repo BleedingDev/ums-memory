@@ -1,15 +1,35 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
-import { DatabaseSync } from "node:sqlite";
-import test from "node:test";
 
-import ts from "typescript";
+import { test } from "@effect-native/bun-test";
+
+import { DatabaseSync } from "../../libs/shared/src/effect/storage/sqlite/database.ts";
+import { sqliteAll, sqliteGet } from "./sqlite-test-helpers.ts";
+
+type EnterpriseSchemaModule =
+  typeof import("../../libs/shared/src/effect/storage/sqlite/enterprise-schema.ts");
+type EnterpriseSqliteTable =
+  EnterpriseSchemaModule["enterpriseSqliteTables"][number];
+type EnterpriseSqliteIndex =
+  EnterpriseSchemaModule["enterpriseSqliteIndexes"][number];
+type EnterpriseSqliteTrigger =
+  EnterpriseSchemaModule["enterpriseSqliteTriggers"][number];
+type DetailRow = { readonly detail?: string | null };
+type MemoryIdRow = { readonly memory_id: string };
+type RowCountRow = { readonly row_count: number | bigint };
+
+const getRequiredValue = <T>(
+  value: T | null | undefined,
+  message = "Expected value to be defined."
+): NonNullable<T> => {
+  assert.notEqual(value, undefined, message);
+  assert.notEqual(value, null, message);
+  return value as NonNullable<T>;
+};
 
 const schemaPath = new URL(
   "../../libs/shared/src/effect/storage/sqlite/enterprise-schema.ts",
   import.meta.url
 );
-const schemaSource = readFileSync(schemaPath, "utf8");
 
 const expectedTableOrder = Object.freeze([
   "tenants",
@@ -85,45 +105,42 @@ const expectedTriggerOrder = Object.freeze([
   "trg_audit_events_append_only_delete",
 ]);
 
-let schemaModulePromise: any;
+let schemaModulePromise: Promise<EnterpriseSchemaModule> | undefined;
 
 const loadSchemaModule = async () => {
   if (!schemaModulePromise) {
-    const transpiled = ts.transpileModule(schemaSource, {
-      fileName: schemaPath.pathname,
-      compilerOptions: {
-        module: ts.ModuleKind.ES2022,
-        target: ts.ScriptTarget.ES2022,
-      },
-    });
-    const encoded = Buffer.from(transpiled.outputText, "utf8").toString(
-      "base64"
-    );
-    schemaModulePromise = import(`data:text/javascript;base64,${encoded}`);
+    schemaModulePromise = import(
+      schemaPath.href
+    ) as Promise<EnterpriseSchemaModule>;
   }
   return schemaModulePromise;
 };
 
-const expectConstraintFailure = (callback: any) => {
+const expectConstraintFailure = (callback: () => void) => {
   assert.throws(
     callback,
     /constraint|check|foreign key|scope_parent_level_invalid|scope_cycle_detected|scope_level_immutable|scope_anchor_immutable|memory_supersedes_cycle_detected|audit_events_append_only/i
   );
 };
 
-const countRows = (db: any, tableName: any) => {
-  const result = db
-    .prepare(`SELECT COUNT(*) AS row_count FROM ${tableName}`)
-    .get();
+const countRows = (db: DatabaseSync, tableName: string) => {
+  const result = sqliteGet<RowCountRow>(
+    db,
+    `SELECT COUNT(*) AS row_count FROM ${tableName}`
+  );
   return Number(result?.row_count ?? 0);
 };
 
-const countRowsByTenant = (db: any, tableName: any, tenantId: any) => {
-  const result = db
-    .prepare(
-      `SELECT COUNT(*) AS row_count FROM ${tableName} WHERE tenant_id = ?`
-    )
-    .get(tenantId);
+const countRowsByTenant = (
+  db: DatabaseSync,
+  tableName: string,
+  tenantId: string
+) => {
+  const result = sqliteGet<RowCountRow>(
+    db,
+    `SELECT COUNT(*) AS row_count FROM ${tableName} WHERE tenant_id = ?`,
+    tenantId
+  );
   return Number(result?.row_count ?? 0);
 };
 
@@ -143,15 +160,21 @@ test("ums-memory-5cb.1: enterprise sqlite schema ordering is deterministic", asy
     [...expectedTriggerOrder]
   );
   assert.deepEqual(
-    schema.enterpriseSqliteTables.map((table: any) => table.name),
+    schema.enterpriseSqliteTables.map(
+      (table: EnterpriseSqliteTable) => table.name
+    ),
     [...expectedTableOrder]
   );
   assert.deepEqual(
-    schema.enterpriseSqliteIndexes.map((index: any) => index.name),
+    schema.enterpriseSqliteIndexes.map(
+      (index: EnterpriseSqliteIndex) => index.name
+    ),
     [...expectedIndexOrder]
   );
   assert.deepEqual(
-    schema.enterpriseSqliteTriggers.map((trigger: any) => trigger.name),
+    schema.enterpriseSqliteTriggers.map(
+      (trigger: EnterpriseSqliteTrigger) => trigger.name
+    ),
     [...expectedTriggerOrder]
   );
   assert.equal(schema.enterpriseSqliteTables.length, expectedTableOrder.length);
@@ -165,9 +188,15 @@ test("ums-memory-5cb.1: enterprise sqlite schema ordering is deterministic", asy
   );
 
   const expectedStatements = [
-    ...schema.enterpriseSqliteTables.map((table: any) => table.ddl),
-    ...schema.enterpriseSqliteTriggers.map((trigger: any) => trigger.ddl),
-    ...schema.enterpriseSqliteIndexes.map((index: any) => index.ddl),
+    ...schema.enterpriseSqliteTables.map(
+      (table: EnterpriseSqliteTable) => table.ddl
+    ),
+    ...schema.enterpriseSqliteTriggers.map(
+      (trigger: EnterpriseSqliteTrigger) => trigger.ddl
+    ),
+    ...schema.enterpriseSqliteIndexes.map(
+      (index: EnterpriseSqliteIndex) => index.ddl
+    ),
   ];
   assert.deepEqual(schema.enterpriseSqliteSchemaStatements, expectedStatements);
   assert.equal(
@@ -636,11 +665,13 @@ test("ums-memory-5cb.1: enterprise sqlite schema enforces key constraints at run
     );
     assert.equal(
       Number(
-        db
-          .prepare(
-            "SELECT COUNT(*) AS row_count FROM project_memberships WHERE tenant_id = ? AND project_id = ? AND user_id = ?"
-          )
-          .get("tenant_a", "project_a", "user_a")?.row_count ?? 0
+        sqliteGet<RowCountRow>(
+          db,
+          "SELECT COUNT(*) AS row_count FROM project_memberships WHERE tenant_id = ? AND project_id = ? AND user_id = ?",
+          "tenant_a",
+          "project_a",
+          "user_a"
+        )?.row_count ?? 0
       ),
       0
     );
@@ -867,12 +898,14 @@ test("ums-memory-5cb.6: enterprise sqlite schema keeps FTS5 index in sync and qu
       null
     );
 
-    const initialSearchRows = db
-      .prepare(
-        "SELECT tenant_id, memory_id FROM memory_items_fts WHERE memory_items_fts MATCH ? AND tenant_id = ?;"
-      )
-      .all("beta", "tenant_fts");
+    const initialSearchRows = sqliteAll<MemoryIdRow>(
+      db,
+      "SELECT tenant_id, memory_id FROM memory_items_fts WHERE memory_items_fts MATCH ? AND tenant_id = ?;",
+      "beta",
+      "tenant_fts"
+    );
     assert.equal(initialSearchRows.length, 1);
+    assert.ok(initialSearchRows[0]);
     assert.equal(initialSearchRows[0].memory_id, "memory_fts_1");
 
     db.prepare(
@@ -883,25 +916,29 @@ test("ums-memory-5cb.6: enterprise sqlite schema keeps FTS5 index in sync and qu
       "tenant_fts",
       "memory_fts_1"
     );
-    const oldKeywordRows = db
-      .prepare(
-        "SELECT memory_id FROM memory_items_fts WHERE memory_items_fts MATCH ? AND tenant_id = ?;"
-      )
-      .all("beta", "tenant_fts");
-    const newKeywordRows = db
-      .prepare(
-        "SELECT memory_id FROM memory_items_fts WHERE memory_items_fts MATCH ? AND tenant_id = ?;"
-      )
-      .all("gamma", "tenant_fts");
+    const oldKeywordRows = sqliteAll<MemoryIdRow>(
+      db,
+      "SELECT memory_id FROM memory_items_fts WHERE memory_items_fts MATCH ? AND tenant_id = ?;",
+      "beta",
+      "tenant_fts"
+    );
+    const newKeywordRows = sqliteAll<MemoryIdRow>(
+      db,
+      "SELECT memory_id FROM memory_items_fts WHERE memory_items_fts MATCH ? AND tenant_id = ?;",
+      "gamma",
+      "tenant_fts"
+    );
     assert.equal(oldKeywordRows.length, 0);
     assert.equal(newKeywordRows.length, 1);
+    assert.ok(newKeywordRows[0]);
     assert.equal(newKeywordRows[0].memory_id, "memory_fts_1");
 
-    const queryPlanRows = db
-      .prepare(
-        "EXPLAIN QUERY PLAN SELECT memory_id FROM memory_items_fts WHERE memory_items_fts MATCH ? AND tenant_id = ? LIMIT 5;"
-      )
-      .all("gamma", "tenant_fts");
+    const queryPlanRows = sqliteAll<DetailRow>(
+      db,
+      "EXPLAIN QUERY PLAN SELECT memory_id FROM memory_items_fts WHERE memory_items_fts MATCH ? AND tenant_id = ? LIMIT 5;",
+      "gamma",
+      "tenant_fts"
+    );
     const planDetails = queryPlanRows.map((row) => String(row.detail ?? ""));
     assert.ok(
       planDetails.some(
@@ -913,11 +950,12 @@ test("ums-memory-5cb.6: enterprise sqlite schema keeps FTS5 index in sync and qu
     db.prepare(
       "DELETE FROM memory_items WHERE tenant_id = ? AND memory_id = ?;"
     ).run("tenant_fts", "memory_fts_1");
-    const deletedRows = db
-      .prepare(
-        "SELECT memory_id FROM memory_items_fts WHERE memory_items_fts MATCH ? AND tenant_id = ?;"
-      )
-      .all("gamma", "tenant_fts");
+    const deletedRows = sqliteAll<MemoryIdRow>(
+      db,
+      "SELECT memory_id FROM memory_items_fts WHERE memory_items_fts MATCH ? AND tenant_id = ?;",
+      "gamma",
+      "tenant_fts"
+    );
     assert.equal(deletedRows.length, 0);
   } finally {
     db.close();

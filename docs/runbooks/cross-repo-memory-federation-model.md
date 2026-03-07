@@ -124,13 +124,13 @@ Minimum monitoring surface:
 
 ## Rollout Plan
 
-| Phase | Goal | Exit criteria |
-| --- | --- | --- |
-| 0. Contract lock | Freeze federation schema and policy contract | runbook approved and linked from standards |
-| 1. Read-only shadow | evaluate federation candidates without serving results | zero policy mismatch against control checks |
-| 2. Controlled read canary | enable federated retrieval for allowlisted spaces | latency and deny-rate gates remain within targets |
-| 3. Broader read rollout | expand to more spaces with audit hardening | stable metrics for 14 days |
-| 4. Candidate promotion mode | allow promotion-candidate writes when explicitly enabled | policy and audit checks remain green |
+| Phase                       | Goal                                                     | Exit criteria                                     |
+| --------------------------- | -------------------------------------------------------- | ------------------------------------------------- |
+| 0. Contract lock            | Freeze federation schema and policy contract             | runbook approved and linked from standards        |
+| 1. Read-only shadow         | evaluate federation candidates without serving results   | zero policy mismatch against control checks       |
+| 2. Controlled read canary   | enable federated retrieval for allowlisted spaces        | latency and deny-rate gates remain within targets |
+| 3. Broader read rollout     | expand to more spaces with audit hardening               | stable metrics for 14 days                        |
+| 4. Candidate promotion mode | allow promotion-candidate writes when explicitly enabled | policy and audit checks remain green              |
 
 ## Go/No-Go Metrics
 

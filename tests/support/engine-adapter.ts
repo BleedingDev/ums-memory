@@ -2,6 +2,7 @@ import { isAbsolute, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
 const DEFAULT_EXPORT_NAME = "createUmsEngine";
+const REFERENCE_ENGINE_FALLBACK_ENV = "UMS_ALLOW_REFERENCE_ENGINE_FALLBACK";
 
 type EngineFactory = (
   options?: Record<string, unknown>
@@ -42,6 +43,7 @@ async function loadEngineFactory(): Promise<LoadedEngineFactory> {
   const exportName = process.env["UMS_IMPL_EXPORT"] || DEFAULT_EXPORT_NAME;
 
   if (!modulePath) {
+    let importFailure: unknown;
     try {
       const mod = (await import(
         toModuleSpecifier("./apps/api/src/ums/engine.ts")
@@ -53,8 +55,16 @@ async function loadEngineFactory(): Promise<LoadedEngineFactory> {
           exportName: "createUmsEngine",
         };
       }
-    } catch {
-      // Fall back to the local reference engine in test-only contexts.
+    } catch (cause) {
+      importFailure = cause;
+    }
+    if (process.env[REFERENCE_ENGINE_FALLBACK_ENV] !== "1") {
+      throw (
+        importFailure ??
+        new TypeError(
+          "Default UMS engine module did not export createUmsEngine."
+        )
+      );
     }
     const fallback = (await import("./reference-ums-engine.ts")) as {
       createUmsEngine: EngineFactory;

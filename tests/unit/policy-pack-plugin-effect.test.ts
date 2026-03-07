@@ -7,9 +7,9 @@ import {
   writeFileSync,
 } from "node:fs";
 import { dirname, join } from "node:path";
-import test from "node:test";
 import { pathToFileURL } from "node:url";
 
+import { test } from "@effect-native/bun-test";
 import { Effect } from "effect";
 import ts from "typescript";
 
@@ -84,11 +84,11 @@ const loadPolicyPackPluginModules = async () => {
       join(transpiledDirectoryPath, "services/policy-pack-plugin-service.js")
     ).href;
 
-    modulesPromise = Promise.all([
-      import(policyPackPluginServiceModuleUrl),
-    ]).then(([policyPackPluginServiceModule]) => ({
-      policyPackPluginServiceModule,
-    }));
+    modulesPromise = import(policyPackPluginServiceModuleUrl).then(
+      (policyPackPluginServiceModule) => ({
+        policyPackPluginServiceModule,
+      })
+    );
   }
 
   return modulesPromise;

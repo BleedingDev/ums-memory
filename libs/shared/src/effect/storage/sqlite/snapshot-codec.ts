@@ -1,5 +1,6 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
-import type { DatabaseSync } from "node:sqlite";
+
+import type { DatabaseSync } from "./database.ts";
 
 export const sqliteStorageSnapshotFormat =
   "ums-memory/sqlite-storage-snapshot/v1";

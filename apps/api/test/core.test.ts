@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 
+import { beforeEach, test } from "@effect-native/bun-test";
 import { Effect } from "effect";
 
 import {
@@ -20,7 +20,7 @@ import {
   snapshotProfile,
 } from "../src/core.ts";
 
-test.beforeEach(() => {
+beforeEach(() => {
   resetStore();
   resetPolicyPackPlugin();
 });
@@ -2143,24 +2143,23 @@ test("attribution ranking policy gates context nudges and suppresses safety-regr
     attributionRankingTopK: 3,
   });
 
-  assert.deepEqual(
-    ranked.observability.attributionRanking.baselineRuleIds,
-    [suppressed.ruleId, boosted.ruleId, neutral.ruleId]
-  );
-  assert.deepEqual(
-    ranked.observability.attributionRanking.rankedRuleIds,
-    [boosted.ruleId, neutral.ruleId, suppressed.ruleId]
-  );
+  assert.deepEqual(ranked.observability.attributionRanking.baselineRuleIds, [
+    suppressed.ruleId,
+    boosted.ruleId,
+    neutral.ruleId,
+  ]);
+  assert.deepEqual(ranked.observability.attributionRanking.rankedRuleIds, [
+    boosted.ruleId,
+    neutral.ruleId,
+    suppressed.ruleId,
+  ]);
   assert.equal(ranked.observability.attributionRanking.applied, true);
   assert.deepEqual(
     ranked.rules.map((rule: any) => rule.ruleId),
     [boosted.ruleId, neutral.ruleId, suppressed.ruleId]
   );
   assert.equal(ranked.rules[0]?.attribution.direction, "helpful");
-  assert.equal(
-    ranked.rules[2]?.attribution.advisoryOnly,
-    true
-  );
+  assert.equal(ranked.rules[2]?.attribution.advisoryOnly, true);
 
   const suppressedAttribution = executeOperation("shadow_attribution", {
     storeId,

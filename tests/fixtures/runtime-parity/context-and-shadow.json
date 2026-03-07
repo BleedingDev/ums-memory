@@ -1,0 +1,42 @@
+{
+  "name": "context-and-shadow",
+  "operations": [
+    {
+      "operation": "ingest",
+      "request": {
+        "storeId": "tenant-a",
+        "profile": "alpha",
+        "events": [
+          {
+            "type": "note",
+            "source": "codex",
+            "content": "Bounded deterministic context retrieval."
+          }
+        ]
+      }
+    },
+    {
+      "operation": "shadow_write",
+      "request": {
+        "storeId": "tenant-a",
+        "profile": "alpha",
+        "candidateId": "cand-context-1",
+        "statement": "Prefer bounded deterministic context retrieval.",
+        "sourceEventIds": ["evt-context-1"],
+        "evidenceEventIds": ["evt-context-1"],
+        "status": "shadow",
+        "createdAt": "2026-03-01T00:00:00.000Z",
+        "updatedAt": "2026-03-01T00:00:00.000Z",
+        "expiresAt": "2026-12-01T00:00:00.000Z"
+      }
+    },
+    {
+      "operation": "context",
+      "request": {
+        "storeId": "tenant-a",
+        "profile": "alpha",
+        "query": "deterministic context retrieval"
+      }
+    }
+  ]
+}

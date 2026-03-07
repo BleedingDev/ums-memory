@@ -1,6 +1,6 @@
-# Effect npm Version Availability
+# Effect Version Availability
 
-As of March 3, 2026, `npm view effect version dist-tags --json` returns:
+As of March 3, 2026, the recorded package registry snapshot is:
 
 ```json
 {

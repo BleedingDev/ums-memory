@@ -5,13 +5,15 @@ import {
   type ChildProcessWithoutNullStreams,
 } from "node:child_process";
 import { constants as fsConstants } from "node:fs";
-import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { access, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
-import test from "node:test";
+
+import { afterAll, beforeAll, test } from "@effect-native/bun-test";
 const ROOT = process.cwd();
 const BUN_AVAILABLE =
   spawnSync("bun", ["--version"], { encoding: "utf8" }).status === 0;
+const testIfBunAvailable = BUN_AVAILABLE ? test : test.skip;
 
 let buildDir: string | null = null;
 let cliBinaryPath: string | null = null;
@@ -50,7 +52,7 @@ function runBinary(
   });
 }
 
-test.before(async () => {
+beforeAll(async () => {
   if (!BUN_AVAILABLE) {
     return;
   }
@@ -80,15 +82,14 @@ test.before(async () => {
   await access(cliBinaryPath, fsConstants.X_OK);
 });
 
-test.after(async () => {
+afterAll(async () => {
   if (buildDir) {
     await rm(buildDir, { recursive: true, force: true });
   }
 });
 
-test(
+testIfBunAvailable(
   "compiled CLI supports --input + --state-file + --store-id with replayed context recall",
-  { skip: !BUN_AVAILABLE },
   async () => {
     const tempDir = await mkdtemp(resolve(tmpdir(), "ums-cli-sfe-state-"));
     const stateFile = resolve(tempDir, "state.json");
@@ -142,9 +143,8 @@ test(
   }
 );
 
-test(
+testIfBunAvailable(
   "compiled CLI supports --file input and --pretty formatting",
-  { skip: !BUN_AVAILABLE },
   async () => {
     const tempDir = await mkdtemp(resolve(tmpdir(), "ums-cli-sfe-file-"));
     const stateFile = resolve(tempDir, "state.json");
@@ -181,40 +181,35 @@ test(
   }
 );
 
-test(
-  "compiled CLI supports stdin JSON input",
-  { skip: !BUN_AVAILABLE },
-  async () => {
-    const tempDir = await mkdtemp(resolve(tmpdir(), "ums-cli-sfe-stdin-"));
-    const stateFile = resolve(tempDir, "state.json");
-    try {
-      assert.ok(cliBinaryPath);
-      const binaryPath = cliBinaryPath;
-      const ingest = await runBinary(
-        binaryPath,
-        ["ingest", "--state-file", stateFile, "--store-id", "coding-agent"],
-        {
-          stdin: JSON.stringify({
-            profile: "sfe-cli-stdin",
-            events: [
-              { type: "task", source: "stdin", content: "stdin payload path" },
-            ],
-          }),
-        }
-      );
-      assert.equal((ingest as any).code, 0);
-      const body = JSON.parse((ingest as any).stdout);
-      assert.equal(body.ok, true);
-      assert.equal(body.data.profile, "sfe-cli-stdin");
-    } finally {
-      await rm(tempDir, { recursive: true, force: true });
-    }
+testIfBunAvailable("compiled CLI supports stdin JSON input", async () => {
+  const tempDir = await mkdtemp(resolve(tmpdir(), "ums-cli-sfe-stdin-"));
+  const stateFile = resolve(tempDir, "state.json");
+  try {
+    assert.ok(cliBinaryPath);
+    const binaryPath = cliBinaryPath;
+    const ingest = await runBinary(
+      binaryPath,
+      ["ingest", "--state-file", stateFile, "--store-id", "coding-agent"],
+      {
+        stdin: JSON.stringify({
+          profile: "sfe-cli-stdin",
+          events: [
+            { type: "task", source: "stdin", content: "stdin payload path" },
+          ],
+        }),
+      }
+    );
+    assert.equal((ingest as any).code, 0);
+    const body = JSON.parse((ingest as any).stdout);
+    assert.equal(body.ok, true);
+    assert.equal(body.data.profile, "sfe-cli-stdin");
+  } finally {
+    await rm(tempDir, { recursive: true, force: true });
   }
-);
+});
 
-test(
+testIfBunAvailable(
   "compiled CLI reports argument and operation errors deterministically",
-  { skip: !BUN_AVAILABLE },
   async () => {
     const tempDir = await mkdtemp(resolve(tmpdir(), "ums-cli-sfe-errors-"));
     const stateFile = resolve(tempDir, "state.json");
@@ -256,9 +251,8 @@ test(
   }
 );
 
-test(
+testIfBunAvailable(
   "compiled CLI state file is created and reusable across invocations",
-  { skip: !BUN_AVAILABLE },
   async () => {
     const tempDir = await mkdtemp(resolve(tmpdir(), "ums-cli-sfe-stateful-"));
     const stateFile = resolve(tempDir, "state.json");
@@ -276,8 +270,7 @@ test(
         }),
       ]);
       assert.equal((first as any).code, 0);
-      const persisted = JSON.parse(await readFile(stateFile, "utf8"));
-      assert.ok(persisted.stores);
+      await access(`${stateFile}.sqlite`, fsConstants.F_OK);
 
       const second = await runBinary(binaryPath, [
         "context",

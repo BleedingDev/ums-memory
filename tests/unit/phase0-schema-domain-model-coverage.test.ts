@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import test from "node:test";
+
+import { test } from "@effect-native/bun-test";
 
 const RUNBOOK_PATH = path.resolve(
   process.cwd(),
@@ -34,7 +35,7 @@ const REQUIRED_INTEGRATION_ARTIFACTS = Object.freeze([
   "AdapterSessionEnvelopeSchema",
   "decodeDeterministicDedupeDecision",
   "scripts/validate-schema-boundaries.ts",
-  "npm run validate:schema-boundaries",
+  "bun run validate:schema-boundaries",
 ]);
 
 test("phase0 effect schema domain model runbook covers SCH-01..SCH-10 sections", () => {

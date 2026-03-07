@@ -4,10 +4,9 @@ Captured: March 3, 2026
 
 Companion artifact: `docs/reports/phase0-effect-ts-baseline-audit.json`
 
-## 1) `effect` npm reality
+## 1) `effect` registry snapshot
 
-- Command: `npm view effect version dist-tags --json`
-- Result:
+- Registry snapshot:
   - `latest`: `3.19.19`
   - `beta`: `4.0.0-beta.25`
 - Migration target for strict cutover: `effect@4.0.0-beta.25`

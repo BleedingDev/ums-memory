@@ -57,9 +57,9 @@ Mandatory gates before each stage advance:
 
 4. Operational gate:
 
-- `npm run quality:ts`
-- `npm run test`
-- `npm run benchmark:ncm-hybrid`
+- `bun run quality:ts`
+- `bun run test`
+- `bun run benchmark:ncm-hybrid`
 
 ## Rollback Strategy
 

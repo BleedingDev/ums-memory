@@ -7,9 +7,9 @@ import {
   writeFileSync,
 } from "node:fs";
 import { dirname, join } from "node:path";
-import test from "node:test";
 import { pathToFileURL } from "node:url";
 
+import { test } from "@effect-native/bun-test";
 import { Effect as EffectOriginal } from "effect";
 import ts from "typescript";
 

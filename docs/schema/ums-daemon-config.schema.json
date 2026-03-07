@@ -214,6 +214,45 @@
         }
       }
     },
+    "sourceBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source", "kind", "path", "status"],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "source": {
+          "enum": [
+            "codex",
+            "claude",
+            "cursor",
+            "opencode",
+            "vscode",
+            "codex-native",
+            "plan"
+          ]
+        },
+        "kind": {
+          "enum": ["directory", "file"]
+        },
+        "path": {
+          "$ref": "#/$defs/pathString"
+        },
+        "status": {
+          "enum": ["pending", "approved", "disabled", "ignored"]
+        },
+        "label": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "health": {
+          "enum": ["ready", "missing", "unsupported"]
+        },
+        "lastSeenAt": {
+          "$ref": "#/$defs/nonEmptyString"
+        }
+      }
+    },
     "sourcesConfig": {
       "type": "object",
       "additionalProperties": false,
@@ -234,10 +273,22 @@
             }
           }
         },
+        "bindings": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/sourceBinding"
+          }
+        },
         "codex": {
           "$ref": "#/$defs/adapterConfig"
         },
         "claude": {
+          "$ref": "#/$defs/adapterConfig"
+        },
+        "cursor": {
+          "$ref": "#/$defs/adapterConfig"
+        },
+        "opencode": {
           "$ref": "#/$defs/adapterConfig"
         },
         "vscode": {
@@ -266,7 +317,15 @@
           "$ref": "#/$defs/pathString"
         },
         "source": {
-          "enum": ["codex", "claude", "vscode", "codex-native", "plan"]
+          "enum": [
+            "codex",
+            "claude",
+            "cursor",
+            "opencode",
+            "vscode",
+            "codex-native",
+            "plan"
+          ]
         }
       }
     },

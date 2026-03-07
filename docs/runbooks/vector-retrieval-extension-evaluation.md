@@ -99,11 +99,11 @@ Error taxonomy must use tagged errors and explicit context:
 
 ## Backend Options and Recommendation
 
-| Option | Runtime fit | Determinism fit | Operational overhead | Notes |
-| --- | --- | --- | --- | --- |
-| SQLite extension (`sqlite-vec` style) | high for local-first | high | low | closest to current deployment model |
-| Postgres `pgvector` | medium now, high after dd2.2 cutover | high | medium | aligns with future scale path |
-| External vector service | low for first rollout | medium | high | adds network and control-plane complexity |
+| Option                                | Runtime fit                          | Determinism fit | Operational overhead | Notes                                     |
+| ------------------------------------- | ------------------------------------ | --------------- | -------------------- | ----------------------------------------- |
+| SQLite extension (`sqlite-vec` style) | high for local-first                 | high            | low                  | closest to current deployment model       |
+| Postgres `pgvector`                   | medium now, high after dd2.2 cutover | high            | medium               | aligns with future scale path             |
+| External vector service               | low for first rollout                | medium          | high                 | adds network and control-plane complexity |
 
 Recommendation:
 
@@ -130,13 +130,13 @@ Required thresholds for go decision:
 
 ## Rollout Plan
 
-| Phase | Goal | Exit criteria |
-| --- | --- | --- |
-| 0. Contract lock | Freeze service/error/schema contracts | Runbook approved and referenced from standards |
-| 1. Shadow index | Build and maintain vector index off serving path | index freshness and write durability metrics stable |
-| 2. Shadow retrieval | Compare merged ranking offline against lexical baseline | replay gates pass and determinism checks green |
-| 3. Canary serving | Enable vector merge for small tenant allowlist | no Sev1 incidents, latency within target, policy parity maintained |
-| 4. Controlled expansion | expand enablement gradually | sustained SLA and quality metrics over 14 days |
+| Phase                   | Goal                                                    | Exit criteria                                                      |
+| ----------------------- | ------------------------------------------------------- | ------------------------------------------------------------------ |
+| 0. Contract lock        | Freeze service/error/schema contracts                   | Runbook approved and referenced from standards                     |
+| 1. Shadow index         | Build and maintain vector index off serving path        | index freshness and write durability metrics stable                |
+| 2. Shadow retrieval     | Compare merged ranking offline against lexical baseline | replay gates pass and determinism checks green                     |
+| 3. Canary serving       | Enable vector merge for small tenant allowlist          | no Sev1 incidents, latency within target, policy parity maintained |
+| 4. Controlled expansion | expand enablement gradually                             | sustained SLA and quality metrics over 14 days                     |
 
 ## Operational Metrics
 

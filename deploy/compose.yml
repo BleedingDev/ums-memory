@@ -13,7 +13,7 @@ services:
       NODE_ENV: production
       UMS_API_HOST: 0.0.0.0
       UMS_API_PORT: "8787"
-      UMS_STATE_FILE: /var/lib/ums/.ums-state.json
+      UMS_RUNTIME_STATE_FILE: /var/lib/ums/.ums-runtime-state
       UMS_STATE_LOCK_TIMEOUT_MS: "8000"
       UMS_STATE_LOCK_RETRY_MS: "25"
       UMS_API_AUTH_REQUIRED: "true"
@@ -47,8 +47,8 @@ services:
       - api
     environment:
       NODE_ENV: production
-      UMS_STATE_FILE: /var/lib/ums/.ums-state.json
-      UMS_WORKER_STATE_FILE: /var/lib/ums/.ums-state.json
+      UMS_RUNTIME_STATE_FILE: /var/lib/ums/.ums-runtime-state
+      UMS_WORKER_STATE_FILE: /var/lib/ums/.ums-runtime-state
       UMS_API_HOST: api
       UMS_API_PORT: "8787"
       UMS_API_HEALTH_PATH: /

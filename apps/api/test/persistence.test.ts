@@ -3,9 +3,13 @@ import { constants as fsConstants } from "node:fs";
 import { access, mkdtemp, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
-import test from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 
+import { test } from "@effect-native/bun-test";
+import { Effect } from "effect";
+
+import { DatabaseSync } from "../../../libs/shared/src/effect/storage/sqlite/database.ts";
+import { makeSqliteRuntimePersistenceRepository } from "../../../libs/shared/src/effect/storage/sqlite/index.ts";
 import { executeOperationWithSharedState } from "../src/persistence.ts";
 
 function findDeadPid(): number {
@@ -113,4 +117,69 @@ test("concurrent stale-lock recovery preserves exclusive execution", async () =>
   } finally {
     await rm(tempDir, { recursive: true, force: true });
   }
+});
+
+test("ums-memory-2dc.2: sqlite runtime persistence replays identical API operation requests without re-executing", async () => {
+  const database = new DatabaseSync(":memory:");
+  const repository = makeSqliteRuntimePersistenceRepository(database, {
+    now: (() => {
+      let currentMillis = 100;
+      return () => {
+        const nextMillis = currentMillis;
+        currentMillis += 1;
+        return nextMillis;
+      };
+    })(),
+  });
+
+  let executionCount = 0;
+  const firstResult = await Effect.runPromise(
+    repository.execute({
+      operation: " InGeSt ",
+      requestBody: {
+        eventId: "event-1",
+        payload: { content: "persist runtime operation" },
+      },
+      scopeKey: "coding-agent/default",
+      execute: () => {
+        executionCount += 1;
+        return {
+          executionCount,
+          ingested: true,
+        };
+      },
+    })
+  );
+
+  const replayedResult = await Effect.runPromise(
+    repository.execute({
+      operation: "ingest",
+      requestBody: {
+        eventId: "event-1",
+        payload: { content: "persist runtime operation" },
+      },
+      scopeKey: "coding-agent/default",
+      execute: () => {
+        executionCount += 1;
+        return {
+          executionCount,
+          ingested: false,
+        };
+      },
+    })
+  );
+
+  assert.deepEqual(replayedResult, firstResult);
+  assert.equal(executionCount, 1);
+
+  const persistedRows = await Effect.runPromise(
+    repository.listPersistedExecutions({
+      operation: " ingest ",
+      scopeKey: "coding-agent/default",
+    })
+  );
+  assert.deepEqual(
+    persistedRows.map((entry) => [entry.scopeKey, entry.operation]),
+    [["coding-agent/default", "ingest"]]
+  );
 });

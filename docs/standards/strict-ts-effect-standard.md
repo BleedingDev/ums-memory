@@ -36,11 +36,11 @@ Pass criteria:
   - `"noImplicitReturns": true`
   - `"noFallthroughCasesInSwitch": true`
 - No child `tsconfig` may relax these settings for production code.
-- All changed TypeScript MUST pass `npm run quality:ts`.
+- All changed TypeScript MUST pass `bun run quality:ts`.
 
 Pass criteria:
 
-- `npm run quality:ts` exits `0`.
+- `bun run quality:ts` exits `0`.
 - No diff disables strict compiler options.
 
 ### 2) Effect Service + Layer Boundaries (MUST)
@@ -106,26 +106,26 @@ Fail criteria:
 
 The project command contract is:
 
-- `npm run quality:ts`
-- `npm run validate:legacy-shims`
-- `npm run validate:cutover`
-- `npm run test`
-- `npm run test:sfe`
-- `npm run ci:verify` (local aggregate: quality + tests + SFE + single-file build)
+- `bun run quality:ts`
+- `bun run validate:legacy-shims`
+- `bun run validate:cutover`
+- `bun run test`
+- `bun run test:sfe`
+- `bun run ci:verify` (local aggregate: quality + tests + SFE + single-file build)
 
 CI workflow contract:
 
 - File: `.github/workflows/ci.yml`
 - Job: `verify` (`Quality, Test, Build`)
 - Required gates in order:
-  1. `npm run quality:ts`
-  2. `npm run test`
-  3. `npm run test:sfe`
-  4. `npm run build:sfe:single`
+  1. `bun run quality:ts`
+  2. `bun run test`
+  3. `bun run test:sfe`
+  4. `bun run build:sfe:single`
 
 Pass criteria:
 
-- Local `npm run ci:verify` succeeds before handoff when code changes are non-trivial.
+- Local `bun run ci:verify` succeeds before handoff when code changes are non-trivial.
 - CI `verify` job is green on pull request.
 
 ## Migration Acceptance Checklist (Beads/PRs)
@@ -135,11 +135,11 @@ All items are required unless explicitly marked `N/A` with reason.
 1. Strict TS compliance
 
 - [ ] No strictness flags were relaxed.
-- [ ] `npm run quality:ts` passed.
-- [ ] `npm run validate:tsconfig-policy` passed.
-- [ ] `npm run validate:effect-beta-pin` passed.
-- [ ] `npm run validate:legacy-shims` passed.
-- [ ] `npm run validate:cutover` passed.
+- [ ] `bun run quality:ts` passed.
+- [ ] `bun run validate:tsconfig-policy` passed.
+- [ ] `bun run validate:effect-beta-pin` passed.
+- [ ] `bun run validate:legacy-shims` passed.
+- [ ] `bun run validate:cutover` passed.
 
 2. Effect service/layer compliance
 
@@ -159,9 +159,9 @@ All items are required unless explicitly marked `N/A` with reason.
 
 5. Test and CI contract compliance
 
-- [ ] `npm run test` passed.
-- [ ] `npm run test:sfe` passed for affected flows.
-- [ ] `npm run ci:verify` passed locally or CI proof attached.
+- [ ] `bun run test` passed.
+- [ ] `bun run test:sfe` passed for affected flows.
+- [ ] `bun run ci:verify` passed locally or CI proof attached.
 - [ ] PR shows green `.github/workflows/ci.yml` `verify` job.
 
 ## Exception Process

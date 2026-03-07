@@ -1,5 +1,3 @@
-import type { DatabaseSync } from "node:sqlite";
-
 import { Effect, Schema } from "effect";
 
 import {
@@ -10,6 +8,7 @@ import {
   makeSqliteStorageServiceEffect,
   type StorageService,
 } from "../services/storage-service.js";
+import type { DatabaseSync } from "./sqlite/database.ts";
 import type { SqliteStorageRepositoryOptions } from "./sqlite/index.js";
 
 const storageAdapterIdPattern = /^[a-z](?:[a-z0-9-]*[a-z0-9])?$/;

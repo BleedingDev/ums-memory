@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash, createHmac } from "node:crypto";
-import test from "node:test";
+
+import { beforeEach, test } from "@effect-native/bun-test";
 
 import { executeOperation, resetStore, snapshotProfile } from "../src/core.ts";
 import { createUmsEngine } from "../src/ums/engine.ts";
@@ -39,7 +40,7 @@ function policyAuditSignatureValue(secret: any, metadataDigest: any) {
     .digest("hex");
 }
 
-test.beforeEach(() => {
+beforeEach(() => {
   resetStore();
 });
 

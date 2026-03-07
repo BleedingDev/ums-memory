@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
-import test from "node:test";
+
+import { test } from "@effect-native/bun-test";
 
 import {
   main,
@@ -12,12 +13,12 @@ import {
 const INVENTORY_SCHEMA_VERSION = "legacy_runtime_shim_inventory.v1";
 const SHIM_PATH = "apps/api/src/core.mjs";
 
-type InventoryEntry = {
+interface InventoryEntry {
   path: string;
   kind: "runtime_entrypoint" | "legacy_shared_contract";
   followUpBeadId: string;
   notes: string;
-};
+}
 
 async function writeProjectFile(
   projectRoot: string,

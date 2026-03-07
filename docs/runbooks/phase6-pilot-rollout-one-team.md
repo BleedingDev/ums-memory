@@ -1,12 +1,15 @@
 # Phase 6 Pilot Rollout Runbook (One Team, One Project)
 
 ## Purpose
+
 Run a controlled UMS pilot for one team and one project, produce deterministic rollout artifacts, and create data that directly unblocks:
+
 - `ums-memory-n4m.2` (adoption and quality KPI dashboards)
 - `ums-memory-n4m.3` (ranking and decay tuning)
 - `ums-memory-n4m.4` (production SLO enforcement)
 
 ## Pilot Scope (fill before start)
+
 - Pilot ID: `pilot-<team>-<project>-<YYYYMMDD>`
 - Team: `<team-name>`
 - Project: `<project-name>`
@@ -16,7 +19,9 @@ Run a controlled UMS pilot for one team and one project, produce deterministic r
 - Backstop On-Call: `<secondary owner>`
 
 ## Deterministic Artifacts
+
 Create these artifacts exactly once per pilot day:
+
 - Telemetry stream: `ops/pilot-rollout/<pilot-id>/telemetry.ndjson`
 - Operator feedback: `ops/pilot-rollout/<pilot-id>/feedback.ndjson`
 - Daily summary report: `docs/reports/pilot-rollout/<pilot-id>-day-<NN>-summary.json`
@@ -31,71 +36,89 @@ All artifacts are append-only, committed to git, and sorted/normalized before ag
 ## Phase Plan
 
 ### Phase 0: Preflight (T-5 to T-1 days)
+
 Actions:
+
 1. Confirm team/project scoping in service config (no cross-team traffic).
 2. Enable telemetry capture for pilot events only.
 3. Run replay check on a fixed synthetic dataset.
 4. Dry-run rollback command in staging.
 
 Exit Criteria:
+
 1. Replay determinism check passes (`stateDigest` stable over 3 runs).
 2. Telemetry ingest path writes valid NDJSON.
 3. Rollback command completes in staging in under 10 minutes.
 
 Rollback Trigger:
+
 1. Any failed preflight check.
 
 ### Phase 1: Shadow Mode (Day 1-2)
+
 Actions:
+
 1. Mirror production requests to UMS (read-only effect, no user-visible response changes).
-2. Generate end-of-day summary with `npm run pilot:report`.
+2. Generate end-of-day summary with `bun run pilot:report`.
 3. Review failure code histogram and unknown operation labels.
 
 Exit Criteria:
+
 1. `requestVolume >= 200` mirrored requests/day.
 2. `failureRate <= 0.5%`.
 3. `p95LatencyMs <= 250`.
 4. `UNKNOWN_FAILURE` count is `0`.
 
 Rollback Trigger:
+
 1. `failureRate > 1.0%` for any 2-hour window.
 2. `p95LatencyMs > 400` for any 2-hour window.
 
 ### Phase 2: Controlled Activation (Day 3-7)
+
 Actions:
+
 1. Day 3: enable UMS for 25% of pilot team traffic.
 2. Day 4-5: increase to 50% if criteria hold.
 3. Day 6-7: increase to 100% for pilot team/project only.
 4. Collect operator feedback after each ramp step.
 
 Exit Criteria at each ramp:
+
 1. Success rate `>= 99.5%` during previous 24 hours.
 2. No Sev1/Sev2 incidents attributed to UMS.
 3. Failure histogram dominated by known/transient codes only.
 4. No trust-boundary or policy-violation anomalies.
 
 Rollback Trigger:
+
 1. Any Sev1/Sev2 incident with UMS as probable root cause.
 2. Policy anomaly count exceeds `5` per hour.
 3. Repeated unknown failure code appears (`>= 3` events in 30 minutes).
 
 ### Phase 3: Stabilization and Exit (Day 8-10)
+
 Actions:
+
 1. Hold at 100% pilot-team coverage.
 2. Run final summary generation from complete telemetry set.
 3. Publish dashboard, tuning, and production SLO evaluation artifacts.
 4. Publish decision log with rollout verdict and links to all artifacts.
 
 Exit Criteria:
+
 1. All global success criteria met for 3 consecutive days.
 2. Final summary committed and linked to bead closure.
 3. Dashboard and tuning inputs handed off (see Handoff section).
 
 Rollback Trigger:
+
 1. Any global success criterion violated for 2 consecutive days.
 
 ## Global Success Criteria
+
 Pilot is considered successful only if all items are true:
+
 1. Total `requestVolume >= 2000`.
 2. `successRate >= 99.5%`.
 3. `failureRate <= 0.5%`.
@@ -104,7 +127,9 @@ Pilot is considered successful only if all items are true:
 6. No unresolved policy/trust-boundary anomalies at pilot end.
 
 ## Fallback / Rollback Procedure
+
 When a rollback trigger fires:
+
 1. Freeze ramp changes and announce rollback in incident channel.
 2. Disable UMS for pilot scope using config toggle:
    - `UMS_PILOT_ENABLED=false`
@@ -116,6 +141,7 @@ When a rollback trigger fires:
 6. Keep telemetry collection active for root-cause analysis.
 
 Rollback completion criteria:
+
 1. Pilot-scoped requests served by baseline path only.
 2. Error rate returns to pre-pilot baseline within 30 minutes.
 3. Incident note + artifact links recorded in decision log.
@@ -123,7 +149,9 @@ Rollback completion criteria:
 ## Feedback Collection Schema
 
 ### Telemetry Event Schema (NDJSON or JSON array)
+
 Each event must contain:
+
 ```json
 {
   "timestamp": "2026-03-02T18:35:00.000Z",
@@ -144,13 +172,16 @@ Each event must contain:
 ```
 
 Required fields:
+
 - `timestamp`, `team`, `project`, `operation`, and one outcome indicator (`success`, `ok`, `status`, or `result`)
 - latency (`latencyMs` or equivalent)
 
 Recommended fields:
+
 - `failureCode`, `policyDecision`, `anomalyType`, `requestId`, `metadata.pilotPhase`
 
 ### Operator Feedback Schema (`feedback.ndjson`)
+
 ```json
 {
   "timestamp": "2026-03-02T19:00:00.000Z",
@@ -167,31 +198,36 @@ Recommended fields:
 ```
 
 ## Reporting Commands
+
 Daily report:
+
 ```bash
-npm run pilot:report -- \
+bun run pilot:report -- \
   --input ops/pilot-rollout/<pilot-id>/telemetry.ndjson \
   --output docs/reports/pilot-rollout/<pilot-id>-day-<NN>-summary.json
 ```
 
 Final report:
+
 ```bash
-npm run pilot:report -- \
+bun run pilot:report -- \
   --input ops/pilot-rollout/<pilot-id>/telemetry.ndjson \
   --output docs/reports/pilot-rollout/<pilot-id>-final-summary.json
 ```
 
 KPI dashboard:
+
 ```bash
-npm run pilot:dashboard -- \
+bun run pilot:dashboard -- \
   --input docs/reports/pilot-rollout/<pilot-id>-final-summary.json \
   --feedback ops/pilot-rollout/<pilot-id>/feedback.ndjson \
   --output docs/reports/pilot-rollout/<pilot-id>-kpi-dashboard.json
 ```
 
 Ranking/decay tuning:
+
 ```bash
-npm run pilot:tune -- \
+bun run pilot:tune -- \
   --input docs/reports/pilot-rollout/<pilot-id>-final-summary.json \
   --dashboard docs/reports/pilot-rollout/<pilot-id>-kpi-dashboard.json \
   --feedback ops/pilot-rollout/<pilot-id>/feedback.ndjson \
@@ -199,8 +235,9 @@ npm run pilot:tune -- \
 ```
 
 Production SLO evaluation:
+
 ```bash
-npm run pilot:slo -- \
+bun run pilot:slo -- \
   --dashboard docs/reports/pilot-rollout/<pilot-id>-kpi-dashboard.json \
   --tuning docs/reports/pilot-rollout/<pilot-id>-ranking-decay-tuning.json \
   --evaluated-at 2026-03-02T18:30:00Z \
@@ -208,20 +245,22 @@ npm run pilot:slo -- \
 ```
 
 Report generator guarantees:
+
 1. Fails fast by default when required telemetry fields are missing (`timestamp`, `team`, `project`, `operation`, outcome indicator, latency).
 2. Supports legacy compatibility mode with `--allow-invalid` and reports skipped entries via `invalidEventCount`.
 3. Creates missing parent output directories automatically.
 4. Emits deterministic per-operation latency/failure distributions for tuning workflows.
 
 ## Handoff to n4m.2, n4m.3, and n4m.4
+
 - For `n4m.2` dashboards:
   - Use `requestVolume`, `successRate`, `failureRate`, `p95LatencyMs`, `operationHistogram`, `failureCodeHistogram`, `policyDecisionHistogram`, and `anomalyHistogram`.
-  - Generate and publish `docs/reports/pilot-rollout/<pilot-id>-kpi-dashboard.json` using `npm run pilot:dashboard` and the phase 6 KPI runbook (`docs/runbooks/phase6-kpi-dashboard-operations.md`).
+  - Generate and publish `docs/reports/pilot-rollout/<pilot-id>-kpi-dashboard.json` using `bun run pilot:dashboard` and the phase 6 KPI runbook (`docs/runbooks/phase6-kpi-dashboard-operations.md`).
 - For `n4m.3` tuning:
   - Use per-operation failure and latency distributions plus anomaly/policy slices and linked feedback categories.
-  - Generate and publish `docs/reports/pilot-rollout/<pilot-id>-ranking-decay-tuning.json` with `npm run pilot:tune` and the tuning runbook (`docs/runbooks/phase6-ranking-decay-tuning.md`).
+  - Generate and publish `docs/reports/pilot-rollout/<pilot-id>-ranking-decay-tuning.json` with `bun run pilot:tune` and the tuning runbook (`docs/runbooks/phase6-ranking-decay-tuning.md`).
 - For `n4m.4` production SLO enforcement:
   - Evaluate final pilot KPI dashboards against production SLO thresholds and include optional tuning guardrails.
-  - Generate and publish `docs/reports/pilot-rollout/<pilot-id>-production-slo-evaluation.json` using `npm run pilot:slo` and the SLO runbook (`docs/runbooks/phase6-production-slo-enforcement.md`).
+  - Generate and publish `docs/reports/pilot-rollout/<pilot-id>-production-slo-evaluation.json` using `bun run pilot:slo` and the SLO runbook (`docs/runbooks/phase6-production-slo-enforcement.md`).
 
 Attach final summary + decision log links when closing `ums-memory-n4m.1`.

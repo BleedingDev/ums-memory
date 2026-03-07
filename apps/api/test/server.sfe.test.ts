@@ -4,10 +4,12 @@ import { constants as fsConstants } from "node:fs";
 import { access, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
-import test from "node:test";
+
+import { afterAll, beforeAll, test } from "@effect-native/bun-test";
 const ROOT = process.cwd();
 const BUN_AVAILABLE =
   spawnSync("bun", ["--version"], { encoding: "utf8" }).status === 0;
+const testIfBunAvailable = BUN_AVAILABLE ? test : test.skip;
 
 let buildDir: string | null = null;
 let apiBinaryPath: string | null = null;
@@ -131,7 +133,7 @@ async function requestJson(
   };
 }
 
-test.before(async () => {
+beforeAll(async () => {
   if (!BUN_AVAILABLE) {
     return;
   }
@@ -161,15 +163,14 @@ test.before(async () => {
   await access(apiBinaryPath, fsConstants.X_OK);
 });
 
-test.after(async () => {
+afterAll(async () => {
   if (buildDir) {
     await rm(buildDir, { recursive: true, force: true });
   }
 });
 
-test(
+testIfBunAvailable(
   "compiled API executable serves root + ingest/context routes",
-  { skip: !BUN_AVAILABLE },
   async () => {
     const tempDir = await mkdtemp(resolve(tmpdir(), "ums-api-sfe-state-"));
     const stateFile = resolve(tempDir, "state.json");
@@ -232,9 +233,8 @@ test(
   }
 );
 
-test(
+testIfBunAvailable(
   "compiled API executable preserves deterministic error envelopes",
-  { skip: !BUN_AVAILABLE },
   async () => {
     const tempDir = await mkdtemp(resolve(tmpdir(), "ums-api-sfe-state-"));
     const stateFile = resolve(tempDir, "state.json");

@@ -24,11 +24,11 @@ function digest(value: unknown): string {
   return createHash("sha256").update(stableStringify(value)).digest("hex");
 }
 
-type RuntimeServiceExecuteRequest = {
+interface RuntimeServiceExecuteRequest {
   readonly operation?: unknown;
   readonly requestBody?: unknown;
   readonly stateFile?: unknown;
-};
+}
 
 export function createDeterministicRuntimeService() {
   return {

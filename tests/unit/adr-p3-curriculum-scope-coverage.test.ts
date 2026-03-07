@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import test from "node:test";
+
+import { test } from "@effect-native/bun-test";
 
 const REQUIRED_PLAN_PHRASES = Object.freeze([
   "Learner profiles",

@@ -3,7 +3,8 @@ import { spawnSync } from "node:child_process";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
-import test from "node:test";
+
+import { test } from "@effect-native/bun-test";
 
 import {
   main,
@@ -144,7 +145,7 @@ test("ums-memory-y9m.9: schema boundary validation CLI supports json output mode
 test("ums-memory-y9m.9: schema boundary validation CLI --json emits parseable validation payload", () => {
   const result = spawnSync(
     process.execPath,
-    ["--import", "tsx", "scripts/validate-schema-boundaries.ts", "--json"],
+    ["scripts/validate-schema-boundaries.ts", "--json"],
     {
       cwd: process.cwd(),
       encoding: "utf8",

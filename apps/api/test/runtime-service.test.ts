@@ -1,16 +1,19 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
+import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { resolve } from "node:path";
-import test from "node:test";
 
-import { Layer } from "effect";
+import { afterAll, beforeEach, test } from "@effect-native/bun-test";
+import { Layer, Schema } from "effect";
 
 import { executeOperation, listOperations, resetStore } from "../src/core.ts";
-import { executeOperationWithSharedState } from "../src/persistence.ts";
 import {
   RuntimeServiceTag,
+  DEFAULT_RUNTIME_STATE_FILE,
   clearRuntimeServiceCache,
   executeRuntimeOperation,
+  loadRuntimeStoreSnapshot,
   listRuntimeOperations,
 } from "../src/runtime-service.ts";
 import { startApiServer } from "../src/server.ts";
@@ -32,17 +35,15 @@ const ORIGINAL_POLICY_PACK_PLUGIN_MODULE =
   process.env["UMS_POLICY_PACK_PLUGIN_MODULE"];
 const ORIGINAL_POLICY_PACK_PLUGIN_EXPORT =
   process.env["UMS_POLICY_PACK_PLUGIN_EXPORT"];
+const isUnknownRecord = Schema.is(Schema.Record(Schema.String, Schema.Unknown));
+const isString = Schema.is(Schema.String);
 
 function runCli(args: any, stdin = "", { env = process.env } = {}) {
   return new Promise((resolvePromise) => {
-    const proc = spawn(
-      process.execPath,
-      ["--import", "tsx", CLI_PATH, ...args],
-      {
-        stdio: ["pipe", "pipe", "pipe"],
-        env,
-      }
-    );
+    const proc = spawn(process.execPath, [CLI_PATH, ...args], {
+      stdio: ["pipe", "pipe", "pipe"],
+      env,
+    });
     let stdout = "";
     let stderr = "";
     proc.stdout.on("data", (chunk) => {
@@ -76,12 +77,12 @@ function useFixtureRuntimeService() {
   clearRuntimeServiceCache();
 }
 
-test.beforeEach(() => {
+beforeEach(() => {
   resetStore();
   useDefaultRuntimeService();
 });
 
-test.after(() => {
+afterAll(() => {
   if (ORIGINAL_RUNTIME_SERVICE_MODULE) {
     process.env["UMS_RUNTIME_SERVICE_MODULE"] = ORIGINAL_RUNTIME_SERVICE_MODULE;
   } else {
@@ -126,13 +127,153 @@ test("runtime service default path stays compatible with effect core + persisten
   });
 
   resetStore();
-  const directResult = await executeOperationWithSharedState({
-    operation: "ingest",
-    stateFile: null,
-    executor: () => executeOperation("ingest", structuredClone(requestBody)),
-  });
+  const directResult = executeOperation("ingest", structuredClone(requestBody));
 
   assert.deepEqual(serviceResult, directResult);
+});
+
+test("default runtime service uses dedicated runtime state files instead of the legacy shared JSON path", async () => {
+  const tempDir = await mkdtemp(
+    resolve(tmpdir(), "ums-runtime-service-persistence-")
+  );
+  const stateFile = resolve(tempDir, "runtime-state");
+
+  try {
+    const ingest = await executeRuntimeOperation({
+      operation: "ingest",
+      requestBody: {
+        profile: "runtime-service-sidecar",
+        events: [
+          {
+            type: "note",
+            source: "runtime-service",
+            content: "sqlite sidecar event",
+          },
+        ],
+      },
+      stateFile,
+    });
+    assert.equal((ingest as { accepted?: unknown }).accepted, 1);
+
+    await writeFile(
+      resolve(tempDir, ".ums-state.json"),
+      "{not-valid-json",
+      "utf8"
+    );
+
+    const context = await executeRuntimeOperation({
+      operation: "context",
+      requestBody: {
+        profile: "runtime-service-sidecar",
+        query: "sqlite sidecar event",
+      },
+      stateFile,
+    });
+
+    assert.equal((context as { matches?: unknown[] }).matches?.length, 1);
+    const snapshot = await loadRuntimeStoreSnapshot({ stateFile });
+    assert.match(JSON.stringify(snapshot), /sqlite sidecar event/);
+    await assert.rejects(access(`${stateFile}.json`));
+    assert.equal(
+      (await readFile(`${stateFile}.sqlite`)).subarray(0, 15).toString("utf8"),
+      "SQLite format 3"
+    );
+  } finally {
+    clearRuntimeServiceCache();
+    await rm(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("default runtime state path no longer falls back to legacy shared JSON without explicit env override", () => {
+  assert.equal(DEFAULT_RUNTIME_STATE_FILE, ".ums-runtime-state");
+});
+
+test("explicit legacy .ums-state.json paths stay on shared-state compatibility mode", async () => {
+  const tempDir = await mkdtemp(
+    resolve(tmpdir(), "ums-runtime-service-json-compat-")
+  );
+  const stateFile = resolve(tempDir, ".ums-state.json");
+
+  try {
+    const ingest = await executeRuntimeOperation({
+      operation: "ingest",
+      requestBody: {
+        profile: "runtime-service-json-compat",
+        events: [
+          {
+            type: "note",
+            source: "runtime-service",
+            content: "explicit json compatibility event",
+          },
+        ],
+      },
+      stateFile,
+    });
+    assert.equal((ingest as { accepted?: unknown }).accepted, 1);
+
+    const context = await executeRuntimeOperation({
+      operation: "context",
+      requestBody: {
+        profile: "runtime-service-json-compat",
+        query: "explicit json compatibility event",
+      },
+      stateFile,
+    });
+
+    assert.equal((context as { matches?: unknown[] }).matches?.length, 1);
+    const snapshot = await loadRuntimeStoreSnapshot({ stateFile });
+    assert.match(JSON.stringify(snapshot), /explicit json compatibility event/);
+    await assert.rejects(access(`${stateFile}.sqlite`));
+  } finally {
+    clearRuntimeServiceCache();
+    await rm(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("arbitrary json runtime state paths still use sqlite-backed persistence", async () => {
+  const tempDir = await mkdtemp(
+    resolve(tmpdir(), "ums-runtime-service-arbitrary-json-")
+  );
+  const stateFile = resolve(tempDir, "worker-state.json");
+
+  try {
+    const ingest = await executeRuntimeOperation({
+      operation: "ingest",
+      requestBody: {
+        profile: "runtime-service-arbitrary-json",
+        events: [
+          {
+            type: "note",
+            source: "runtime-service",
+            content: "arbitrary json sqlite event",
+          },
+        ],
+      },
+      stateFile,
+    });
+    assert.equal((ingest as { accepted?: unknown }).accepted, 1);
+
+    await writeFile(stateFile, "{not-valid-json", "utf8");
+
+    const context = await executeRuntimeOperation({
+      operation: "context",
+      requestBody: {
+        profile: "runtime-service-arbitrary-json",
+        query: "arbitrary json sqlite event",
+      },
+      stateFile,
+    });
+
+    assert.equal((context as { matches?: unknown[] }).matches?.length, 1);
+    await access(`${stateFile}.sqlite`);
+    assert.equal(
+      (await readFile(`${stateFile}.sqlite`)).subarray(0, 15).toString("utf8"),
+      "SQLite format 3"
+    );
+  } finally {
+    clearRuntimeServiceCache();
+    await rm(tempDir, { recursive: true, force: true });
+  }
 });
 
 test("runtime service module override resolves deterministic contract behavior", async () => {
@@ -178,13 +319,8 @@ test("runtime service supports direct Layer override without env module loading"
       stateFile?: string | null;
     }) => ({
       operation,
-      requestBody:
-        requestBody &&
-        typeof requestBody === "object" &&
-        !Array.isArray(requestBody)
-          ? requestBody
-          : {},
-      stateFile: typeof stateFile === "string" ? stateFile : null,
+      requestBody: isUnknownRecord(requestBody) ? requestBody : {},
+      stateFile: isString(stateFile) ? stateFile : null,
       runtimeServiceId: "runtime-layer-override",
     }),
   });
@@ -308,39 +444,75 @@ test("api server routes through runtime service override for list + operation ex
   } finally {
     await new Promise<void>((resolvePromise, rejectPromise) => {
       server.close((error) =>
-        error ? rejectPromise(error) : resolvePromise(undefined)
+        error ? rejectPromise(error) : resolvePromise()
       );
     });
   }
 });
 
-test("cli routes through runtime service override deterministically", async () => {
+test("cli routes through runtime-service overrides while explicit legacy shared-state compat remains opt-in", async () => {
   const env = {
     ...process.env,
     UMS_RUNTIME_SERVICE_MODULE: RUNTIME_SERVICE_FIXTURE,
     UMS_RUNTIME_SERVICE_EXPORT: "createDeterministicRuntimeService",
   };
-  const args = [
-    "context",
-    "--input",
-    JSON.stringify({
-      profile: "runtime-service-cli",
-      query: "deterministic",
-    }),
-  ];
+  const tempDir = await mkdtemp(resolve(tmpdir(), "ums-runtime-service-cli-"));
+  const stateFile = resolve(tempDir, "cli-state.json");
+  try {
+    const ingest = await runCli(
+      [
+        "ingest",
+        "--state-file",
+        stateFile,
+        "--input",
+        JSON.stringify({
+          profile: "runtime-service-cli",
+          events: [
+            {
+              type: "note",
+              source: "cli",
+              content: "deterministic shared state",
+            },
+          ],
+        }),
+      ],
+      "",
+      { env }
+    );
+    assert.equal((ingest as any).code, 0, (ingest as any).stderr);
 
-  const first = await runCli(args, "", { env });
-  assert.equal((first as any).code, 0, (first as any).stderr);
-  const firstBody = JSON.parse((first as any).stdout);
-  assert.equal(firstBody.ok, true);
-  assert.equal(
-    firstBody.data.runtimeServiceId,
-    "deterministic-runtime-service"
-  );
+    const args = [
+      "context",
+      "--state-file",
+      stateFile,
+      "--input",
+      JSON.stringify({
+        profile: "runtime-service-cli",
+        query: "deterministic",
+      }),
+    ];
 
-  const second = await runCli(args, "", { env });
-  assert.equal((second as any).code, 0, (second as any).stderr);
-  const secondBody = JSON.parse((second as any).stdout);
-  assert.equal(secondBody.ok, true);
-  assert.equal(secondBody.data.requestDigest, firstBody.data.requestDigest);
+    const first = await runCli(args, "", { env });
+    assert.equal((first as any).code, 0, (first as any).stderr);
+    const firstBody = JSON.parse((first as any).stdout);
+    assert.equal(firstBody.ok, true);
+    assert.equal(
+      firstBody.data.runtimeServiceId,
+      "deterministic-runtime-service"
+    );
+    assert.equal(firstBody.data.request.stateFile, undefined);
+    assert.equal(firstBody.data.request.profile, "runtime-service-cli");
+
+    const second = await runCli(args, "", { env });
+    assert.equal((second as any).code, 0, (second as any).stderr);
+    const secondBody = JSON.parse((second as any).stdout);
+    assert.equal(secondBody.ok, true);
+    assert.equal(
+      secondBody.data.runtimeServiceId,
+      "deterministic-runtime-service"
+    );
+    assert.equal(secondBody.data.requestDigest, firstBody.data.requestDigest);
+  } finally {
+    await rm(tempDir, { recursive: true, force: true });
+  }
 });

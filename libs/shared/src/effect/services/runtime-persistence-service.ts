@@ -1,4 +1,4 @@
-import { Effect, Layer, ServiceMap } from "effect";
+import { Effect, Layer, Predicate, Schema, ServiceMap } from "effect";
 
 import {
   ContractValidationError,
@@ -30,6 +30,41 @@ export const RuntimePersistenceServiceTag =
     "@ums/effect/RuntimePersistenceService"
   );
 
+const ErrorWithMessageSchema = Schema.Struct({
+  message: Schema.String,
+});
+const CodedErrorSchema = Schema.Struct({
+  code: Schema.String,
+  message: Schema.String,
+});
+const ContractValidationErrorSchema = Schema.Struct({
+  _tag: Schema.Literal("ContractValidationError"),
+  contract: Schema.String,
+  message: Schema.String,
+  details: Schema.String,
+});
+const RuntimePersistenceExecutionErrorSchema = Schema.Struct({
+  _tag: Schema.Literal("RuntimePersistenceExecutionError"),
+  operation: Schema.String,
+  code: Schema.optional(Schema.String),
+  message: Schema.String,
+  details: Schema.String,
+});
+
+const isErrorWithMessage = Schema.is(ErrorWithMessageSchema);
+const isCodedError = Schema.is(CodedErrorSchema);
+const isContractValidationError = Schema.is(ContractValidationErrorSchema);
+const isRuntimePersistenceExecutionError = Schema.is(
+  RuntimePersistenceExecutionErrorSchema
+);
+const isTaggedContractValidationError = (
+  cause: unknown
+): cause is ContractValidationError => isContractValidationError(cause);
+const isTaggedRuntimePersistenceExecutionError = (
+  cause: unknown
+): cause is RuntimePersistenceExecutionError =>
+  isRuntimePersistenceExecutionError(cause);
+
 const toContractValidationError = (
   message: string,
   details: string
@@ -47,11 +82,32 @@ const toExecutionError = (
   new RuntimePersistenceExecutionError({
     operation,
     message: "Runtime persistence executor failed.",
-    details: cause instanceof Error ? cause.message : String(cause),
+    details: isErrorWithMessage(cause) ? cause.message : String(cause),
   });
 
+const normalizeExecutorFailure = (
+  operation: string,
+  cause: unknown
+): RuntimePersistenceServiceError => {
+  if (isTaggedContractValidationError(cause)) {
+    return cause;
+  }
+  if (isTaggedRuntimePersistenceExecutionError(cause)) {
+    return cause;
+  }
+  if (isCodedError(cause)) {
+    return new RuntimePersistenceExecutionError({
+      operation,
+      code: cause.code,
+      message: cause.message,
+      details: cause.code,
+    });
+  }
+  return toExecutionError(operation, cause);
+};
+
 const normalizeOperation = (operation: unknown): string =>
-  typeof operation === "string" ? operation.trim().toLowerCase() : "";
+  Predicate.isString(operation) ? operation.trim().toLowerCase() : "";
 
 const validateRequest = (
   request: RuntimePersistenceExecutionRequest<unknown>
@@ -68,7 +124,7 @@ const validateRequest = (
       )
     );
   }
-  if (typeof request.execute !== "function") {
+  if (!Predicate.isFunction(request.execute)) {
     return Effect.fail(
       toContractValidationError(
         "Runtime persistence request must provide an executor function.",
@@ -90,9 +146,7 @@ const executeWithValidation = <TResponse>(
       Effect.tryPromise({
         try: async () => (await validatedRequest.execute()) as TResponse,
         catch: (cause) =>
-          cause instanceof ContractValidationError
-            ? cause
-            : toExecutionError(validatedRequest.operation, cause),
+          normalizeExecutorFailure(validatedRequest.operation, cause),
       })
     )
   );

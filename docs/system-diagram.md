@@ -1,4 +1,4 @@
-# UMS Architektonicky Diagram (as-is)
+# UMS Architektonicky Diagram
 
 Cil: dat Jirkovi prehled struktury systemu, hranic zodpovednosti a mist, kde dava smysl navrhnout refaktor.
 
@@ -13,7 +13,7 @@ flowchart TB
   subgraph UMS["UMS Memory System"]
     B1["Rozhrani CLI/API"]
     B2["Pametovy backend"]
-    B3["Lokalni perzistence snapshotu"]
+    B3["Runtime persistence + compatibility tooling"]
   end
 
   A1 --> B1
@@ -32,11 +32,11 @@ flowchart LR
   C2["UMS wrapper apps/ums/src/index.ts"]
   C3["CLI adapter apps/cli/src/index.ts"]
   C4["API adapter apps/api/src/server.ts"]
-  C5["Shared-state facade apps/api/src/persistence.ts"]
+  C5["Runtime service + persistence adapter"]
   C6["Operation engine apps/api/src/core.ts"]
-  C7["In-memory state stores -> profiles -> state buckets"]
-  C8["State snapshot file .ums-state.json"]
-  C9["Write lock file .ums-state.json.lock"]
+  C7["SQLite-backed runtime persistence + exported snapshots"]
+  C8["Runtime state base .ums-runtime-state (+ .sqlite / .json)"]
+  C9["Legacy compatibility snapshot .ums-state.json (explicit-only)"]
 
   C1 --> C2
   C1 --> C3
@@ -49,8 +49,8 @@ flowchart LR
   C4 --> C5
   C5 --> C6
   C6 --> C7
-  C5 <-->|hydrate and export| C8
-  C5 <-->|exclusive write lock| C9
+  C5 <-->|runtime hydration / persistence| C8
+  C5 <-->|explicit import/export only| C9
 ```
 
 ## 3) Backend Component Diagram (C4 L3, core.ts)
@@ -92,12 +92,12 @@ flowchart LR
   S1["Codex transcript files"]
   S2["Claude transcript files"]
   S3["Direct JSON payloads"]
-  M1["Manual bulk command: npm run ingest:coding-history"]
+  M1["Manual bulk command: bun run ingest:coding-history"]
   M2["Manual direct ingest: CLI or POST /v1/ingest"]
   A1["External scheduler: cron, launchd, systemd, CI"]
   I1["ingest operation in core.ts"]
-  P1["Shared-state persistence"]
-  F1[".ums-state.json"]
+  P1["Runtime persistence service"]
+  F1[".ums-runtime-state (+ optional compatibility snapshot)"]
 
   S1 --> M1
   S2 --> M1
@@ -114,19 +114,19 @@ flowchart LR
 1. Bulk import lokalni historie agentu:
 
 ```bash
-npm run ingest:coding-history
+bun run ingest:coding-history
 ```
 
 2. Varianta s explicitnim store/profile/state:
 
 ```bash
-npm run ingest:coding-history -- --store-id coding-agent --profile agent-history --state-file .ums-state.json
+bun run ingest:coding-history -- --store-id coding-agent --profile agent-history --state-file .ums-state.json
 ```
 
 3. Primy ingest jedne udalosti pres CLI:
 
 ```bash
-npm run cli -- ingest --store-id coding-agent --input '{"profile":"agent-history","events":[{"type":"note","source":"codex-cli","content":"example insight"}]}'
+bun run cli -- ingest --store-id coding-agent --input '{"profile":"agent-history","events":[{"type":"note","source":"codex-cli","content":"example insight"}]}'
 ```
 
 4. Primy ingest pres HTTP API:
@@ -140,11 +140,11 @@ curl -sS -X POST http://127.0.0.1:8787/v1/ingest \
 ### Automaticky ingest (aktualni stav)
 
 1. V repu neni vestaveny daemon, periodic worker ani filesystem trigger pro ingest.
-2. Automatizace je aktualne "external orchestration": scheduler spousti stejny prikaz `npm run ingest:coding-history`.
+2. Automatizace je aktualne "external orchestration": scheduler spousti stejny prikaz `bun run ingest:coding-history`.
 3. Prakticky priklad (cron kazdych 30 minut):
 
 ```bash
-*/30 * * * * cd /Users/satan/Developer/ums-memory && npm run ingest:coding-history -- --store-id coding-agent --profile agent-history >> /tmp/ums-ingest.log 2>&1
+*/30 * * * * cd /Users/satan/Developer/ums-memory && bun run ingest:coding-history -- --store-id coding-agent --profile agent-history >> /tmp/ums-ingest.log 2>&1
 ```
 
 4. Ingest je navrzen replay-safe a deduplikuje duplicity; periodicke spousteni nevede k nekontrolovanemu rustu stejnych zaznamu.

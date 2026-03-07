@@ -28,7 +28,7 @@ Current post-cutover state:
 Command:
 
 ```bash
-npm run validate:legacy-shims
+bun run validate:legacy-shims
 ```
 
 The validator (`scripts/validate-legacy-runtime-shims.ts`) fails if any of the following occur:
@@ -40,7 +40,7 @@ The validator (`scripts/validate-legacy-runtime-shims.ts`) fails if any of the f
 - `followUpBeadId` is missing or invalid,
 - inventory entries are not sorted by path.
 
-The command is wired into `npm run quality:ts`, which means `npm run ci:verify` also enforces it.
+The command is wired into `bun run quality:ts`, which means `bun run ci:verify` also enforces it.
 
 ## Operator Workflow
 
@@ -50,8 +50,8 @@ The command is wired into `npm run quality:ts`, which means `npm run ci:verify` 
 4. Run:
 
 ```bash
-npm run validate:legacy-shims
-npm run quality:ts
+bun run validate:legacy-shims
+bun run quality:ts
 ```
 
 5. Document the deferral risk and removal plan in the bead update/PR notes.

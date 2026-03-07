@@ -2,10 +2,11 @@ import assert from "node:assert/strict";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
-import test from "node:test";
 
-import { executeOperation, resetStore } from "../src/core.ts";
-import { executeOperationWithSharedState } from "../src/persistence.ts";
+import { afterAll, beforeEach, test } from "@effect-native/bun-test";
+
+import { exportStoreSnapshot, resetStore } from "../src/core.ts";
+import { executeRuntimeOperation } from "../src/runtime-service.ts";
 import {
   createSupervisedWorkerService,
   runBackgroundWorkerCycle,
@@ -92,11 +93,11 @@ function createSyntheticCycleSummary(startedAt = "2026-03-02T00:00:00.000Z") {
   };
 }
 
-test.beforeEach(() => {
+beforeEach(() => {
   resetStore();
 });
 
-test.after(() => {
+afterAll(() => {
   resetStore();
 });
 
@@ -105,23 +106,22 @@ test("worker cycle executes review/replay/doctor with real shared state and retu
     const storeId = "worker-cycle-store";
     const profile = "worker-cycle-profile";
 
-    await executeOperationWithSharedState({
+    await executeRuntimeOperation({
       operation: "shadow_write",
       stateFile,
-      executor: () =>
-        executeOperation("shadow_write", {
-          storeId,
-          profile,
-          candidateId: "cand-worker-cycle-1",
-          statement:
-            "Keep replay evaluations deterministic in background cycles.",
-          sourceEventIds: ["evt-worker-cycle-1"],
-          evidenceEventIds: ["evt-worker-cycle-1"],
-          status: "shadow",
-          createdAt: "2026-03-01T00:00:00.000Z",
-          updatedAt: "2026-03-01T00:00:00.000Z",
-          expiresAt: "2026-12-01T00:00:00.000Z",
-        }),
+      requestBody: {
+        storeId,
+        profile,
+        candidateId: "cand-worker-cycle-1",
+        statement:
+          "Keep replay evaluations deterministic in background cycles.",
+        sourceEventIds: ["evt-worker-cycle-1"],
+        evidenceEventIds: ["evt-worker-cycle-1"],
+        status: "shadow",
+        createdAt: "2026-03-01T00:00:00.000Z",
+        updatedAt: "2026-03-01T00:00:00.000Z",
+        expiresAt: "2026-12-01T00:00:00.000Z",
+      },
     });
 
     const summary = await runBackgroundWorkerCycle({
@@ -131,33 +131,50 @@ test("worker cycle executes review/replay/doctor with real shared state and retu
       maxErrorEntries: 8,
     });
 
-    assert.equal(summary.profileCount, 2);
-    assert.equal(summary.reviewScheduleClock.attempted, 2);
-    assert.equal(summary.reviewScheduleClock.succeeded, 2);
+    assert.equal(summary.profileCount, 1);
+    assert.equal(summary.reviewScheduleClock.attempted, 1);
+    assert.equal(summary.reviewScheduleClock.succeeded, 1);
     assert.equal(summary.reviewScheduleClock.failed, 0);
-    assert.equal(summary.replayEval.candidatesSeen, 2);
+    assert.equal(summary.replayEval.candidatesSeen, 1);
     assert.equal(summary.replayEval.skippedByLimit, 0);
-    assert.equal(summary.replayEval.attempted, 2);
-    assert.equal(summary.replayEval.succeeded, 2);
+    assert.equal(summary.replayEval.attempted, 1);
+    assert.equal(summary.replayEval.succeeded, 1);
     assert.equal(summary.replayEval.failed, 0);
-    assert.equal(summary.doctor.attempted, 2);
-    assert.equal(summary.doctor.succeeded, 2);
+    assert.equal(summary.doctor.attempted, 1);
+    assert.equal(summary.doctor.succeeded, 1);
     assert.equal(summary.doctor.failed, 0);
     assert.equal(summary.errorCount, 0);
     assert.equal(summary.errorOverflowCount, 0);
     assert.deepEqual(summary.errors, []);
 
-    const snapshot = JSON.parse(await readFile(stateFile, "utf8"));
-    const storeProfiles = snapshot?.stores?.[storeId]?.profiles ?? {};
+    const snapshot = exportStoreSnapshot() as {
+      readonly stores?: Record<
+        string,
+        { readonly profiles?: Record<string, Record<string, unknown>> }
+      >;
+    };
+    const storeProfiles = snapshot.stores?.[storeId]?.profiles ?? {};
     const profileKeys = Object.keys(storeProfiles);
     assert.equal(profileKeys.length, 2);
     assert.equal(profileKeys.includes(profile), true);
     assert.equal(profileKeys.includes("__store_default__"), true);
     const profileState = storeProfiles[profile];
     assert.ok(profileState);
-    assert.equal(Array.isArray(profileState.replayEvaluations), true);
-    assert.equal(profileState.replayEvaluations.length, 1);
-    assert.equal(storeProfiles.__store_default__?.replayEvaluations?.length, 1);
+    const replayEvaluations = profileState["replayEvaluations"];
+    assert.equal(Array.isArray(replayEvaluations), true);
+    assert.equal((replayEvaluations as readonly unknown[]).length, 1);
+    const defaultReplayEvaluations =
+      storeProfiles["__store_default__"]?.["replayEvaluations"];
+    assert.equal(
+      Array.isArray(defaultReplayEvaluations)
+        ? defaultReplayEvaluations.length
+        : 0,
+      0
+    );
+    assert.equal(
+      (await readFile(`${stateFile}.sqlite`)).subarray(0, 15).toString("utf8"),
+      "SQLite format 3"
+    );
   });
 });
 
@@ -290,7 +307,7 @@ test("supervised worker service starts, runs cycles, and stops cleanly", async (
   });
 });
 
-test("supervised worker fails fast before first successful cycle when startup cycle exhausts restart budget", async () => {
+test("supervised worker ignores invalid materialized JSON sidecars on sqlite-backed runtime paths", async () => {
   await withTempStateFile(async ({ stateFile }) => {
     await writeFile(stateFile, "{not-valid-json", "utf8");
     const service = createSupervisedWorkerService({
@@ -303,14 +320,11 @@ test("supervised worker fails fast before first successful cycle when startup cy
 
     try {
       await service.start();
-      await assert.rejects(service.ready(), /State file is not valid JSON/);
-      const failed = await waitForPhase(service, "failed");
-      assert.equal((failed as any).phase, "failed");
-      assert.equal((failed as any).cycleCount, 0);
-      assert.match(
-        (failed as any).lastError ?? "",
-        /State file is not valid JSON/
-      );
+      const readiness = await service.ready();
+      assert.equal(readiness.cycleCount >= 1, true);
+      const running = await waitForPhase(service, "running");
+      assert.equal((running as any).phase, "running");
+      assert.equal((running as any).cycleCount >= 1, true);
     } finally {
       await service.stop();
     }

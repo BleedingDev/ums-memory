@@ -15,6 +15,11 @@ function readJsonFile(filePath: string): unknown {
   return JSON.parse(source) as unknown;
 }
 
+function readTextFile(filePath: string): string {
+  const absolutePath = resolve(process.cwd(), filePath);
+  return readFileSync(absolutePath, "utf8");
+}
+
 function readPinnedDependency(): string {
   const packageJson = readJsonFile("package.json");
   if (!isRecord(packageJson) || !isRecord(packageJson["dependencies"])) {
@@ -34,31 +39,22 @@ function readPinnedDependency(): string {
 }
 
 function validateLockfile(pinnedVersion: string): void {
-  const lockfilePath = resolve(process.cwd(), "package-lock.json");
+  const lockfilePath = resolve(process.cwd(), "bun.lock");
   if (!existsSync(lockfilePath)) {
-    return;
+    throw new Error("bun.lock must exist.");
   }
 
-  const lockfile = readJsonFile("package-lock.json");
-  if (!isRecord(lockfile)) {
-    throw new Error("package-lock.json must contain an object root.");
+  const match = readTextFile("bun.lock").match(
+    /"effect"\s*:\s*\[\s*"effect@([^"]+)"/u
+  );
+  if (!match?.[1]) {
+    throw new Error('bun.lock must contain an "effect" package entry.');
   }
-  const packages = lockfile["packages"];
-  if (!isRecord(packages)) {
-    throw new Error("package-lock.json must contain a packages object.");
-  }
-  const effectPackage = packages["node_modules/effect"];
-  if (
-    !isRecord(effectPackage) ||
-    typeof effectPackage["version"] !== "string"
-  ) {
+
+  const lockedVersion = match[1];
+  if (lockedVersion !== pinnedVersion) {
     throw new Error(
-      "package-lock.json must contain node_modules/effect with explicit version."
-    );
-  }
-  if (effectPackage["version"] !== pinnedVersion) {
-    throw new Error(
-      `package-lock.json effect version (${effectPackage["version"]}) does not match package.json (${pinnedVersion}).`
+      `bun.lock effect version (${lockedVersion}) does not match package.json (${pinnedVersion}).`
     );
   }
 }

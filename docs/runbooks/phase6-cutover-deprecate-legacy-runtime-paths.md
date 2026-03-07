@@ -8,14 +8,14 @@
 
 ### 1) Legacy Shim Inventory
 
-- Command: `npm run validate:legacy-shims`
+- Command: `bun run validate:legacy-shims`
 - Source of truth: `docs/migration/legacy-runtime-shim-inventory.v1.json`
 
 This gate now enforces post-cutover state: inventory must stay empty (`entries: []`).
 
 ### 2) Legacy Runtime Cutover Guard
 
-- Command: `npm run validate:cutover`
+- Command: `bun run validate:cutover`
 - Script: `scripts/validate-legacy-runtime-cutover.ts`
 
 This gate enforces:
@@ -24,7 +24,7 @@ This gate enforces:
 - any detected shim import edge is treated as migration debt and fails the gate,
 - a non-empty legacy shim inventory fails immediately (post-cutover invariant).
 
-The gate fails on any violation and is wired into `npm run quality:ts`.
+The gate fails on any violation and is wired into `bun run quality:ts`.
 
 ## Operational Workflow
 
@@ -34,9 +34,9 @@ The gate fails on any violation and is wired into `npm run quality:ts`.
 4. Run:
 
 ```bash
-npm run validate:legacy-shims
-npm run validate:cutover
-npm run quality:ts
+bun run validate:legacy-shims
+bun run validate:cutover
+bun run quality:ts
 ```
 
 5. Include migration/removal context in bead update notes for any temporary exceptions.

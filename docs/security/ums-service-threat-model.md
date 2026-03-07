@@ -1,6 +1,7 @@
 # UMS Service Threat Model
 
 ## Scope
+
 - Service components in scope:
   - `apps/api/src/core.ts` operation layer (`recall_authorization`, `tutor_degraded`, `policy_audit_export`, policy audit trail).
   - `apps/api/src/ums/engine.ts` ingest/recall path (space isolation, unsafe filtering, secret redaction).
@@ -10,6 +11,7 @@
   - Single service boundary with deterministic replay and append-style audit semantics.
 
 ## Assets
+
 - Tenant-scoped memory state:
   - Events, learner profile updates, policy decisions, policy audit trail entries.
 - Security-sensitive content:
@@ -22,6 +24,7 @@
   - Replay digests, idempotency keys, deterministic decision identifiers.
 
 ## Trust Boundaries
+
 - Boundary A: External request payloads -> operation handlers.
   - Untrusted fields include tenant/store identifiers, requester identifiers, mode toggles, export options, and arbitrary metadata.
 - Boundary B: Cross-tenant access checks.
@@ -34,6 +37,7 @@
 ## Abuse Cases and Existing Controls
 
 ### 1) Cross-tenant recall/data access attempt
+
 - Abuse path:
   - Adversary submits cross-tenant request by setting `requesterStoreId` to another tenant.
 - Controls:
@@ -43,6 +47,7 @@
   - `tutor_degraded` enforces `ensureRecallAuthorizationForOperation` before serving cross-tenant requests.
 
 ### 2) Authorization bypass by fail-open misuse
+
 - Abuse path:
   - Caller sets `failClosed=false` and expects implicit allow behavior.
 - Controls:
@@ -50,6 +55,7 @@
   - `authorized=false` and `crossSpace=true` are explicit in response and observability fields.
 
 ### 3) Secret/PII exfiltration through ingest or persistence
+
 - Abuse path:
   - Payload includes tokens/passwords/API keys/emails/phones intending to leak through recall or storage.
 - Controls:
@@ -58,6 +64,7 @@
   - Recall guardrail telemetry includes redaction counters.
 
 ### 4) Prompt-injection and unsafe instruction replay
+
 - Abuse path:
   - Content asks to ignore safety controls or exfiltrate secrets.
 - Controls:
@@ -66,6 +73,7 @@
   - Guardrails expose `filteredUnsafe` count for auditability.
 
 ### 5) Policy audit export tampering or signature forgery
+
 - Abuse path:
   - Modify export payload/content post-generation while presenting it as authentic.
 - Controls:
@@ -75,6 +83,7 @@
   - Signature key rotation changes signature value while preserving deterministic event identity.
 
 ## Security Gaps
+
 - No external key management/HSM integration for policy audit signing keys.
 - No online revocation/expiry semantics for exported signature artifacts.
 - Unsafe-pattern detection is lexical and can miss semantically obfuscated prompt injection.
@@ -82,12 +91,14 @@
 - No explicit rate-limiting/throttling controls in core authorization paths.
 
 ## Residual Risk
+
 - Medium: sophisticated prompt-injection variants can evade regex-based unsafe detection.
 - Medium: signed export integrity is strong, but operational key compromise would still permit valid malicious signatures.
 - Medium: improper client use of fail-open responses could still surface unauthorized workflows downstream.
 - Low to Medium: redaction false negatives/positives in long-tail payload patterns.
 
 ## Operational Mitigations
+
 - Enforce production policy:
   - Default all cross-tenant operations to fail-closed and disallow fail-open paths except explicitly approved service accounts.
 - Protect signing keys:

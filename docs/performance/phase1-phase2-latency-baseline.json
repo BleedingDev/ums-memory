@@ -9,10 +9,7 @@
     "queries": 300,
     "maxItems": 10,
     "tokenBudget": 220,
-    "stores": [
-      "coding-agent",
-      "jira-history"
-    ]
+    "stores": ["coding-agent", "jira-history"]
   },
   "thresholds": {
     "ingestP95Ms": 2.5,

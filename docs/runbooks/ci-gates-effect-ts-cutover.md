@@ -10,10 +10,10 @@ Define enforceable CI contract for:
 
 ## Required Gate Sequence
 
-1. `npm run quality:ts`
-2. `npm run test`
-3. `npm run test:sfe`
-4. `npm run build:sfe:single`
+1. `bun run quality:ts`
+2. `bun run test`
+3. `bun run test:sfe`
+4. `bun run build:sfe:single`
 
 ## Policy Checks to Enforce
 

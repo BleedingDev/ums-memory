@@ -1,0 +1,69 @@
+{
+  "name": "worker-cycle",
+  "operations": [
+    {
+      "operation": "shadow_write",
+      "request": {
+        "storeId": "tenant-a",
+        "profile": "alpha",
+        "candidateId": "cand-worker-1",
+        "statement": "Keep replay evaluations deterministic.",
+        "sourceEventIds": ["evt-worker-1"],
+        "evidenceEventIds": ["evt-worker-1"],
+        "status": "shadow",
+        "createdAt": "2026-03-01T00:00:00.000Z",
+        "updatedAt": "2026-03-01T00:00:00.000Z",
+        "expiresAt": "2026-12-01T00:00:00.000Z"
+      }
+    },
+    {
+      "operation": "outcome",
+      "request": {
+        "storeId": "tenant-a",
+        "profile": "alpha",
+        "task": "worker-parity-success",
+        "outcome": "success",
+        "usedRuleIds": ["$rule:cand-worker-1"],
+        "recordedAt": "2026-03-01T00:05:00.000Z"
+      }
+    },
+    {
+      "operation": "outcome",
+      "request": {
+        "storeId": "tenant-a",
+        "profile": "alpha",
+        "task": "worker-parity-failure",
+        "outcome": "failure",
+        "usedRuleIds": ["rule-other"],
+        "recordedAt": "2026-03-01T00:06:00.000Z"
+      }
+    },
+    {
+      "operation": "feedback",
+      "request": {
+        "storeId": "tenant-a",
+        "profile": "alpha",
+        "signal": "helpful",
+        "targetRuleId": "$rule:cand-worker-1",
+        "actor": "user",
+        "recordedAt": "2026-03-01T00:07:00.000Z"
+      }
+    },
+    {
+      "operation": "feedback",
+      "request": {
+        "storeId": "tenant-a",
+        "profile": "alpha",
+        "signal": "harmful",
+        "targetRuleId": "rule-other",
+        "actor": "user",
+        "recordedAt": "2026-03-01T00:08:00.000Z"
+      }
+    }
+  ],
+  "worker": {
+    "timestamp": "2026-03-02T00:00:00.000Z",
+    "replayEvalMaxPerProfile": 5,
+    "maxErrorEntries": 8
+  }
+}

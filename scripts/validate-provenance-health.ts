@@ -1,5 +1,4 @@
-import { DatabaseSync } from "node:sqlite";
-
+import { DatabaseSync } from "../libs/shared/src/effect/storage/sqlite/database.ts";
 import {
   evaluateSqliteProvenanceHealth,
   makeSqliteStorageRepository,

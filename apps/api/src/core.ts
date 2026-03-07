@@ -2512,7 +2512,9 @@ function getProfileState(storeId: any, profile: any) {
     attributionRankingPolicy: {
       policyId: makeId(
         "atrp",
-        hash(stableStringify({ storeId, profile, policy: "attribution_ranking" }))
+        hash(
+          stableStringify({ storeId, profile, policy: "attribution_ranking" })
+        )
       ),
       enabled: false,
       failClosed: true,
@@ -3658,7 +3660,9 @@ function normalizeAttributionRankingPolicyState(
       ) ??
       makeId(
         "atrp",
-        hash(stableStringify({ storeId, profile, policy: "attribution_ranking" }))
+        hash(
+          stableStringify({ storeId, profile, policy: "attribution_ranking" })
+        )
       ),
     enabled: current.enabled === true,
     failClosed: current.failClosed !== false,
@@ -3823,7 +3827,9 @@ function buildShadowAttributionEntry(
   const relevantOutcomes = [];
   let ignoredUntracedCount = 0;
 
-  for (const outcomeEntry of Array.isArray(state?.outcomes) ? state.outcomes : []) {
+  for (const outcomeEntry of Array.isArray(state?.outcomes)
+    ? state.outcomes
+    : []) {
     const usedRuleIds = asSortedUniqueStrings(outcomeEntry?.usedRuleIds);
     if (!usedRuleIds.includes(ruleId)) {
       continue;
@@ -3857,10 +3863,7 @@ function buildShadowAttributionEntry(
     supportCount > 0
       ? roundNumber((helpfulCount - harmfulCount) / supportCount, 6)
       : 0;
-  const supportConfidence = Math.min(
-    supportCount / Math.max(minSupport, 1),
-    1
-  );
+  const supportConfidence = Math.min(supportCount / Math.max(minSupport, 1), 1);
   const signalConfidence = 0.5 + Math.abs(effectSize) / 2;
   const balancePenalty = helpfulCount > 0 && harmfulCount > 0 ? 0.5 : 1;
   const pendingPenalty =
@@ -3875,14 +3878,13 @@ function buildShadowAttributionEntry(
     6
   );
   const supportThresholdMet = supportCount >= minSupport;
-  const direction =
-    !supportThresholdMet
-      ? "neutral"
-      : effectSize >= directionThreshold
-        ? "helpful"
-        : effectSize <= -directionThreshold
-          ? "harmful"
-          : "neutral";
+  const direction = !supportThresholdMet
+    ? "neutral"
+    : effectSize >= directionThreshold
+      ? "helpful"
+      : effectSize <= -directionThreshold
+        ? "harmful"
+        : "neutral";
   const recommendation =
     direction === "neutral" || !supportThresholdMet ? "observe" : direction;
   const evidenceTier = latestReplayEvaluation
@@ -4058,7 +4060,9 @@ function buildShadowAttributionEntries(
       })
     )
     .filter((entry: any) =>
-      includeZeroSupport ? true : entry.supportCount > 0 || entry.pendingCount > 0
+      includeZeroSupport
+        ? true
+        : entry.supportCount > 0 || entry.pendingCount > 0
     )
     .slice(0, Math.max(limit, 0));
 }
@@ -5409,8 +5413,7 @@ function runContext(request: any) {
     isPlainObject(request.attributionRanking);
   const attributionRankingMinSupport = Math.max(
     toPositiveInteger(
-      request.attributionMinSupport ??
-        request.attributionRanking?.minSupport,
+      request.attributionMinSupport ?? request.attributionRanking?.minSupport,
       DEFAULT_ATTRIBUTION_MIN_SUPPORT
     ),
     1
@@ -5503,7 +5506,10 @@ function runContext(request: any) {
           }
           return left.baselineIndex - right.baselineIndex;
         });
-      rankedRules = [...rankedHead.map((entry: any) => entry.rule), ...baselineTail];
+      rankedRules = [
+        ...rankedHead.map((entry: any) => entry.rule),
+        ...baselineTail,
+      ];
       const baselineRuleIds = baselineHead
         .slice(0, Math.min(5, baselineHead.length))
         .map((rule: any) => rule.ruleId);
@@ -10574,14 +10580,17 @@ function runShadowAttribution(request: any) {
     summary: stableSortObject({
       totalRules: Array.isArray(state.rules) ? state.rules.length : 0,
       surfacedRules: entries.length,
-      helpfulRules: entries.filter((entry: any) => entry.direction === "helpful")
-        .length,
-      harmfulRules: entries.filter((entry: any) => entry.direction === "harmful")
-        .length,
+      helpfulRules: entries.filter(
+        (entry: any) => entry.direction === "helpful"
+      ).length,
+      harmfulRules: entries.filter(
+        (entry: any) => entry.direction === "harmful"
+      ).length,
       observeRules: entries.filter(
         (entry: any) => entry.recommendation === "observe"
       ).length,
-      pendingRules: entries.filter((entry: any) => entry.pendingCount > 0).length,
+      pendingRules: entries.filter((entry: any) => entry.pendingCount > 0)
+        .length,
     }),
   };
 }
@@ -12750,6 +12759,10 @@ function runDoctor(request: any) {
   };
 }
 
+function runRuntimeSnapshotExport() {
+  return exportStoreSnapshot();
+}
+
 const runners: Record<string, (request: any) => any> = {
   ingest: runIngest,
   context: runContext,
@@ -12813,6 +12826,7 @@ const runners: Record<string, (request: any) => any> = {
   outcome: runOutcome,
   shadow_attribution: runShadowAttribution,
   attribution_report: runAttributionReport,
+  runtime_snapshot_export: runRuntimeSnapshotExport,
   audit: runAudit,
   export: runExport,
   doctor: runDoctor,
@@ -13017,13 +13031,29 @@ function serializeState(state: any) {
   };
 }
 
-export function exportStoreSnapshot() {
-  const storesPayload: Record<string, { profiles: Record<string, unknown> }> =
-    {};
+type ExportedProfileState = ReturnType<typeof serializeState>;
+
+type ExportedStoreProfiles = Record<string, ExportedProfileState> & {
+  readonly __store_default__?: ExportedProfileState;
+};
+
+type ExportedStores = Record<
+  string,
+  {
+    readonly profiles: ExportedStoreProfiles;
+  }
+>;
+
+type ExportStoreSnapshotResult = {
+  readonly stores: ExportedStores;
+};
+
+export function exportStoreSnapshot(): ExportStoreSnapshotResult {
+  const storesPayload: ExportedStores = {};
 
   for (const storeId of [...stores.keys()].sort()) {
     const profiles = stores.get(storeId) ?? new Map();
-    const profilesPayload: Record<string, unknown> = {};
+    const profilesPayload: ExportedStoreProfiles = {};
     for (const profile of [...profiles.keys()].sort()) {
       profilesPayload[profile] = serializeState(profiles.get(profile));
     }

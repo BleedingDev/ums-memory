@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
-import { DatabaseSync } from "node:sqlite";
-import { test } from "node:test";
 
+import { test } from "@effect-native/bun-test";
 import { Cause, Effect, Option } from "effect";
 
 import { makeNoopStorageService } from "../services/storage-service.js";
@@ -16,6 +15,7 @@ import {
   StorageAdapterDuplicateIdError,
   StorageAdapterUnknownIdError,
 } from "./adapter-registry.js";
+import { DatabaseSync } from "./sqlite/database.ts";
 
 const makeNoopAdapterRegistration = (
   id: string

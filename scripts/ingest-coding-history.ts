@@ -891,7 +891,7 @@ function mergeRuleCandidates(
 
 function sanitizeAntiPatternText(value: unknown) {
   return normalizeText(value)
-    .replace(/[✖✔⚠️✅•◆]/g, "")
+    .replace(/✖|✔|⚠️|✅|•|◆/gu, "")
     .replace(/`/g, "")
     .replace(/\s+/g, " ")
     .replace(/[:\-–—]{2,}/g, ":")
@@ -1042,7 +1042,7 @@ async function main(argv = process.argv.slice(2)) {
       const highSignalHeuristics = heuristicCandidates.filter(
         (candidate) =>
           candidate.confidence >= 0.82 &&
-          !/[^\u0000-\u007F]/.test(candidate.statement) &&
+          !/[^\p{ASCII}]/u.test(candidate.statement) &&
           !/\b(@techsio|gskill|api keys|dockerfile|playwright_workers)\b/i.test(
             candidate.statement
           )

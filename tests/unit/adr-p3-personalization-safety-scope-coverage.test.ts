@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import test from "node:test";
+
+import { test } from "@effect-native/bun-test";
 
 const KEY_SCOPE_PHRASES = Object.freeze([
   "Personalization Safety and Policy Controls",

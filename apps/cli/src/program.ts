@@ -1,5 +1,7 @@
 import { readFile } from "node:fs/promises";
 
+import { Schema } from "effect";
+
 import {
   DEFAULT_RUNTIME_STATE_FILE,
   executeRuntimeOperation,
@@ -16,24 +18,25 @@ interface ParsedArgs {
   help: boolean;
 }
 
+const isString = Schema.is(Schema.String);
+const isUnknownRecord = Schema.is(Schema.Record(Schema.String, Schema.Unknown));
+
 async function printUsage(): Promise<void> {
-  let ops = "unknown";
-  try {
-    const operations = await listRuntimeOperations();
-    ops = operations.join(", ");
-  } catch {
-    ops = "unavailable (runtime service failed to load)";
-  }
+  const operations = await listRuntimeOperations().catch(() => null);
+  const ops =
+    operations === null
+      ? "unavailable (runtime service failed to load)"
+      : operations.join(", ");
   process.stderr.write(
     `${[
       "Usage:",
-      "  node --import tsx apps/cli/src/index.ts <operation> [--input '<json>'] [--file path] [--state-file path] [--store-id id] [--pretty]",
+      "  bun apps/cli/src/index.ts <operation> [--input '<json>'] [--file path] [--state-file path] [--store-id id] [--pretty]",
       "",
       `Operations: ${ops}`,
       "",
       "Examples:",
-      '  node --import tsx apps/cli/src/index.ts ingest --store-id coding-agent --input \'{"events":[{"type":"note","content":"Use deterministic IDs"}]}\'',
-      '  echo \'{"query":"deterministic"}\' | node --import tsx apps/cli/src/index.ts context',
+      '  bun apps/cli/src/index.ts ingest --store-id coding-agent --input \'{"events":[{"type":"note","content":"Use deterministic IDs"}]}\'',
+      '  echo \'{"query":"deterministic"}\' | bun apps/cli/src/index.ts context',
     ].join("\n")}\n`
   );
 }
@@ -41,7 +44,7 @@ async function printUsage(): Promise<void> {
 function parseArgs(argv: readonly string[]): ParsedArgs {
   const args = [...argv];
   const cliStateFileEnv =
-    typeof process.env["UMS_CLI_STATE_FILE"] === "string" &&
+    isString(process.env["UMS_CLI_STATE_FILE"]) &&
     process.env["UMS_CLI_STATE_FILE"].trim()
       ? process.env["UMS_CLI_STATE_FILE"].trim()
       : null;
@@ -112,10 +115,10 @@ async function readInput({
   input: string | null;
   file: string | null;
 }): Promise<string> {
-  if (typeof input === "string" && input.trim()) {
+  if (isString(input) && input.trim()) {
     return input;
   }
-  if (typeof file === "string" && file.trim()) {
+  if (isString(file) && file.trim()) {
     const content = await readFile(file, "utf8");
     return content.trim();
   }
@@ -143,19 +146,16 @@ async function main(
 
   const requestRaw = await readInput(parsed);
   const requestBody = safeJsonParse(requestRaw);
-  const requestBodyObject =
-    typeof requestBody === "object" &&
-    requestBody &&
-    !Array.isArray(requestBody)
-      ? (requestBody as { storeId?: unknown })
-      : null;
+  const requestBodyObject = isUnknownRecord(requestBody)
+    ? (requestBody as { storeId?: unknown })
+    : null;
   if (parsed.storeId && requestBodyObject && !requestBodyObject.storeId) {
     requestBodyObject.storeId = parsed.storeId;
   }
   const data = await executeRuntimeOperation({
     operation: parsed.operation,
-    requestBody,
     stateFile: parsed.stateFile,
+    requestBody: structuredClone(requestBody),
   });
   const payload = {
     ok: true,

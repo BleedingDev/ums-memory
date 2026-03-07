@@ -9,5 +9,3 @@ declare module "node:sqlite" {
     run(...params: any[]): any;
   }
 }
-
-export {};

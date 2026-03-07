@@ -5,7 +5,7 @@
 Effective March 3, 2026, `ums-memory` adopts the Effect v4 beta track as
 the target runtime policy.
 
-- npm reality:
+- registry snapshot:
   - `latest`: `3.19.19`
   - `beta`: `4.0.0-beta.25`
 - Platform target: exact pin `effect@4.0.0-beta.25`.
@@ -27,6 +27,6 @@ the target runtime policy.
 
 - Source of truth:
   - `package.json` dependency pin.
-  - `docs/runbooks/effect-version-availability.md` for npm dist-tag evidence.
+  - `docs/runbooks/effect-version-availability.md` for registry snapshot evidence.
   - `docs/reports/effect-v4-compatibility-matrix.md` for API-level compatibility notes.
 - CI contract is defined in `docs/runbooks/ci-gates-effect-ts-cutover.md`.

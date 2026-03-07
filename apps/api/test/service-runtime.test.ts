@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { createServer as createNetServer } from "node:net";
-import test from "node:test";
+
+import { test } from "@effect-native/bun-test";
 
 import {
   createSupervisedApiService,

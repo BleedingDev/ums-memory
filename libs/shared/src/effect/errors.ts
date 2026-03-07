@@ -129,6 +129,7 @@ export class RuntimePersistenceExecutionError extends Schema.TaggedErrorClass<Ru
   "RuntimePersistenceExecutionError",
   {
     operation: Schema.String,
+    code: Schema.optional(Schema.String),
     message: Schema.String,
     details: Schema.String,
   }

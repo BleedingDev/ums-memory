@@ -8,19 +8,19 @@
 
 ## JS/MJS Surface Counts
 
-| Category | Count |
-| --- | ---: |
-| api (`apps/api/**`) | 9 |
-| cli (`apps/cli/**`) | 4 |
-| ums (`apps/ums/**`) | 1 |
-| shared (`libs/shared/**`) | 9 |
-| tests (`tests/**`) | 19 |
-| scripts (`scripts/**`) | 3 |
-| benchmarks (`benchmarks/**`) | 1 |
-| docs (`docs/**`, JS/MJS only) | 0 |
-| `.js` files | 9 |
-| `.mjs` files | 37 |
-| **Total JS/MJS files** | **46** |
+| Category                      |  Count |
+| ----------------------------- | -----: |
+| api (`apps/api/**`)           |      9 |
+| cli (`apps/cli/**`)           |      4 |
+| ums (`apps/ums/**`)           |      1 |
+| shared (`libs/shared/**`)     |      9 |
+| tests (`tests/**`)            |     19 |
+| scripts (`scripts/**`)        |      3 |
+| benchmarks (`benchmarks/**`)  |      1 |
+| docs (`docs/**`, JS/MJS only) |      0 |
+| `.js` files                   |      9 |
+| `.mjs` files                  |     37 |
+| **Total JS/MJS files**        | **46** |
 
 ## Runtime/Test/Script Entrypoints
 

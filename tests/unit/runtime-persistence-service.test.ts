@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 
+import { test } from "@effect-native/bun-test";
 import { Effect } from "effect";
 
 import {
@@ -166,6 +166,29 @@ test("runtime persistence surfaces executor failures as execution errors", async
   assert.ok(result.left instanceof RuntimePersistenceExecutionError);
   assert.equal(result.left.operation, "context");
   assert.match(result.left.details, /executor blew up/);
+});
+
+test("runtime persistence preserves tagged executor failures", async () => {
+  const service = makeNoopRuntimePersistenceService();
+
+  const result = await runEither(
+    service.execute({
+      operation: "context",
+      execute: () =>
+        Promise.reject(
+          new RuntimePersistenceExecutionError({
+            operation: "context",
+            message: "Runtime persistence executor failed.",
+            details: "sqlite write timeout",
+          })
+        ),
+    })
+  );
+
+  assert.equal(result._tag, "Left");
+  assert.ok(result.left instanceof RuntimePersistenceExecutionError);
+  assert.equal(result.left.operation, "context");
+  assert.match(result.left.details, /sqlite write timeout/);
 });
 
 test("deterministic runtime persistence layer wires RuntimePersistenceServiceTag", async () => {

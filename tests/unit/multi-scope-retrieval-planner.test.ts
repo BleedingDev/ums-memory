@@ -7,12 +7,13 @@ import {
   writeFileSync,
 } from "node:fs";
 import { dirname, join } from "node:path";
-import { DatabaseSync } from "node:sqlite";
-import test from "node:test";
 import { pathToFileURL } from "node:url";
 
+import { test } from "@effect-native/bun-test";
 import { Effect as EffectOriginal } from "effect";
 import ts from "typescript";
+
+import { DatabaseSync } from "../../libs/shared/src/effect/storage/sqlite/database.ts";
 
 const Effect: any = EffectOriginal;
 
@@ -71,6 +72,7 @@ const transpileManifest = Object.freeze([
   "storage/sqlite/enterprise-schema.ts",
   "storage/sqlite/migrations.ts",
   "storage/sqlite/backup-replication.ts",
+  "storage/sqlite/runtime-persistence-repository.ts",
   "storage/sqlite/snapshot-codec.ts",
   "storage/sqlite/storage-repository.ts",
   "storage/sqlite/index.ts",

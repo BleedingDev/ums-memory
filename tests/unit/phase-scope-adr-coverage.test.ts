@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import test from "node:test";
+
+import { test } from "@effect-native/bun-test";
 
 const REQUIRED_EPIC_IDS = Object.freeze([
   "ums-memory-k0x",

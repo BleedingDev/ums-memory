@@ -8,7 +8,7 @@ Rollback path when `effect@4.0.0-beta.25` causes regressions in correctness, det
 
 Execute rollback when any of the following is true after a beta bump or related migration:
 
-1. `npm run ci:verify` fails in previously green baseline without intentional breaking changes.
+1. `bun run ci:verify` fails in previously green baseline without intentional breaking changes.
 2. Determinism tests regress (idempotency/replay behavior changes unexpectedly).
 3. Runtime error rate or latency exceeds production guardrails after deployment.
 
@@ -17,10 +17,10 @@ Execute rollback when any of the following is true after a beta bump or related 
 1. Freeze merges affecting Effect/runtime migration beads.
 2. Revert the Effect pin to last known-good version commit.
 3. Re-run:
-   - `npm run quality:ts`
-   - `npm run test`
-   - `npm run test:sfe`
-   - `npm run build:sfe:single`
+   - `bun run quality:ts`
+   - `bun run test`
+   - `bun run test:sfe`
+   - `bun run build:sfe:single`
 4. Deploy reverted build artifact.
 5. Open incident bead documenting:
    - failing symptom,

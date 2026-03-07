@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 
+import { test } from "@effect-native/bun-test";
 import { Effect } from "effect";
 
 import type {

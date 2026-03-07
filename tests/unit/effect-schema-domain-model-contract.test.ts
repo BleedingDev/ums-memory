@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+
+import { test } from "@effect-native/bun-test";
 
 import {
   AgentIdSchema,
@@ -23,6 +24,7 @@ import {
   DeterministicDedupeDecisionSchema,
   GroundedAnswerSchema,
   MemoryCandidateExtractionSchema,
+  normalizeAdapterSourceAlias,
   PersistedMemoryRecordSchema,
   RetrievalResponseSchema,
   SchemaEvolutionPolicySchema,
@@ -105,6 +107,8 @@ test("ums-memory-y9m.3: adapter session envelope schema normalizes codex/claude/
     "cursor",
     "opencode",
     "vscode",
+    "codex-native",
+    "plan",
   ] as const;
 
   for (const source of supportedSources) {
@@ -185,6 +189,17 @@ test("ums-memory-y9m.3: adapter session envelope schema normalizes codex/claude/
       }),
     /ParseError|source/i
   );
+});
+
+test("adapter source alias normalization keeps canonical ingestion names stable", () => {
+  assert.equal(normalizeAdapterSourceAlias("codex"), "codex-cli");
+  assert.equal(normalizeAdapterSourceAlias("claude"), "claude-code");
+  assert.equal(normalizeAdapterSourceAlias("vscode-copilot"), "vscode");
+  assert.equal(normalizeAdapterSourceAlias("cursor"), "cursor");
+  assert.equal(normalizeAdapterSourceAlias("opencode"), "opencode");
+  assert.equal(normalizeAdapterSourceAlias("codex-native"), "codex-native");
+  assert.equal(normalizeAdapterSourceAlias("plan"), "plan");
+  assert.equal(normalizeAdapterSourceAlias("unknown-adapter"), null);
 });
 
 test("ums-memory-y9m.4: memory candidate extraction and persisted memory record contracts decode valid payloads", () => {

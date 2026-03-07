@@ -4,7 +4,6 @@ import {
   createHash,
   randomBytes,
 } from "node:crypto";
-import type { DatabaseSync } from "node:sqlite";
 
 import { Effect } from "effect";
 
@@ -31,6 +30,7 @@ import {
   createSqliteBackupReplicator,
   type SqliteBackupReplicationOptions,
 } from "./backup-replication.js";
+import type { DatabaseSync } from "./database.ts";
 import {
   type EnterpriseAuditEventOperation,
   type EnterpriseAuditEventOutcome,
@@ -2995,14 +2995,18 @@ const toNullableReadStringColumn = (
 };
 
 const isSqliteConstraintFailure = (cause: unknown): boolean => {
-  if (!(cause instanceof Error)) {
-    return false;
-  }
+  const code =
+    typeof cause === "object" && cause !== null && "code" in cause
+      ? (cause as { readonly code?: unknown }).code
+      : undefined;
+  const message = toErrorMessage(cause);
+  const normalizedMessage = message.toLowerCase();
+  const trimmedMessage = message.trim();
 
-  const code = (cause as { readonly code?: unknown }).code;
-  if (typeof code === "string" && code.startsWith("ERR_SQLITE")) {
-    const normalizedMessage = cause.message.toLowerCase();
-    const trimmedMessage = cause.message.trim();
+  if (
+    typeof code === "string" &&
+    (code.startsWith("ERR_SQLITE") || code.startsWith("SQLITE_"))
+  ) {
     return (
       normalizedMessage.includes("constraint") ||
       normalizedMessage.includes("foreign key") ||
@@ -3012,7 +3016,13 @@ const isSqliteConstraintFailure = (cause: unknown): boolean => {
     );
   }
 
-  return /constraint|foreign key|check|abort/i.test(cause.message);
+  return (
+    normalizedMessage.includes("constraint") ||
+    normalizedMessage.includes("foreign key") ||
+    normalizedMessage.includes("check") ||
+    normalizedMessage.includes("abort") ||
+    /^[A-Z0-9_]+$/.test(trimmedMessage)
+  );
 };
 
 const toErrorMessage = (cause: unknown): string =>

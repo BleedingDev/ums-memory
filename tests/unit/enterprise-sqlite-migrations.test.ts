@@ -2,18 +2,46 @@ import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { DatabaseSync } from "node:sqlite";
-import test from "node:test";
 import { pathToFileURL } from "node:url";
 
+import { test } from "@effect-native/bun-test";
 import ts from "typescript";
+
+import { DatabaseSync } from "../../libs/shared/src/effect/storage/sqlite/database.ts";
+import { sqliteAll, sqliteGet } from "./sqlite-test-helpers.ts";
+
+type SqliteMigrationModule =
+  typeof import("../../libs/shared/src/effect/storage/sqlite/migrations.ts");
+type SqliteMigrationDefinition =
+  SqliteMigrationModule["enterpriseSqliteMigrations"][number];
+type SqliteSchemaSignatureRow = {
+  readonly type: string;
+  readonly name: string;
+  readonly table_name: string;
+  readonly sql: string | null;
+};
+type DetailRow = { readonly detail?: string | null };
+type MemoryIdRow = { readonly memory_id: string };
+type NameRow = { readonly name: string };
+
+const getRequiredValue = <T>(
+  value: T | null | undefined,
+  message = "Expected value to be defined."
+): NonNullable<T> => {
+  assert.notEqual(value, undefined, message);
+  assert.notEqual(value, null, message);
+  return value as NonNullable<T>;
+};
 
 const sqliteModuleDirectory = new URL(
   "../../libs/shared/src/effect/storage/sqlite/",
   import.meta.url
 );
 
-const transpileToTempModule = (sourceFilename: any, tempDirectory: any) => {
+const transpileToTempModule = (
+  sourceFilename: string,
+  tempDirectory: string
+) => {
   const sourceFileUrl = new URL(sourceFilename, sqliteModuleDirectory);
   const source = readFileSync(sourceFileUrl, "utf8");
   const transpiled = ts.transpileModule(source, {
@@ -30,8 +58,8 @@ const transpileToTempModule = (sourceFilename: any, tempDirectory: any) => {
   );
 };
 
-let sqliteMigrationModulePromise: any;
-let transpiledDirectoryPath: any;
+let sqliteMigrationModulePromise: Promise<SqliteMigrationModule> | undefined;
+let transpiledDirectoryPath: string | undefined;
 
 const loadSqliteMigrationModule = async () => {
   if (!sqliteMigrationModulePromise) {
@@ -44,7 +72,9 @@ const loadSqliteMigrationModule = async () => {
     const migrationsModuleUrl = pathToFileURL(
       join(transpiledDirectoryPath, "migrations.js")
     ).href;
-    sqliteMigrationModulePromise = import(migrationsModuleUrl);
+    sqliteMigrationModulePromise = import(
+      migrationsModuleUrl
+    ) as Promise<SqliteMigrationModule>;
   }
 
   return sqliteMigrationModulePromise;
@@ -56,21 +86,23 @@ process.on("exit", () => {
   }
 });
 
-const toMigrationVersions = (migrations: any) =>
-  migrations.map((migration: any) => migration.version);
+const toMigrationVersions = (
+  migrations: readonly SqliteMigrationDefinition[]
+): readonly number[] => migrations.map((migration) => migration.version);
 
-const readSchemaSignature = (database: any) =>
-  database
-    .prepare(
-      [
-        "SELECT type, name, tbl_name AS table_name, sql",
-        "FROM sqlite_schema",
-        "WHERE type IN ('table', 'index', 'trigger', 'view')",
-        "  AND name NOT LIKE 'sqlite_%'",
-        "ORDER BY type, name;",
-      ].join("\n")
-    )
-    .all();
+const readSchemaSignature = (
+  database: DatabaseSync
+): readonly SqliteSchemaSignatureRow[] =>
+  sqliteAll<SqliteSchemaSignatureRow>(
+    database,
+    [
+      "SELECT type, name, tbl_name AS table_name, sql",
+      "FROM sqlite_schema",
+      "WHERE type IN ('table', 'index', 'trigger', 'view')",
+      "  AND name NOT LIKE 'sqlite_%'",
+      "ORDER BY type, name;",
+    ].join("\n")
+  );
 
 test("ums-memory-5cb.2: enterprise sqlite migration definitions and planning are deterministic", async () => {
   const migrationsModule = await loadSqliteMigrationModule();
@@ -78,33 +110,45 @@ test("ums-memory-5cb.2: enterprise sqlite migration definitions and planning are
   assert.equal(migrationsModule.enterpriseSqliteMigrations.length, 6);
   assert.equal(migrationsModule.enterpriseSqliteLatestMigrationVersion, 6);
 
-  const migrationV1 = migrationsModule.enterpriseSqliteMigrations[0];
+  const migrationV1 = getRequiredValue(
+    migrationsModule.enterpriseSqliteMigrations.at(0)
+  );
   assert.equal(migrationV1.version, 1);
   assert.equal(migrationV1.name, "enterprise_sqlite_v1");
   assert.equal(migrationV1.sql, `${migrationV1.statements.join("\n\n")}\n`);
-  const migrationV2 = migrationsModule.enterpriseSqliteMigrations[1];
+  const migrationV2 = getRequiredValue(
+    migrationsModule.enterpriseSqliteMigrations.at(1)
+  );
   assert.equal(migrationV2.version, 2);
   assert.equal(migrationV2.name, "enterprise_sqlite_v2_fts5_memory_search");
   assert.equal(migrationV2.sql, `${migrationV2.statements.join("\n\n")}\n`);
-  const migrationV3 = migrationsModule.enterpriseSqliteMigrations[2];
+  const migrationV3 = getRequiredValue(
+    migrationsModule.enterpriseSqliteMigrations.at(2)
+  );
   assert.equal(migrationV3.version, 3);
   assert.equal(migrationV3.name, "enterprise_sqlite_v3_audit_event_ledger");
   assert.equal(migrationV3.sql, `${migrationV3.statements.join("\n\n")}\n`);
-  const migrationV4 = migrationsModule.enterpriseSqliteMigrations[3];
+  const migrationV4 = getRequiredValue(
+    migrationsModule.enterpriseSqliteMigrations.at(3)
+  );
   assert.equal(migrationV4.version, 4);
   assert.equal(
     migrationV4.name,
     "enterprise_sqlite_v4_storage_idempotency_ledger"
   );
   assert.equal(migrationV4.sql, `${migrationV4.statements.join("\n\n")}\n`);
-  const migrationV5 = migrationsModule.enterpriseSqliteMigrations[4];
+  const migrationV5 = getRequiredValue(
+    migrationsModule.enterpriseSqliteMigrations.at(4)
+  );
   assert.equal(migrationV5.version, 5);
   assert.equal(
     migrationV5.name,
     "enterprise_sqlite_v5_identity_runtime_bindings"
   );
   assert.equal(migrationV5.sql, `${migrationV5.statements.join("\n\n")}\n`);
-  const migrationV6 = migrationsModule.enterpriseSqliteMigrations[5];
+  const migrationV6 = getRequiredValue(
+    migrationsModule.enterpriseSqliteMigrations.at(5)
+  );
   assert.equal(migrationV6.version, 6);
   assert.equal(
     migrationV6.name,
@@ -247,19 +291,22 @@ test("ums-memory-5cb.6: migrating from v1 to v2 backfills FTS rows and uses virt
     assert.deepEqual(toMigrationVersions(v2ApplyResult.appliedMigrations), [2]);
     assert.equal(migrationsModule.readSqliteUserVersion(database), 2);
 
-    const searchRows = database
-      .prepare(
-        "SELECT memory_id FROM memory_items_fts WHERE memory_items_fts MATCH ? AND tenant_id = ?;"
-      )
-      .all("delta", "tenant_v1");
+    const searchRows = sqliteAll<MemoryIdRow>(
+      database,
+      "SELECT memory_id FROM memory_items_fts WHERE memory_items_fts MATCH ? AND tenant_id = ?;",
+      "delta",
+      "tenant_v1"
+    );
     assert.equal(searchRows.length, 1);
+    assert.ok(searchRows[0]);
     assert.equal(searchRows[0].memory_id, "memory_backfill");
 
-    const planRows = database
-      .prepare(
-        "EXPLAIN QUERY PLAN SELECT memory_id FROM memory_items_fts WHERE memory_items_fts MATCH ? AND tenant_id = ? LIMIT 5;"
-      )
-      .all("delta", "tenant_v1");
+    const planRows = sqliteAll<DetailRow>(
+      database,
+      "EXPLAIN QUERY PLAN SELECT memory_id FROM memory_items_fts WHERE memory_items_fts MATCH ? AND tenant_id = ? LIMIT 5;",
+      "delta",
+      "tenant_v1"
+    );
     const planDetails = planRows.map((row) => String(row.detail ?? ""));
     assert.ok(
       planDetails.some(
@@ -303,11 +350,10 @@ test("ums-memory-5cb.8: migrating from v2 to v3 adds append-only audit ledger ob
     assert.deepEqual(toMigrationVersions(v3ApplyResult.appliedMigrations), [3]);
     assert.equal(migrationsModule.readSqliteUserVersion(database), 3);
 
-    const tableRow = database
-      .prepare(
-        "SELECT name FROM sqlite_schema WHERE type = 'table' AND name = 'audit_events';"
-      )
-      .get();
+    const tableRow = sqliteGet<NameRow>(
+      database,
+      "SELECT name FROM sqlite_schema WHERE type = 'table' AND name = 'audit_events';"
+    );
     assert.equal(tableRow?.name, "audit_events");
 
     database
@@ -362,11 +408,10 @@ test("ums-memory-5cb.10: migrating from v3 to v4 adds storage idempotency ledger
     assert.deepEqual(toMigrationVersions(v4ApplyResult.appliedMigrations), [4]);
     assert.equal(migrationsModule.readSqliteUserVersion(database), 4);
 
-    const tableRow = database
-      .prepare(
-        "SELECT name FROM sqlite_schema WHERE type = 'table' AND name = 'storage_idempotency_ledger';"
-      )
-      .get();
+    const tableRow = sqliteGet<NameRow>(
+      database,
+      "SELECT name FROM sqlite_schema WHERE type = 'table' AND name = 'storage_idempotency_ledger';"
+    );
     assert.equal(tableRow?.name, "storage_idempotency_ledger");
 
     database
@@ -382,16 +427,15 @@ test("ums-memory-5cb.10: migrating from v3 to v4 adds storage idempotency ledger
         0
       );
 
-    const indexRows = database
-      .prepare(
-        [
-          "SELECT name FROM sqlite_schema",
-          "WHERE type = 'index'",
-          "  AND name IN ('idx_storage_idempotency_ledger_created', 'idx_storage_idempotency_ledger_request_hash')",
-          "ORDER BY name ASC;",
-        ].join("\n")
-      )
-      .all();
+    const indexRows = sqliteAll<NameRow>(
+      database,
+      [
+        "SELECT name FROM sqlite_schema",
+        "WHERE type = 'index'",
+        "  AND name IN ('idx_storage_idempotency_ledger_created', 'idx_storage_idempotency_ledger_request_hash')",
+        "ORDER BY name ASC;",
+      ].join("\n")
+    );
     assert.deepEqual(
       indexRows.map((row) => row.name),
       [
@@ -427,17 +471,15 @@ test("ums-memory-wt0.1: migrating from v4 to v5 adds deterministic identity runt
     assert.deepEqual(toMigrationVersions(v5ApplyResult.appliedMigrations), [5]);
     assert.equal(migrationsModule.readSqliteUserVersion(database), 5);
 
-    const identityTableNames = database
-      .prepare(
-        [
-          "SELECT name FROM sqlite_schema",
-          "WHERE type = 'table'",
-          "  AND name IN ('identity_issuer_bindings', 'user_external_subjects', 'identity_sync_checkpoints')",
-          "ORDER BY name ASC;",
-        ].join("\n")
-      )
-      .all()
-      .map((row) => row.name);
+    const identityTableNames = sqliteAll<NameRow>(
+      database,
+      [
+        "SELECT name FROM sqlite_schema",
+        "WHERE type = 'table'",
+        "  AND name IN ('identity_issuer_bindings', 'user_external_subjects', 'identity_sync_checkpoints')",
+        "ORDER BY name ASC;",
+      ].join("\n")
+    ).map((row) => row.name);
     assert.deepEqual(identityTableNames, [
       "identity_issuer_bindings",
       "identity_sync_checkpoints",

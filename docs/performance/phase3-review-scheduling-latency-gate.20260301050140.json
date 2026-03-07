@@ -3,11 +3,7 @@
   "generatedAt": "2026-03-01T05:01:40.777Z",
   "config": {
     "iterations": 300,
-    "volumes": [
-      64,
-      128,
-      256
-    ],
+    "volumes": [64, 128, 256],
     "nearConstantRatioThreshold": 6,
     "p95ThresholdsMs": {
       "reviewScheduleUpdate": 0.8,

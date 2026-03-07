@@ -120,6 +120,7 @@ Avoid making progress depend on fragile or partially-working automation.
 - If push fails, resolve and retry until it succeeds
 
 <!-- BEGIN BEADS INTEGRATION -->
+
 ## Issue Tracking with bd (beads)
 
 **IMPORTANT**: This project uses **bd (beads)** for ALL issue tracking. Do NOT use markdown TODOs, task lists, or other tracking methods.

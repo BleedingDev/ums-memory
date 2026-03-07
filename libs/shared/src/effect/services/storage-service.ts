@@ -1,5 +1,3 @@
-import type { DatabaseSync } from "node:sqlite";
-
 import { Effect, Layer, ServiceMap } from "effect";
 
 import type {
@@ -16,6 +14,7 @@ import {
   ContractValidationError,
   type StorageServiceError,
 } from "../errors.js";
+import type { DatabaseSync } from "../storage/sqlite/database.ts";
 import {
   makeSqliteStorageRepository,
   type SqliteStorageRepositoryOptions,

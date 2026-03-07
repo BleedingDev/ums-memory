@@ -1,5 +1,4 @@
-import type { DatabaseSync } from "node:sqlite";
-
+import type { DatabaseSync } from "./database.ts";
 import { enterpriseSqliteSchemaStatements } from "./enterprise-schema.js";
 
 export interface SqliteMigrationDefinition<Version extends number = number> {

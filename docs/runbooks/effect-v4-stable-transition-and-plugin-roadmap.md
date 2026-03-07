@@ -9,8 +9,8 @@ Related beads: `ums-memory-bmd.5`, `ums-memory-bmd.6`, `ums-memory-bmd.7`
 
 - Stable `effect` v4 release is published and documented upstream.
 - Full repository gates are green on current pin:
-  - `npm run quality:ts`
-  - `npm run ci:verify`
+  - `bun run quality:ts`
+  - `bun run ci:verify`
 - No runtime TS suppressions and no legacy runtime shim inventory entries.
 - Deterministic API/CLI contract suites remain green (`test:api`, `test:ums`, `test:sfe`).
 
@@ -19,8 +19,8 @@ Related beads: `ums-memory-bmd.5`, `ums-memory-bmd.6`, `ums-memory-bmd.7`
 1. Update pin from `4.0.0-beta.25` to stable v4 in `package.json`.
 2. Keep `scripts/validate-effect-beta-pin.ts` policy semantics, but switch it to enforce approved stable range.
 3. Run full gate:
-   - `npm run quality:ts`
-   - `npm run ci:verify`
+   - `bun run quality:ts`
+   - `bun run ci:verify`
 4. Produce delta report:
    - changed public types
    - runtime behavior diffs
@@ -31,7 +31,7 @@ Related beads: `ums-memory-bmd.5`, `ums-memory-bmd.6`, `ums-memory-bmd.7`
 
 - If any contract or determinism regression appears after pin change:
   1. revert dependency pin commit;
-  2. rerun `npm run ci:verify`;
+  2. rerun `bun run ci:verify`;
   3. reopen transition bead with exact failing commands and diff pointers.
 
 ## 2) Dependency + Compatibility Upgrade Cadence
@@ -47,8 +47,8 @@ Related beads: `ums-memory-bmd.5`, `ums-memory-bmd.6`, `ums-memory-bmd.7`
 
 ### Mandatory gates per upgrade PR
 
-- `npm run quality:ts`
-- `npm run ci:verify`
+- `bun run quality:ts`
+- `bun run ci:verify`
 - strict JSON and tsconfig policy validation must remain green
 - no new `.js`/`.mjs` source files in guarded directories (`validate:no-legacy-js-sources`)
 

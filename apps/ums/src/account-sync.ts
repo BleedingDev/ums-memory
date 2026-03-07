@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import type { Dirent } from "node:fs";
 import {
   access,
   mkdir,
@@ -732,9 +733,12 @@ async function listJsonlFiles(rootPath: string): Promise<string[]> {
     if (!current) {
       continue;
     }
-    let entries: Awaited<ReturnType<typeof readdir>>;
+    let entries: Dirent<string>[];
     try {
-      entries = await readdir(current, { withFileTypes: true });
+      entries = await readdir(current, {
+        encoding: "utf8",
+        withFileTypes: true,
+      });
     } catch (error) {
       if (
         isErrnoException(error) &&

@@ -3,11 +3,11 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
-import test from "node:test";
+
+import { test } from "@effect-native/bun-test";
 const ROOT = process.cwd();
 const CLI_PATH = resolve(ROOT, "apps/cli/src/index.ts");
 const API_PATH = resolve(ROOT, "apps/api/src/server.ts");
-const TSX_LOADER_PATH = resolve(ROOT, "node_modules/tsx/dist/loader.mjs");
 
 interface CommandResult {
   readonly code: number | null;
@@ -30,6 +30,7 @@ interface ApiServerHandle {
 function cleanSharedStateEnv() {
   const env = { ...process.env };
   delete env["UMS_STATE_FILE"];
+  delete env["UMS_RUNTIME_STATE_FILE"];
   delete env["UMS_CLI_STATE_FILE"];
   return env;
 }
@@ -40,9 +41,7 @@ function runNode(
   { cwd, env, stdin = "" }: NodeCommandOptions
 ): Promise<CommandResult> {
   return new Promise<CommandResult>((resolvePromise) => {
-    const commandArgs = scriptPath.endsWith(".ts")
-      ? ["--import", TSX_LOADER_PATH, scriptPath, ...args]
-      : [scriptPath, ...args];
+    const commandArgs = [scriptPath, ...args];
     const proc = spawn(process.execPath, commandArgs, {
       cwd,
       env,
@@ -71,9 +70,7 @@ function startSourceApiServer({
   env,
 }: Pick<NodeCommandOptions, "cwd" | "env">): Promise<ApiServerHandle> {
   return new Promise<ApiServerHandle>((resolvePromise, rejectPromise) => {
-    const commandArgs = API_PATH.endsWith(".ts")
-      ? ["--import", TSX_LOADER_PATH, API_PATH]
-      : [API_PATH];
+    const commandArgs = [API_PATH];
     const proc = spawn(process.execPath, commandArgs, {
       cwd,
       env: {
@@ -153,10 +150,14 @@ async function stopSourceApiServer(
   });
 }
 
-test("cli and api default to the same .ums-state.json file without env overrides", async () => {
+test("cli and api can explicitly share the legacy .ums-state.json compatibility file", async () => {
   const tempDir = await mkdtemp(resolve(tmpdir(), "ums-default-shared-state-"));
-  const env = cleanSharedStateEnv();
   const sharedStatePath = resolve(tempDir, ".ums-state.json");
+  const env = {
+    ...cleanSharedStateEnv(),
+    UMS_STATE_FILE: sharedStatePath,
+    UMS_RUNTIME_STATE_FILE: sharedStatePath,
+  };
 
   try {
     const cliIngest = await runNode(

@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+
+import { test } from "@effect-native/bun-test";
+import { Schema } from "effect";
 
 import {
   executeOperation,
@@ -10,6 +12,14 @@ import {
 } from "../../apps/api/src/core.ts";
 import { createEngine } from "../support/engine-adapter.ts";
 import { buildSyntheticEvents } from "../support/fixtures.ts";
+
+const isBoolean = Schema.is(Schema.Boolean);
+const isUnsupportedOperationError = Schema.is(
+  Schema.Struct({
+    message: Schema.String,
+    code: Schema.String,
+  })
+);
 
 test("ums-memory-d6q.1.4: integration contract stays JSON-first, replay-safe, and tenant-isolated", async () => {
   const tenantAEvents = buildSyntheticEvents({
@@ -75,6 +85,10 @@ test("ums-memory-d6q.1.4: integration contract stays JSON-first, replay-safe, an
     "spaceIsolationEnforced",
     "storeIsolationEnforced",
   ]);
+  assert.equal(recallA.guardrails.filteredUnsafe > 0, true);
+  assert.equal(recallA.guardrails.redactedSecrets > 0, true);
+  assert.equal(recallB.guardrails.filteredUnsafe, 0);
+  assert.equal(recallB.guardrails.redactedSecrets, 0);
   assert.ok(recallA.payloadBytes <= 4096);
   assert.ok(recallB.payloadBytes <= 4096);
 
@@ -180,13 +194,15 @@ test("ums-memory-d6q.1.13/ums-memory-d6q.1.9: codex+claude normalization paths s
   );
   assert.ok(recall.estimatedTokens <= recall.tokenBudget);
   assert.ok(recall.payloadBytes > 0);
-  assert.equal(typeof recall.truncated, "boolean");
+  assert.equal(isBoolean(recall.truncated), true);
   assert.deepEqual(Object.keys(recall.guardrails).sort(), [
     "filteredUnsafe",
     "redactedSecrets",
     "spaceIsolationEnforced",
     "storeIsolationEnforced",
   ]);
+  assert.equal(recall.guardrails.filteredUnsafe, 0);
+  assert.equal(recall.guardrails.redactedSecrets, 0);
 
   const snapshot = engine.exportState();
   const transferStore = snapshot.stores.find(
@@ -207,6 +223,20 @@ test("ums-memory-d6q.1.13/ums-memory-d6q.1.9: codex+claude normalization paths s
     handoffSpace.events.some(
       (event: any) => event.metadata?.platform === "claude-code"
     )
+  );
+});
+
+test("ums contract integration rejects unsupported operations with deterministic error codes", () => {
+  assert.throws(
+    () => executeOperation("unsupported_operation", {}),
+    (error: unknown) => {
+      const candidate = isUnsupportedOperationError(error) ? error : null;
+      return (
+        candidate !== null &&
+        candidate.code === "UNSUPPORTED_OPERATION" &&
+        candidate.message === "Unsupported operation: unsupported_operation"
+      );
+    }
   );
 });
 

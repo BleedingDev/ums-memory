@@ -1,8 +1,8 @@
 {
   "schemaVersion": "phase0_effect_ts_baseline_audit.v1",
   "capturedAt": "2026-03-03",
-  "effectNpmState": {
-    "command": "npm view effect version dist-tags --json",
+  "effectRegistryState": {
+    "source": "package registry snapshot",
     "version": "3.19.19",
     "distTags": {
       "snapshot": "0.0.0-snapshot-6ebc752baf28354006ca2a0ae783a5bccf5de9ad",
@@ -94,29 +94,20 @@
     "appConfigsMjsOnlyIncludes": [
       {
         "path": "apps/api/tsconfig.json",
-        "include": [
-          "**/*.mjs"
-        ]
+        "include": ["**/*.mjs"]
       },
       {
         "path": "apps/cli/tsconfig.json",
-        "include": [
-          "**/*.mjs"
-        ]
+        "include": ["**/*.mjs"]
       },
       {
         "path": "apps/ums/tsconfig.json",
-        "include": [
-          "**/*.mjs"
-        ]
+        "include": ["**/*.mjs"]
       }
     ],
     "sharedConfigMixedIncludes": {
       "path": "libs/shared/tsconfig.json",
-      "include": [
-        "src/**/*.js",
-        "src/**/*.ts"
-      ]
+      "include": ["src/**/*.js", "src/**/*.ts"]
     },
     "blockingGaps": [
       "allowJs=true permits runtime JavaScript modules in compile/typecheck scope.",

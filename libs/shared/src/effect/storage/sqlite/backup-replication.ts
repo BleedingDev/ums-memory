@@ -1,8 +1,8 @@
 import { existsSync, mkdirSync, readdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import type { DatabaseSync } from "node:sqlite";
 
 import { ContractValidationError } from "../../errors.js";
+import type { DatabaseSync } from "./database.ts";
 
 const backupOptionContractPrefix =
   "SqliteStorageRepositoryOptions.backupReplication";

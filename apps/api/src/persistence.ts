@@ -11,6 +11,8 @@ import {
 import { dirname, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 
+import { Effect } from "effect";
+
 import {
   exportStoreSnapshot as exportStoreSnapshotFromCore,
   importStoreSnapshot as importStoreSnapshotFromCore,
@@ -56,6 +58,7 @@ interface ExecuteOperationWithSharedStateOptions<T> {
   operation?: string | null | undefined;
   stateFile?: string | null | undefined;
   executor: () => Promise<T> | T;
+  mode?: "stateful" | "lock-only";
 }
 
 const exportStoreSnapshot = exportStoreSnapshotFromCore as () => StoreSnapshot;
@@ -322,6 +325,59 @@ async function withExclusiveLock<T>(
   }
 }
 
+interface SharedStateLockLease {
+  readonly lockHandle: FileHandle;
+  readonly lockPath: string;
+}
+
+async function acquireSharedStateLockLease(
+  stateFilePath: string
+): Promise<SharedStateLockLease> {
+  const lockPath = `${stateFilePath}.lock`;
+  await mkdir(dirname(stateFilePath), { recursive: true });
+  const lockHandle = await acquireLock(
+    lockPath,
+    LOCK_TIMEOUT_MS,
+    LOCK_RETRY_MS
+  );
+  return {
+    lockHandle,
+    lockPath,
+  };
+}
+
+async function releaseSharedStateLockLease(
+  lease: SharedStateLockLease
+): Promise<void> {
+  await lease.lockHandle.close().catch(ignoreCleanupError);
+  await rm(lease.lockPath, { force: true }).catch(ignoreCleanupError);
+}
+
+export function withSharedStateLockEffect<T>({
+  stateFile = DEFAULT_SHARED_STATE_FILE,
+  effect,
+}: {
+  readonly stateFile?: string | null | undefined;
+  readonly effect: Effect.Effect<T, unknown>;
+}): Effect.Effect<T, unknown> {
+  const stateFilePath = resolveStateFilePath(stateFile);
+  if (!stateFilePath) {
+    return effect;
+  }
+
+  return Effect.acquireUseRelease(
+    Effect.tryPromise({
+      try: () => acquireSharedStateLockLease(stateFilePath),
+      catch: (cause) => cause,
+    }),
+    () => effect,
+    (lease) =>
+      Effect.promise(() => releaseSharedStateLockLease(lease)).pipe(
+        Effect.orDie
+      )
+  );
+}
+
 async function hydrateStoreFromSnapshot(stateFilePath: string): Promise<void> {
   const snapshot = await readSnapshotFromFile(stateFilePath);
   importStoreSnapshot(snapshot);
@@ -336,6 +392,7 @@ export async function executeOperationWithSharedState<T>({
   operation,
   stateFile = DEFAULT_SHARED_STATE_FILE,
   executor,
+  mode = "stateful",
 }: ExecuteOperationWithSharedStateOptions<T>): Promise<T> {
   if (typeof executor !== "function") {
     throw new Error(
@@ -346,6 +403,10 @@ export async function executeOperationWithSharedState<T>({
   const stateFilePath = resolveStateFilePath(stateFile);
   if (!stateFilePath) {
     return executor();
+  }
+
+  if (mode === "lock-only") {
+    return withExclusiveLock(stateFilePath, async () => executor());
   }
 
   const op = normalizeOperation(operation);

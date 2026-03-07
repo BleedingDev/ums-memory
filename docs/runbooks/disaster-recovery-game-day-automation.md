@@ -7,7 +7,8 @@
 - Keep implementation minimal: shell commands, cron, CI schedule, and existing `deploy/compose.yml`.
 - This runbook assumes the current topology from `docs/runbooks/deploy-operations-compose-first.md`:
   - One `api` + one `worker`
-  - Shared state file `/var/lib/ums/.ums-state.json`
+  - Runtime state base rooted under `/var/lib/ums/.ums-runtime-state`
+  - Legacy compatibility snapshot `/var/lib/ums/.ums-state.json` only when running explicit import/export tooling
   - Host port `8787` bound by compose (one active environment per host)
 - Production recovery procedures remain in the compose operations runbook; this runbook focuses on automated drills.
 
@@ -32,15 +33,15 @@ Default targets for current compose-first stage:
 
 Hard gates (drill fails if any gate fails):
 
-| Gate ID | Requirement        | Pass Condition                                                |
-| ------- | ------------------ | ------------------------------------------------------------- |
-| G1      | RPO                | `backup_age_seconds <= RPO_TARGET_SECONDS`                    |
-| G2      | Restore completion | Stack restored and healthy in compose status                  |
-| G3      | API health         | `GET /` returns `200` and valid service payload               |
-| G4      | Metrics health     | `GET /metrics` returns `200` with required series             |
-| G5      | Snapshot integrity | Restored state hash equals backup hash; JSON parses           |
-| G6      | Replay parity      | Deterministic replay check returns expected idempotent result |
-| G7      | RTO                | `rto_seconds <= RTO_TARGET_SECONDS`                           |
+| Gate ID | Requirement        | Pass Condition                                                                           |
+| ------- | ------------------ | ---------------------------------------------------------------------------------------- |
+| G1      | RPO                | `backup_age_seconds <= RPO_TARGET_SECONDS`                                               |
+| G2      | Restore completion | Stack restored and healthy in compose status                                             |
+| G3      | API health         | `GET /` returns `200` and valid service payload                                          |
+| G4      | Metrics health     | `GET /metrics` returns `200` with required series                                        |
+| G5      | Snapshot integrity | Restored runtime snapshot or explicit compatibility snapshot matches the backup artifact |
+| G6      | Replay parity      | Deterministic replay check returns expected idempotent result                            |
+| G7      | RTO                | `rto_seconds <= RTO_TARGET_SECONDS`                                                      |
 
 ## Automated Restore Drill Workflow
 
@@ -143,7 +144,7 @@ BACKUP_SHA="$(sha256_file "${BACKUP_FILE}")"
 RESTORED_SHA="$(
   docker run --rm -v "${VOLUME}:/var/lib/ums" ums-memory-api:local \
     sh -ec 'test -s /var/lib/ums/.ums-state.json; sha256sum /var/lib/ums/.ums-state.json' \
-    | awk '{print $1}'
+    | awk "{print \$1}"
 )"
 [[ "${BACKUP_SHA}" == "${RESTORED_SHA}" ]]
 
@@ -153,7 +154,7 @@ docker run --rm -v "${VOLUME}:/var/lib/ums" ums-memory-api:local \
 
 Pass criteria:
 
-- Restored state file exists and is non-empty
+- Runtime restore succeeds, and when an explicit legacy compatibility snapshot is part of the drill it exists and is non-empty
 - SHA-256 hash matches backup file hash
 - JSON parse succeeds
 

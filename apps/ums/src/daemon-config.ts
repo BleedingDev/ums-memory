@@ -1,6 +1,9 @@
+import { createHash } from "node:crypto";
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { dirname, resolve } from "node:path";
+import { dirname, isAbsolute, relative, resolve, win32 } from "node:path";
+
+import { Cause, Effect, Exit, Schema } from "effect";
 
 const DEFAULT_CONFIG_FILE = resolve(homedir(), ".ums", "config.jsonc");
 const DEFAULT_STATE_ROOT = resolve(homedir(), ".ums", "state");
@@ -12,37 +15,86 @@ const DEFAULT_MAX_EVENTS_PER_CYCLE = 400;
 const ACCOUNT_ALIAS_PATTERN = /^[a-z0-9][a-z0-9._-]{0,63}$/;
 const CREDENTIAL_REF_PATTERN =
   /^(keychain|credential-manager|secret-service):\/\/.+$/;
+const UNKNOWN_RECORD_SCHEMA = Schema.Record(Schema.String, Schema.Unknown);
 const ROUTE_SOURCE_SET = new Set([
   "codex",
   "claude",
+  "cursor",
+  "opencode",
   "vscode",
   "codex-native",
   "plan",
 ]);
+const SOURCE_BINDING_STATUS_SET = new Set([
+  "pending",
+  "approved",
+  "disabled",
+  "ignored",
+]);
+const SOURCE_BINDING_KIND_SET = new Set(["directory", "file"]);
+const SOURCE_BINDING_HEALTH_SET = new Set(["ready", "missing", "unsupported"]);
 const SOURCE_KEYS = [
   "codex",
   "claude",
+  "cursor",
+  "opencode",
   "vscode",
   "codexNative",
   "plan",
 ] as const;
-const SOURCE_KEY_SET = new Set<string>(SOURCE_KEYS);
+const DAEMON_CONFIG_ISSUE_SCHEMA = Schema.Struct({
+  path: Schema.String,
+  message: Schema.String,
+});
+const DAEMON_CONFIG_ERROR_LIKE_SCHEMA = Schema.Struct({
+  code: Schema.Union([
+    Schema.Literal("DAEMON_CONFIG_PARSE_ERROR"),
+    Schema.Literal("DAEMON_CONFIG_VALIDATION_ERROR"),
+  ]),
+  message: Schema.String,
+  issues: Schema.Array(DAEMON_CONFIG_ISSUE_SCHEMA),
+  configFile: Schema.NullOr(Schema.String),
+});
+const ERROR_WITH_MESSAGE_SCHEMA = Schema.Struct({
+  message: Schema.String,
+});
+const ERRNO_CAUSE_SCHEMA = Schema.Struct({
+  code: Schema.String,
+  message: Schema.String,
+});
+const isDaemonConfigErrorLike = Schema.is(DAEMON_CONFIG_ERROR_LIKE_SCHEMA);
+const isErrorWithMessage = Schema.is(ERROR_WITH_MESSAGE_SCHEMA);
+const isErrnoCause = Schema.is(ERRNO_CAUSE_SCHEMA);
+const isUnknownRecord = Schema.is(UNKNOWN_RECORD_SCHEMA);
+const isString = Schema.is(Schema.String);
+const isBoolean = Schema.is(Schema.Boolean);
 
 type JsonRecord = Record<string, unknown>;
 
 export type DaemonConfigRouteSource =
   | "codex"
   | "claude"
+  | "cursor"
+  | "opencode"
   | "vscode"
   | "codex-native"
   | "plan";
 export type DaemonConfigSourceKey =
   | "codex"
   | "claude"
+  | "cursor"
+  | "opencode"
   | "vscode"
   | "codexNative"
   | "plan";
 export type DaemonConfigAmbiguousPolicy = "review" | "default" | "drop";
+export type DaemonSourceBindingStatus =
+  | "pending"
+  | "approved"
+  | "disabled"
+  | "ignored";
+export type DaemonSourceBindingKind = "directory" | "file";
+export type DaemonSourceBindingHealth = "ready" | "missing" | "unsupported";
 
 export interface DaemonConfigState {
   readonly rootDir: string;
@@ -96,13 +148,27 @@ export interface DaemonAdapterConfig {
   readonly excludeGlobs: readonly string[];
 }
 
+export interface DaemonSourceBinding {
+  readonly id: string;
+  readonly source: DaemonConfigRouteSource;
+  readonly kind: DaemonSourceBindingKind;
+  readonly path: string;
+  readonly status: DaemonSourceBindingStatus;
+  readonly label?: string;
+  readonly health?: DaemonSourceBindingHealth;
+  readonly lastSeenAt?: string;
+}
+
 export interface DaemonSourcesConfig {
   readonly defaults: {
     readonly scanIntervalMs: number;
     readonly maxEventsPerCycle: number;
   };
+  readonly bindings: readonly DaemonSourceBinding[];
   readonly codex?: DaemonAdapterConfig;
   readonly claude?: DaemonAdapterConfig;
+  readonly cursor?: DaemonAdapterConfig;
+  readonly opencode?: DaemonAdapterConfig;
   readonly vscode?: DaemonAdapterConfig;
   readonly codexNative?: DaemonAdapterConfig;
   readonly plan?: DaemonAdapterConfig;
@@ -156,24 +222,18 @@ export interface DaemonConfigIssue {
   readonly message: string;
 }
 
-export class DaemonConfigError extends Error {
-  readonly code: "DAEMON_CONFIG_PARSE_ERROR" | "DAEMON_CONFIG_VALIDATION_ERROR";
-  readonly issues: readonly DaemonConfigIssue[];
-  readonly configFile: string | null;
-
-  constructor(input: {
-    code: "DAEMON_CONFIG_PARSE_ERROR" | "DAEMON_CONFIG_VALIDATION_ERROR";
-    message: string;
-    issues?: readonly DaemonConfigIssue[];
-    configFile?: string | null;
-  }) {
-    super(input.message);
-    this.name = "DaemonConfigError";
-    this.code = input.code;
-    this.issues = input.issues ?? [];
-    this.configFile = input.configFile ?? null;
+export class DaemonConfigError extends Schema.TaggedErrorClass<DaemonConfigError>()(
+  "DaemonConfigError",
+  {
+    code: Schema.Union([
+      Schema.Literal("DAEMON_CONFIG_PARSE_ERROR"),
+      Schema.Literal("DAEMON_CONFIG_VALIDATION_ERROR"),
+    ]),
+    message: Schema.String,
+    issues: Schema.Array(DAEMON_CONFIG_ISSUE_SCHEMA),
+    configFile: Schema.NullOr(Schema.String),
   }
-}
+) {}
 
 export interface ReadDaemonConfigResult {
   readonly configFile: string;
@@ -211,10 +271,10 @@ export interface DaemonRouteResolutionResult {
 }
 
 const isJsonRecord = (value: unknown): value is JsonRecord =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
+  isUnknownRecord(value);
 
 const normalizeNonEmptyString = (value: unknown): string | null => {
-  if (typeof value !== "string") {
+  if (!isString(value)) {
     return null;
   }
   const trimmed = value.trim();
@@ -222,15 +282,21 @@ const normalizeNonEmptyString = (value: unknown): string | null => {
 };
 
 const normalizeBoolean = (value: unknown, fallback: boolean): boolean =>
-  typeof value === "boolean" ? value : fallback;
+  isBoolean(value) ? value : fallback;
 
-const normalizePositiveInteger = (
-  value: unknown,
-  fallback: number
-): number => {
+const normalizePositiveInteger = (value: unknown, fallback: number): number => {
   const parsed = Number.parseInt(String(value ?? ""), 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 };
+
+const hashValue = (value: string): string =>
+  createHash("sha256").update(value).digest("hex");
+
+export const buildDaemonSourceBindingId = (
+  source: DaemonConfigRouteSource,
+  kind: DaemonSourceBindingKind,
+  path: string
+): string => `src_${hashValue(`${source}|${kind}|${path}`).slice(0, 16)}`;
 
 const pushIssue = (
   issues: DaemonConfigIssue[],
@@ -240,40 +306,53 @@ const pushIssue = (
   issues.push({ path, message });
 };
 
-const expandHomePath = (value: string): string => {
+const expandHomePath = (
+  value: string,
+  baseDir: string = process.cwd()
+): string => {
   if (value === "~") {
     return homedir();
   }
   if (value.startsWith("~/")) {
     return resolve(homedir(), value.slice(2));
   }
-  return resolve(value);
+  return resolve(baseDir, value);
 };
 
-const normalizeOptionalPath = (value: string | null | undefined): string | null => {
+const normalizeOptionalPath = (
+  value: string | null | undefined
+): string | null => {
   const normalized = normalizeNonEmptyString(value);
   return normalized ? expandHomePath(normalized) : null;
 };
 
+const isWindowsLikePath = (path: string): boolean =>
+  /^[a-zA-Z]:[\\/]/.test(path) || path.includes("\\");
+
 const pathStartsWithPrefix = (path: string, prefix: string): boolean => {
-  if (path === prefix) {
-    return true;
-  }
-  const normalizedPrefix = prefix.endsWith("/") ? prefix : `${prefix}/`;
-  return path.startsWith(normalizedPrefix);
+  const pathModule =
+    isWindowsLikePath(path) || isWindowsLikePath(prefix)
+      ? win32
+      : { relative, isAbsolute };
+  const relativePath = pathModule.relative(prefix, path);
+  return (
+    relativePath === "" ||
+    (!relativePath.startsWith("..") && !pathModule.isAbsolute(relativePath))
+  );
 };
 
 const normalizePathString = (
   value: unknown,
   path: string,
-  issues: DaemonConfigIssue[]
+  issues: DaemonConfigIssue[],
+  baseDir: string
 ): string | null => {
   const normalized = normalizeNonEmptyString(value);
   if (!normalized) {
     pushIssue(issues, path, "must be a non-empty path string.");
     return null;
   }
-  return expandHomePath(normalized);
+  return expandHomePath(normalized, baseDir);
 };
 
 const normalizeAlias = (
@@ -287,11 +366,7 @@ const normalizeAlias = (
     return null;
   }
   if (!ACCOUNT_ALIAS_PATTERN.test(normalized)) {
-    pushIssue(
-      issues,
-      path,
-      "must match ^[a-z0-9][a-z0-9._-]{0,63}$."
-    );
+    pushIssue(issues, path, "must match ^[a-z0-9][a-z0-9._-]{0,63}$.");
     return null;
   }
   return normalized;
@@ -345,6 +420,82 @@ const normalizeRouteSource = (
   }
   return normalized as DaemonConfigRouteSource;
 };
+
+const inferSourceBindingKind = (path: string): DaemonSourceBindingKind =>
+  /\.(?:jsonl|json|md|sqlite|db)$/i.test(path) ? "file" : "directory";
+
+const normalizeSourceBindingKind = (
+  value: unknown,
+  path: string,
+  issues: DaemonConfigIssue[],
+  fallbackPath: string | null
+): DaemonSourceBindingKind => {
+  if (value === undefined) {
+    return fallbackPath ? inferSourceBindingKind(fallbackPath) : "directory";
+  }
+  const normalized = normalizeNonEmptyString(value);
+  if (!normalized || !SOURCE_BINDING_KIND_SET.has(normalized)) {
+    pushIssue(
+      issues,
+      path,
+      `must be one of ${[...SOURCE_BINDING_KIND_SET].join(", ")}.`
+    );
+    return fallbackPath ? inferSourceBindingKind(fallbackPath) : "directory";
+  }
+  return normalized as DaemonSourceBindingKind;
+};
+
+const normalizeSourceBindingStatus = (
+  value: unknown,
+  path: string,
+  issues: DaemonConfigIssue[]
+): DaemonSourceBindingStatus => {
+  if (value === undefined) {
+    return "approved";
+  }
+  const normalized = normalizeNonEmptyString(value);
+  if (!normalized || !SOURCE_BINDING_STATUS_SET.has(normalized)) {
+    pushIssue(
+      issues,
+      path,
+      `must be one of ${[...SOURCE_BINDING_STATUS_SET].join(", ")}.`
+    );
+    return "approved";
+  }
+  return normalized as DaemonSourceBindingStatus;
+};
+
+const normalizeSourceBindingHealth = (
+  value: unknown,
+  path: string,
+  issues: DaemonConfigIssue[]
+): DaemonSourceBindingHealth | undefined => {
+  if (value === undefined) {
+    return undefined;
+  }
+  const normalized = normalizeNonEmptyString(value);
+  if (!normalized || !SOURCE_BINDING_HEALTH_SET.has(normalized)) {
+    pushIssue(
+      issues,
+      path,
+      `must be one of ${[...SOURCE_BINDING_HEALTH_SET].join(", ")}.`
+    );
+    return undefined;
+  }
+  return normalized as DaemonSourceBindingHealth;
+};
+
+const sourceBindingSortKey = (binding: DaemonSourceBinding): string =>
+  JSON.stringify({
+    source: binding.source,
+    kind: binding.kind,
+    path: binding.path,
+    status: binding.status,
+    label: binding.label ?? null,
+    health: binding.health ?? null,
+    lastSeenAt: binding.lastSeenAt ?? null,
+    id: binding.id,
+  });
 
 const routeMatchSpecificity = (match: DaemonRouteMatchConfig): number => {
   if (match.repoRoot) {
@@ -518,11 +669,7 @@ const normalizeAccountConfig = (
     return { type: "local" };
   }
   if (type !== "http") {
-    pushIssue(
-      issues,
-      `accounts.${alias}.type`,
-      "must be 'local' or 'http'."
-    );
+    pushIssue(issues, `accounts.${alias}.type`, "must be 'local' or 'http'.");
     return null;
   }
   const apiBaseUrl = normalizeNonEmptyString(value["apiBaseUrl"]);
@@ -535,24 +682,24 @@ const normalizeAccountConfig = (
   }
   let sanitizedApiBaseUrl: string | null = null;
   if (apiBaseUrl) {
-    try {
-      const parsed = new URL(apiBaseUrl);
-      if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    if (!URL.canParse(apiBaseUrl)) {
+      pushIssue(
+        issues,
+        `accounts.${alias}.apiBaseUrl`,
+        "must be a valid absolute URL."
+      );
+    } else {
+      const parsedUrl = new URL(apiBaseUrl);
+      if (parsedUrl.protocol !== "http:" && parsedUrl.protocol !== "https:") {
         pushIssue(
           issues,
           `accounts.${alias}.apiBaseUrl`,
           "must use http or https."
         );
       } else {
-        parsed.pathname = parsed.pathname.replace(/\/+$/, "");
-        sanitizedApiBaseUrl = parsed.toString().replace(/\/$/, "");
+        parsedUrl.pathname = parsedUrl.pathname.replace(/\/+$/, "");
+        sanitizedApiBaseUrl = parsedUrl.toString().replace(/\/$/, "");
       }
-    } catch {
-      pushIssue(
-        issues,
-        `accounts.${alias}.apiBaseUrl`,
-        "must be a valid absolute URL."
-      );
     }
   }
   const auth = isJsonRecord(value["auth"]) ? value["auth"] : null;
@@ -641,16 +788,28 @@ const normalizeMemoryConfig = (
   );
   const storeId = normalizeNonEmptyString(value["storeId"]);
   if (!storeId) {
-    pushIssue(issues, `memories.${alias}.storeId`, "must be a non-empty string.");
+    pushIssue(
+      issues,
+      `memories.${alias}.storeId`,
+      "must be a non-empty string."
+    );
   }
   const profile = normalizeNonEmptyString(value["profile"]);
   if (!profile) {
-    pushIssue(issues, `memories.${alias}.profile`, "must be a non-empty string.");
+    pushIssue(
+      issues,
+      `memories.${alias}.profile`,
+      "must be a non-empty string."
+    );
   }
   const project = normalizeNonEmptyString(value["project"]) ?? undefined;
   const workspace = normalizeNonEmptyString(value["workspace"]) ?? undefined;
   const readOnly = normalizeBoolean(value["readOnly"], false);
-  const tags = normalizeStringArray(value["tags"], `memories.${alias}.tags`, issues);
+  const tags = normalizeStringArray(
+    value["tags"],
+    `memories.${alias}.tags`,
+    issues
+  );
   if (!account || !storeId || !profile) {
     return null;
   }
@@ -668,7 +827,8 @@ const normalizeMemoryConfig = (
 const normalizeAdapterConfig = (
   adapterKey: string,
   value: unknown,
-  issues: DaemonConfigIssue[]
+  issues: DaemonConfigIssue[],
+  baseDir: string
 ): DaemonAdapterConfig | null => {
   if (value === undefined) {
     return null;
@@ -678,14 +838,12 @@ const normalizeAdapterConfig = (
     return null;
   }
   return {
-    ...(typeof value["enabled"] === "boolean"
-      ? { enabled: value["enabled"] }
-      : {}),
+    ...(isBoolean(value["enabled"]) ? { enabled: value["enabled"] } : {}),
     roots: normalizeStringArray(
       value["roots"],
       `sources.${adapterKey}.roots`,
       issues,
-      expandHomePath
+      (entry) => expandHomePath(entry, baseDir)
     ),
     includeGlobs: normalizeStringArray(
       value["includeGlobs"],
@@ -700,9 +858,113 @@ const normalizeAdapterConfig = (
   };
 };
 
+const normalizeSourceBinding = (
+  value: unknown,
+  index: number,
+  issues: DaemonConfigIssue[],
+  baseDir: string
+): DaemonSourceBinding | null => {
+  const path = `sources.bindings[${index}]`;
+  if (!isJsonRecord(value)) {
+    pushIssue(issues, path, "must be an object.");
+    return null;
+  }
+  const source = normalizeRouteSource(
+    value["source"],
+    `${path}.source`,
+    issues
+  );
+  const normalizedPath = normalizePathString(
+    value["path"],
+    `${path}.path`,
+    issues,
+    baseDir
+  );
+  const kind = normalizeSourceBindingKind(
+    value["kind"],
+    `${path}.kind`,
+    issues,
+    normalizedPath
+  );
+  const status = normalizeSourceBindingStatus(
+    value["status"],
+    `${path}.status`,
+    issues
+  );
+  const label = normalizeNonEmptyString(value["label"]) ?? undefined;
+  const health = normalizeSourceBindingHealth(
+    value["health"],
+    `${path}.health`,
+    issues
+  );
+  const lastSeenAt = normalizeNonEmptyString(value["lastSeenAt"]) ?? undefined;
+  if (!source || !normalizedPath) {
+    return null;
+  }
+  return {
+    id:
+      normalizeNonEmptyString(value["id"]) ??
+      buildDaemonSourceBindingId(source, kind, normalizedPath),
+    source,
+    kind,
+    path: normalizedPath,
+    status,
+    ...(label ? { label } : {}),
+    ...(health ? { health } : {}),
+    ...(lastSeenAt ? { lastSeenAt } : {}),
+  };
+};
+
+const normalizeSourceBindings = (
+  value: unknown,
+  issues: DaemonConfigIssue[],
+  baseDir: string
+): readonly DaemonSourceBinding[] => {
+  if (value === undefined) {
+    return [];
+  }
+  if (!Array.isArray(value)) {
+    pushIssue(issues, "sources.bindings", "must be an array.");
+    return [];
+  }
+  const bindings: DaemonSourceBinding[] = [];
+  const seenIds = new Set<string>();
+  const seenPaths = new Set<string>();
+  for (const [index, entry] of value.entries()) {
+    const normalized = normalizeSourceBinding(entry, index, issues, baseDir);
+    if (!normalized) {
+      continue;
+    }
+    if (seenIds.has(normalized.id)) {
+      pushIssue(
+        issues,
+        `sources.bindings[${index}].id`,
+        `duplicates existing binding id '${normalized.id}'.`
+      );
+      continue;
+    }
+    const pathKey = `${normalized.source}|${normalized.kind}|${normalized.path}`;
+    if (seenPaths.has(pathKey)) {
+      pushIssue(
+        issues,
+        `sources.bindings[${index}]`,
+        "duplicates another binding after normalization."
+      );
+      continue;
+    }
+    seenIds.add(normalized.id);
+    seenPaths.add(pathKey);
+    bindings.push(normalized);
+  }
+  return bindings.sort((left, right) =>
+    sourceBindingSortKey(left).localeCompare(sourceBindingSortKey(right))
+  );
+};
+
 const normalizeSourcesConfig = (
   value: unknown,
-  issues: DaemonConfigIssue[]
+  issues: DaemonConfigIssue[],
+  baseDir: string
 ): DaemonSourcesConfig => {
   const record = isJsonRecord(value) ? value : {};
   const defaults = isJsonRecord(record["defaults"]) ? record["defaults"] : {};
@@ -712,7 +974,8 @@ const normalizeSourcesConfig = (
     const normalized = normalizeAdapterConfig(
       adapterKey,
       record[adapterKey],
-      issues
+      issues,
+      baseDir
     );
     if (normalized) {
       adapters[adapterKey] = normalized;
@@ -729,6 +992,7 @@ const normalizeSourcesConfig = (
         DEFAULT_MAX_EVENTS_PER_CYCLE
       ),
     },
+    bindings: normalizeSourceBindings(record["bindings"], issues, baseDir),
     ...adapters,
   };
 };
@@ -736,7 +1000,8 @@ const normalizeSourcesConfig = (
 const normalizeRouteConfig = (
   value: unknown,
   index: number,
-  issues: DaemonConfigIssue[]
+  issues: DaemonConfigIssue[],
+  baseDir: string
 ): DaemonRouteConfig | null => {
   const path = `routes[${index}]`;
   if (!isJsonRecord(value)) {
@@ -758,7 +1023,8 @@ const normalizeRouteConfig = (
     const pathPrefix = normalizePathString(
       match["pathPrefix"],
       `${path}.match.pathPrefix`,
-      issues
+      issues,
+      baseDir
     );
     if (pathPrefix) {
       normalizedMatch.pathPrefix = pathPrefix;
@@ -768,7 +1034,8 @@ const normalizeRouteConfig = (
     const repoRoot = normalizePathString(
       match["repoRoot"],
       `${path}.match.repoRoot`,
-      issues
+      issues,
+      baseDir
     );
     if (repoRoot) {
       normalizedMatch.repoRoot = repoRoot;
@@ -778,7 +1045,8 @@ const normalizeRouteConfig = (
     const workspaceRoot = normalizePathString(
       match["workspaceRoot"],
       `${path}.match.workspaceRoot`,
-      issues
+      issues,
+      baseDir
     );
     if (workspaceRoot) {
       normalizedMatch.workspaceRoot = workspaceRoot;
@@ -795,12 +1063,18 @@ const normalizeRouteConfig = (
     }
   }
   if (Object.keys(normalizedMatch).length === 0) {
-    pushIssue(issues, `${path}.match`, "must include at least one match field.");
+    pushIssue(
+      issues,
+      `${path}.match`,
+      "must include at least one match field."
+    );
   }
   const memory = normalizeAlias(value["memory"], `${path}.memory`, issues);
   const priorityRaw = Number.parseInt(String(value["priority"] ?? "0"), 10);
   const priority =
-    Number.isFinite(priorityRaw) && priorityRaw >= -10_000 && priorityRaw <= 10_000
+    Number.isFinite(priorityRaw) &&
+    priorityRaw >= -10_000 &&
+    priorityRaw <= 10_000
       ? priorityRaw
       : 0;
   if (
@@ -902,26 +1176,36 @@ const normalizePolicyConfig = (
 
 const normalizeStateConfig = (
   value: unknown,
-  issues: DaemonConfigIssue[]
+  issues: DaemonConfigIssue[],
+  baseDir: string
 ): DaemonConfigState => {
   const record = isJsonRecord(value) ? value : {};
   const rootDir =
     (record["rootDir"] === undefined
       ? DEFAULT_STATE_ROOT
-      : normalizePathString(record["rootDir"], "state.rootDir", issues)) ??
-    DEFAULT_STATE_ROOT;
+      : normalizePathString(
+          record["rootDir"],
+          "state.rootDir",
+          issues,
+          baseDir
+        )) ?? DEFAULT_STATE_ROOT;
   const journalDir =
     (record["journalDir"] === undefined
       ? resolve(rootDir, "journal")
-      : normalizePathString(record["journalDir"], "state.journalDir", issues)) ??
-    DEFAULT_JOURNAL_DIR;
+      : normalizePathString(
+          record["journalDir"],
+          "state.journalDir",
+          issues,
+          baseDir
+        )) ?? DEFAULT_JOURNAL_DIR;
   const checkpointDir =
     (record["checkpointDir"] === undefined
       ? resolve(rootDir, "checkpoints")
       : normalizePathString(
           record["checkpointDir"],
           "state.checkpointDir",
-          issues
+          issues,
+          baseDir
         )) ?? DEFAULT_CHECKPOINT_DIR;
   return {
     rootDir,
@@ -1006,6 +1290,9 @@ export const canonicalizeDaemonConfig = (
   options: { readonly configFile?: string | null } = {}
 ): DaemonConfig => {
   const issues: DaemonConfigIssue[] = [];
+  const configBaseDir = options.configFile
+    ? dirname(resolve(options.configFile))
+    : process.cwd();
   if (!isJsonRecord(raw)) {
     throw new DaemonConfigError({
       code: "DAEMON_CONFIG_VALIDATION_ERROR",
@@ -1020,11 +1307,19 @@ export const canonicalizeDaemonConfig = (
   }
   const accountsInput = isJsonRecord(raw["accounts"]) ? raw["accounts"] : null;
   if (!accountsInput) {
-    pushIssue(issues, "accounts", "must be an object with at least one account.");
+    pushIssue(
+      issues,
+      "accounts",
+      "must be an object with at least one account."
+    );
   }
   const memoriesInput = isJsonRecord(raw["memories"]) ? raw["memories"] : null;
   if (!memoriesInput) {
-    pushIssue(issues, "memories", "must be an object with at least one memory.");
+    pushIssue(
+      issues,
+      "memories",
+      "must be an object with at least one memory."
+    );
   }
   const routesInput = Array.isArray(raw["routes"]) ? raw["routes"] : null;
   if (!routesInput) {
@@ -1034,8 +1329,8 @@ export const canonicalizeDaemonConfig = (
 
   const accounts: Record<string, DaemonAccountConfig> = {};
   if (accountsInput) {
-    for (const [key, value] of Object.entries(accountsInput).sort(([left], [right]) =>
-      left.localeCompare(right)
+    for (const [key, value] of Object.entries(accountsInput).sort(
+      ([left], [right]) => left.localeCompare(right)
     )) {
       const alias = normalizeAlias(key, `accounts.${key}`, issues);
       if (!alias) {
@@ -1050,8 +1345,8 @@ export const canonicalizeDaemonConfig = (
 
   const memories: Record<string, DaemonMemoryConfig> = {};
   if (memoriesInput) {
-    for (const [key, value] of Object.entries(memoriesInput).sort(([left], [right]) =>
-      left.localeCompare(right)
+    for (const [key, value] of Object.entries(memoriesInput).sort(
+      ([left], [right]) => left.localeCompare(right)
     )) {
       const alias = normalizeAlias(key, `memories.${key}`, issues);
       if (!alias) {
@@ -1065,7 +1360,9 @@ export const canonicalizeDaemonConfig = (
   }
 
   const routes = (routesInput ?? [])
-    .map((value, index) => normalizeRouteConfig(value, index, issues))
+    .map((value, index) =>
+      normalizeRouteConfig(value, index, issues, configBaseDir)
+    )
     .filter((value): value is DaemonRouteConfig => value !== null)
     .sort((left, right) => {
       const priorityDiff = right.priority - left.priority;
@@ -1087,10 +1384,10 @@ export const canonicalizeDaemonConfig = (
 
   const config: DaemonConfig = {
     version: 1,
-    state: normalizeStateConfig(raw["state"], issues),
+    state: normalizeStateConfig(raw["state"], issues, configBaseDir),
     accounts: stableSortObject(accounts),
     memories: stableSortObject(memories),
-    sources: normalizeSourcesConfig(raw["sources"], issues),
+    sources: normalizeSourcesConfig(raw["sources"], issues, configBaseDir),
     routes,
     defaults:
       defaults ??
@@ -1132,60 +1429,84 @@ export const canonicalizeDaemonConfig = (
 export const formatDaemonConfigIssues = (
   issues: readonly DaemonConfigIssue[]
 ): string =>
-  issues
-    .map((issue) => `${issue.path}: ${issue.message}`)
-    .join("\n");
+  issues.map((issue) => `${issue.path}: ${issue.message}`).join("\n");
 
 export const formatDaemonConfigError = (error: unknown): string => {
-  if (error instanceof DaemonConfigError) {
+  if (isDaemonConfigErrorLike(error)) {
     if (error.issues.length === 0) {
       return error.message;
     }
     return `${error.message}\n${formatDaemonConfigIssues(error.issues)}`;
   }
-  return error instanceof Error ? error.message : String(error);
+  return isErrorWithMessage(error) ? error.message : String(error);
 };
+
+export const getDaemonSourceBindings = (
+  config: DaemonConfig,
+  source: DaemonConfigRouteSource | null = null
+): readonly DaemonSourceBinding[] =>
+  source
+    ? config.sources.bindings.filter((binding) => binding.source === source)
+    : config.sources.bindings;
+
+export const findDaemonSourceBinding = (
+  config: DaemonConfig,
+  id: string
+): DaemonSourceBinding | null =>
+  config.sources.bindings.find((binding) => binding.id === id) ?? null;
 
 export const resolveDaemonConfigFilePath = (
   configFile: string | null | undefined = DEFAULT_CONFIG_FILE
 ): string => {
   const normalized = normalizeNonEmptyString(configFile);
-  return normalized ? resolve(normalized) : DEFAULT_CONFIG_FILE;
+  return normalized ? expandHomePath(normalized) : DEFAULT_CONFIG_FILE;
 };
 
 export const readDaemonConfig = async (
   configFile: string | null | undefined = DEFAULT_CONFIG_FILE
 ): Promise<ReadDaemonConfigResult> => {
   const configFilePath = resolveDaemonConfigFilePath(configFile);
-  try {
-    const raw = await readFile(configFilePath, "utf8");
-    try {
-      return {
+  const exit = await Effect.runPromiseExit(
+    Effect.tryPromise({
+      try: () => readFile(configFilePath, "utf8"),
+      catch: (cause) => cause,
+    }).pipe(
+      Effect.flatMap((raw) =>
+        Effect.try({
+          try: () =>
+            canonicalizeDaemonConfig(parseJsonc(raw), {
+              configFile: configFilePath,
+            }),
+          catch: (cause) => cause,
+        })
+      ),
+      Effect.map((config) => ({
         configFile: configFilePath,
-        config: canonicalizeDaemonConfig(parseJsonc(raw), {
-          configFile: configFilePath,
-        }),
-      };
-    } catch (error) {
-      if (error instanceof DaemonConfigError) {
-        throw error;
-      }
-      throw new DaemonConfigError({
-        code: "DAEMON_CONFIG_PARSE_ERROR",
-        message: `Daemon config is not valid JSONC: ${configFilePath}`,
-        configFile: configFilePath,
-      });
-    }
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException | undefined)?.code === "ENOENT") {
-      throw new DaemonConfigError({
-        code: "DAEMON_CONFIG_PARSE_ERROR",
-        message: `Daemon config file not found: ${configFilePath}`,
-        configFile: configFilePath,
-      });
-    }
-    throw error;
+        config,
+      }))
+    )
+  );
+  if (Exit.isSuccess(exit)) {
+    return exit.value;
   }
+  const error = Cause.squash(exit.cause);
+  if (isDaemonConfigErrorLike(error)) {
+    throw new DaemonConfigError(error);
+  }
+  if (isErrnoCause(error) && error.code === "ENOENT") {
+    throw new DaemonConfigError({
+      code: "DAEMON_CONFIG_PARSE_ERROR",
+      message: `Daemon config file not found: ${configFilePath}`,
+      issues: [],
+      configFile: configFilePath,
+    });
+  }
+  throw new DaemonConfigError({
+    code: "DAEMON_CONFIG_PARSE_ERROR",
+    message: `Daemon config is not valid JSONC: ${configFilePath}`,
+    issues: [],
+    configFile: configFilePath,
+  });
 };
 
 export const explainDaemonRouteResolution = (
@@ -1239,7 +1560,10 @@ export const explainDaemonRouteResolution = (
         route,
       };
     })
-    .filter((candidate): candidate is DaemonRouteResolutionCandidate => candidate !== null)
+    .filter(
+      (candidate): candidate is DaemonRouteResolutionCandidate =>
+        candidate !== null
+    )
     .sort((left, right) => {
       const priorityDiff = right.priority - left.priority;
       if (priorityDiff !== 0) {
@@ -1249,7 +1573,8 @@ export const explainDaemonRouteResolution = (
       if (specificityDiff !== 0) {
         return specificityDiff;
       }
-      const pathPrefixLengthDiff = right.pathPrefixLength - left.pathPrefixLength;
+      const pathPrefixLengthDiff =
+        right.pathPrefixLength - left.pathPrefixLength;
       if (pathPrefixLengthDiff !== 0) {
         return pathPrefixLengthDiff;
       }
@@ -1295,13 +1620,40 @@ export const writeDaemonConfig = async (
 ): Promise<ReadDaemonConfigResult> => {
   const configFilePath = resolveDaemonConfigFilePath(configFile);
   const config = canonicalizeDaemonConfig(raw, { configFile: configFilePath });
-  await mkdir(dirname(configFilePath), { recursive: true });
   const tempFilePath = `${configFilePath}.${process.pid}.${Date.now()}.tmp`;
-  try {
-    await writeFile(tempFilePath, serializeDaemonConfig(config), "utf8");
-    await rename(tempFilePath, configFilePath);
-  } finally {
-    await rm(tempFilePath, { force: true }).catch(() => undefined);
+  const writeExit = await Effect.runPromiseExit(
+    Effect.tryPromise({
+      try: () => mkdir(dirname(configFilePath), { recursive: true }),
+      catch: (cause) => cause,
+    }).pipe(
+      Effect.flatMap(() =>
+        Effect.succeed(tempFilePath).pipe(
+          Effect.tap((path) =>
+            Effect.tryPromise({
+              try: () => writeFile(path, serializeDaemonConfig(config), "utf8"),
+              catch: (cause) => cause,
+            })
+          ),
+          Effect.flatMap((path) =>
+            Effect.tryPromise({
+              try: () => rename(path, configFilePath),
+              catch: (cause) => cause,
+            })
+          ),
+          Effect.ensuring(
+            Effect.ignore(
+              Effect.tryPromise({
+                try: () => rm(tempFilePath, { force: true }),
+                catch: (cause) => cause,
+              })
+            )
+          )
+        )
+      )
+    )
+  );
+  if (Exit.isFailure(writeExit)) {
+    throw Cause.squash(writeExit.cause);
   }
   return {
     configFile: configFilePath,

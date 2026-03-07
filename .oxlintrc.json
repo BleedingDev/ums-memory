@@ -1,96 +1,33 @@
 {
   "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "extends": ["./node_modules/ultracite/config/oxlint/core/.oxlintrc.json"],
-  "rules": {
-    "import/no-relative-parent-imports": "off",
-    "import/consistent-type-specifier-style": "off",
-    "sort-keys": "off",
-    "no-void": "off",
-    "func-names": "off",
-    "complexity": "off",
-    "func-style": "off",
-    "class-methods-use-this": "off",
-    "no-negated-condition": "off",
-    "no-nested-ternary": "off",
-    "arrow-body-style": "off",
-    "max-classes-per-file": "off",
-    "max-statements": "off",
-    "no-use-before-define": "off",
-    "prefer-destructuring": "off",
-    "preserve-caught-error": "off",
-    "promise/prefer-await-to-callbacks": "off",
-    "oxc/no-barrel-file": "off",
-    "typescript/array-type": "off",
-    "typescript/consistent-indexed-object-style": "off",
-    "typescript/no-empty-interface": "off",
-    "typescript/no-empty-object-type": "off",
-    "typescript-eslint/array-type": "off",
-    "typescript-eslint/consistent-indexed-object-style": "off",
-    "typescript-eslint/no-empty-interface": "off",
-    "typescript-eslint/no-empty-object-type": "off",
-    "unicorn/consistent-function-scoping": "off",
-    "unicorn/catch-error-name": "off",
-    "unicorn/no-array-sort": "off",
-    "unicorn/no-array-reverse": "off",
-    "unicorn/no-array-reduce": "off",
-    "unicorn/no-immediate-mutation": "off",
-    "unicorn/no-lonely-if": "off",
-    "unicorn/no-nested-ternary": "off",
-    "unicorn/numeric-separators-style": "off",
-    "unicorn/prefer-code-point": "off",
-    "unicorn/prefer-type-error": "off",
-    "unicorn/prefer-string-replace-all": "off",
-    "unicorn/switch-case-braces": "off",
-    "eslint-plugin-vitest/no-import-node-test": "off",
-    "vitest/no-import-node-test": "off"
-  },
+  "plugins": ["typescript", "unicorn", "jest", "vitest"],
   "overrides": [
     {
-      "files": ["apps/api/src/core.ts"],
-      "rules": {
-        "typescript/no-explicit-any": "off",
-        "typescript-eslint/no-explicit-any": "off"
-      }
-    },
-    {
       "files": [
-        "**/*.{test,spec}.{ts,tsx,js,jsx}",
-        "**/__tests__/**/*.{ts,tsx,js,jsx}",
+        "**/*.test.ts",
+        "**/*.spec.ts",
         "apps/**/test/**/*.ts",
         "tests/**/*.ts",
-        "benchmarks/**/*.ts"
+        "libs/shared/src/effect/storage/adapter-registry.test.ts"
       ],
       "rules": {
-        "eslint-plugin-jest/no-conditional-in-test": "off",
-        "eslint-plugin-jest/require-hook": "off",
-        "eslint-plugin-vitest/no-import-node-test": "off",
+        "vitest/no-import-node-test": "off",
+        "@typescript-eslint/no-explicit-any": "off",
         "jest/no-conditional-in-test": "off",
-        "jest/require-hook": "off",
-        "no-empty-function": "off",
-        "promise/avoid-new": "off",
-        "promise/param-names": "off",
-        "promise/prefer-await-to-then": "off",
-        "promise/prefer-catch": "off",
-        "require-await": "off",
-        "vitest/no-import-node-test": "off"
+        "jest/prefer-each": "off",
+        "unicorn/no-await-expression-member": "off",
+        "@typescript-eslint/consistent-type-definitions": "off",
+        "@typescript-eslint/consistent-type-imports": "off",
+        "no-unused-vars": "off"
       }
     },
     {
-      "files": ["scripts/**/*.ts"],
+      "files": ["apps/**/test/fixtures/**/*.ts", "tests/support/**/*.ts"],
       "rules": {
-        "eqeqeq": "off",
-        "no-control-regex": "off",
-        "no-eq-null": "off",
-        "no-misleading-character-class": "off",
-        "no-useless-return": "off",
-        "prefer-template": "off",
-        "promise/avoid-new": "off",
-        "promise/param-names": "off",
-        "promise/prefer-await-to-then": "off",
-        "promise/prefer-catch": "off",
-        "require-await": "off",
-        "typescript-eslint/no-non-null-assertion": "off",
-        "typescript/no-non-null-assertion": "off"
+        "@typescript-eslint/no-explicit-any": "off",
+        "@typescript-eslint/consistent-type-definitions": "off",
+        "@typescript-eslint/consistent-type-imports": "off",
+        "no-unused-vars": "off"
       }
     }
   ]
