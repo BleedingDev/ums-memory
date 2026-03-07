@@ -427,6 +427,7 @@ Blocking rule:
 - Files:
   - `docs/runbooks/sqlite-to-postgres-migration-strategy.md` (final update)
   - `docs/runbooks/deploy-operations-compose-first.md` (runtime backend ops)
+  - `docs/runbooks/disaster-recovery-game-day-automation.md` (drill evidence source)
 - Acceptance tests (files):
   - `tests/integration/postgres-cutover-drill.integration.test.ts` (new scripted dry run)
 - Command gates:

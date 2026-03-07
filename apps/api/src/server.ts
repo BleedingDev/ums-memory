@@ -1,5 +1,6 @@
 import { timingSafeEqual } from "node:crypto";
 import { once } from "node:events";
+import { mkdir, writeFile } from "node:fs/promises";
 import {
   createServer,
   type IncomingMessage,
@@ -7,6 +8,9 @@ import {
   type ServerResponse,
 } from "node:http";
 import type { AddressInfo } from "node:net";
+import { dirname } from "node:path";
+
+import { Effect } from "effect";
 
 import { CONSOLE_CSS, CONSOLE_HTML, CONSOLE_JS } from "./console-ui.ts";
 import {
@@ -14,6 +18,7 @@ import {
   executeRuntimeOperation,
   listRuntimeOperations,
 } from "./runtime-service.ts";
+import { evaluateStorageDualRun } from "./storage-dualrun.ts";
 import {
   createInMemoryApiTelemetry,
   type BuildOperationTelemetryEventOptions,
@@ -47,6 +52,7 @@ interface StartApiServerOptions {
   stateFile?: string | null;
   telemetry?: ApiTelemetry;
   enableConsoleUi?: boolean | string;
+  enableStorageDualRun?: boolean | string;
   auth?: ApiAuthSettingsInput;
 }
 
@@ -90,8 +96,12 @@ interface StartSupervisedApiServiceResult {
 
 const HOST = process.env["UMS_API_HOST"] ?? "127.0.0.1";
 const PORT = Number.parseInt(process.env["UMS_API_PORT"] ?? "8787", 10);
+const READY_FILE_PATH = process.env["UMS_API_READY_FILE"] ?? null;
 const ENABLE_CONSOLE_UI = parseBooleanFlag(
   process.env["UMS_API_ENABLE_CONSOLE_UI"]
+);
+const ENABLE_STORAGE_DUALRUN = parseBooleanFlag(
+  process.env["UMS_API_ENABLE_STORAGE_DUALRUN"]
 );
 const API_PREFIX = "/v1";
 const DEFAULT_MAX_JSON_BODY_BYTES = parsePositiveInteger(
@@ -592,10 +602,12 @@ export function createApiServer({
   stateFile = DEFAULT_RUNTIME_STATE_FILE,
   telemetry = createInMemoryApiTelemetry() as ApiTelemetry,
   enableConsoleUi = ENABLE_CONSOLE_UI,
+  enableStorageDualRun = ENABLE_STORAGE_DUALRUN,
   auth,
 }: Omit<StartApiServerOptions, "host" | "port"> = {}): Server {
   const activeTelemetry = resolveTelemetry(telemetry);
   const consoleUiEnabled = normalizeConsoleUiToggle(enableConsoleUi);
+  const storageDualRunEnabled = normalizeConsoleUiToggle(enableStorageDualRun);
   const authSettings = normalizeAuthSettings(auth);
   return createServer(async (req, res) => {
     let url: URL;
@@ -631,11 +643,14 @@ export function createApiServer({
     if (url.pathname === "/" && req.method === "GET") {
       try {
         const operations = await listRuntimeOperations();
+        const advertisedOperations = storageDualRunEnabled
+          ? [...new Set([...operations, "storage_dualrun"])]
+          : operations;
         json(res, 200, {
           ok: true,
           service: "ums-api",
           version: "v1",
-          operations: operations.map(
+          operations: advertisedOperations.map(
             (operation: string) => `${API_PREFIX}/${operation}`
           ),
           deterministic: true,
@@ -697,6 +712,10 @@ export function createApiServer({
       notFound(res);
       return;
     }
+    if (operation === "storage_dualrun" && !storageDualRunEnabled) {
+      notFound(res);
+      return;
+    }
 
     const operationStart = process.hrtime.bigint();
     const recordOperationTelemetry = ({
@@ -735,11 +754,14 @@ export function createApiServer({
       if (headerStore && isRecord(requestBody) && !requestBody["storeId"]) {
         requestBody = { ...requestBody, storeId: headerStore };
       }
-      const data = await executeRuntimeOperation({
-        operation,
-        requestBody,
-        stateFile,
-      });
+      const data =
+        operation === "storage_dualrun"
+          ? await Effect.runPromise(evaluateStorageDualRun(requestBody))
+          : await executeRuntimeOperation({
+              operation,
+              requestBody,
+              stateFile,
+            });
       recordOperationTelemetry({
         statusCode: 200,
         result: "success",
@@ -769,6 +791,7 @@ export async function startApiServer({
   stateFile = DEFAULT_RUNTIME_STATE_FILE,
   telemetry = createInMemoryApiTelemetry() as ApiTelemetry,
   enableConsoleUi = ENABLE_CONSOLE_UI,
+  enableStorageDualRun = ENABLE_STORAGE_DUALRUN,
   auth,
 }: StartApiServerOptions = {}): Promise<StartedApiServer> {
   const activeTelemetry = resolveTelemetry(telemetry);
@@ -776,6 +799,7 @@ export async function startApiServer({
     stateFile,
     telemetry: activeTelemetry,
     enableConsoleUi,
+    enableStorageDualRun,
     ...(auth === undefined ? {} : { auth }),
   };
   const server = createApiServer(serverOptions);
@@ -874,6 +898,17 @@ async function runStandaloneServer(): Promise<void> {
   });
 
   globalServerState.__umsApiActiveServerHandle__ = service;
+  if (typeof READY_FILE_PATH === "string" && READY_FILE_PATH.length > 0) {
+    await mkdir(dirname(READY_FILE_PATH), { recursive: true });
+    await writeFile(
+      READY_FILE_PATH,
+      JSON.stringify({
+        host,
+        port,
+      }),
+      "utf8"
+    );
+  }
   process.stdout.write(`UMS API listening on http://${host}:${port}\n`);
   const supervisionWatcher = setInterval(() => {
     const snapshot = service.status();

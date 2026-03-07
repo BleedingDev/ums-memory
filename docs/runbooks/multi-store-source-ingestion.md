@@ -160,7 +160,7 @@ Routing precedence must remain deterministic:
   - `bun run validate:ingestion:local`
 - Local diagnostics do not write tracked reports by default.
 - If a local report file is needed, write to an explicit non-tracked path:
-  - `node --import tsx scripts/validate-ingestion.ts --mode local --write-report --output /tmp/ums-ingestion-local.json`
+  - `bun scripts/validate-ingestion.ts --mode local --write-report --output /tmp/ums-ingestion-local.json`
 - Writing local diagnostics directly to the tracked deterministic baseline requires explicit `--force` and should be avoided.
 - Only commit `docs/reports/multi-store-ingestion-validation-summary.json` when a deterministic baseline refresh is intentional and reviewed.
 - If local diagnostics accidentally rewrote the tracked report, restore it before commit:

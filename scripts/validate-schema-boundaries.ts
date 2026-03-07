@@ -128,7 +128,7 @@ function printUsage() {
   process.stdout.write(
     [
       "Usage:",
-      "  node --import tsx scripts/validate-schema-boundaries.ts [--root <path>] [--json]",
+      "  bun scripts/validate-schema-boundaries.ts [--root <path>] [--json]",
       "",
       "Options:",
       "  --root         Project root to validate (defaults to current working directory).",

@@ -14,7 +14,7 @@ Define deterministic persistence semantics for every runtime operation so migrat
 Operation list was generated from `apps/api/src/core.ts` via `listOperations()`:
 
 ```bash
-node --import tsx -e "import { listOperations } from './apps/api/src/core.ts'; console.log(JSON.stringify(listOperations(), null, 2));"
+bun -e "import { listOperations } from './apps/api/src/core.ts'; console.log(JSON.stringify(listOperations(), null, 2));"
 ```
 
 ## Contract Semantics (Applies to Every Operation)

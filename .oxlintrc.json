@@ -1,6 +1,6 @@
 {
   "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["typescript", "unicorn", "jest", "vitest"],
+  "plugins": ["typescript", "unicorn"],
   "overrides": [
     {
       "files": [
@@ -11,10 +11,7 @@
         "libs/shared/src/effect/storage/adapter-registry.test.ts"
       ],
       "rules": {
-        "vitest/no-import-node-test": "off",
         "@typescript-eslint/no-explicit-any": "off",
-        "jest/no-conditional-in-test": "off",
-        "jest/prefer-each": "off",
         "unicorn/no-await-expression-member": "off",
         "@typescript-eslint/consistent-type-definitions": "off",
         "@typescript-eslint/consistent-type-imports": "off",

@@ -909,7 +909,7 @@ function printUsage() {
   process.stdout.write(
     [
       "Usage:",
-      "  node --import tsx scripts/generate-pilot-kpi-dashboard.ts --input <summary.json> [--input <summary.json> ...]",
+      "  bun scripts/generate-pilot-kpi-dashboard.ts --input <summary.json> [--input <summary.json> ...]",
       "    [--feedback <feedback.ndjson>] [--output <path>] [--compact] [--allow-invalid]",
       "",
       "Notes:",
@@ -918,7 +918,7 @@ function printUsage() {
       "  - --allow-invalid skips malformed feedback records and malformed NDJSON lines.",
       "",
       "Example:",
-      "  node --import tsx scripts/generate-pilot-kpi-dashboard.ts --input day1-summary.json --input day2-summary.json \\",
+      "  bun scripts/generate-pilot-kpi-dashboard.ts --input day1-summary.json --input day2-summary.json \\",
       "    --feedback feedback.ndjson --output docs/reports/pilot-kpi-dashboard.json --compact",
     ].join("\n") + "\n"
   );

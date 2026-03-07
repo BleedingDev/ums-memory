@@ -942,7 +942,7 @@ function printUsage() {
   process.stdout.write(
     [
       "Usage:",
-      "  node --import tsx scripts/evaluate-production-slos.ts --dashboard <dashboard.json> [--dashboard <dashboard.json> ...]",
+      "  bun scripts/evaluate-production-slos.ts --dashboard <dashboard.json> [--dashboard <dashboard.json> ...]",
       "    [--tuning <ranking-decay-tuning.json>] --evaluated-at <RFC3339> [--output <path>] [--compact]",
       "",
       "Notes:",
@@ -951,7 +951,7 @@ function printUsage() {
       "  - --evaluated-at is required to keep output deterministic.",
       "",
       "Example:",
-      "  node --import tsx scripts/evaluate-production-slos.ts --dashboard docs/reports/pilot-rollout/pilot-a-kpi-dashboard.json \\",
+      "  bun scripts/evaluate-production-slos.ts --dashboard docs/reports/pilot-rollout/pilot-a-kpi-dashboard.json \\",
       "    --tuning docs/reports/pilot-rollout/pilot-a-ranking-decay-tuning.json \\",
       "    --evaluated-at 2026-03-02T18:30:00Z --output docs/reports/pilot-rollout/pilot-a-production-slo-eval.json",
     ].join("\n") + "\n"

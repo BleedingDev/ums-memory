@@ -22,6 +22,19 @@ Pass criteria:
 - `docs/runbooks/effect-version-availability.md` and `docs/reports/effect-v4-compatibility-matrix.md` are current.
 - `validate:effect-beta-pin` passes in local and CI quality gates.
 
+### 0a) Bun-Only Runtime and Test Policy (MUST)
+
+- Repository package/runtime commands MUST use Bun.
+- Tests MUST run through `bun test`.
+- Effect-oriented tests MUST import the test surface from `@effect-native/bun-test`.
+- `node:test`, `node --test`, Vitest, Jest, and Mocha MUST NOT be introduced in repo-local sources, scripts, or standards docs.
+
+Pass criteria:
+
+- `package.json` declares Bun as the package manager/runtime contract.
+- Test files import `@effect-native/bun-test` rather than `bun:test` directly.
+- Repo-local standards/runbooks do not instruct contributors to use Node-based or alternate test runners.
+
 ## Mandatory Patterns
 
 ### 1) TypeScript Strictness (MUST)
@@ -110,6 +123,7 @@ The project command contract is:
 - `bun run validate:legacy-shims`
 - `bun run validate:cutover`
 - `bun run test`
+- `bun run eval:lean`
 - `bun run test:sfe`
 - `bun run ci:verify` (local aggregate: quality + tests + SFE + single-file build)
 
@@ -120,8 +134,9 @@ CI workflow contract:
 - Required gates in order:
   1. `bun run quality:ts`
   2. `bun run test`
-  3. `bun run test:sfe`
-  4. `bun run build:sfe:single`
+  3. `bun run eval:lean`
+  4. `bun run test:sfe`
+  5. `bun run build:sfe:single`
 
 Pass criteria:
 
@@ -160,6 +175,7 @@ All items are required unless explicitly marked `N/A` with reason.
 5. Test and CI contract compliance
 
 - [ ] `bun run test` passed.
+- [ ] `bun run eval:lean` passed.
 - [ ] `bun run test:sfe` passed for affected flows.
 - [ ] `bun run ci:verify` passed locally or CI proof attached.
 - [ ] PR shows green `.github/workflows/ci.yml` `verify` job.

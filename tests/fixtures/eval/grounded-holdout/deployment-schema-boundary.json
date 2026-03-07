@@ -1,0 +1,73 @@
+{
+  "schemaVersion": "grounded_holdout_case.v1",
+  "caseId": "deployment-schema-boundary",
+  "usage": {
+    "split": "holdout",
+    "tuningAllowed": false,
+    "ownerBeadId": "ums-memory-jny.3"
+  },
+  "objective": "grounded_recall_citation_integrity",
+  "description": "Release guidance should recall the schema-boundary safeguard and preserve a direct quote.",
+  "seed": "grounded-holdout-deployment",
+  "request": {
+    "storeId": "eval-grounded",
+    "space": "release",
+    "query": "What safeguard keeps API deployment grounded and reviewable?",
+    "maxItems": 3,
+    "tokenBudget": 160
+  },
+  "dataset": {
+    "events": [
+      {
+        "id": "memory-schema-boundary-release",
+        "storeId": "eval-grounded",
+        "space": "release",
+        "source": "playbook",
+        "timestamp": "2026-03-01T09:00:00.000Z",
+        "content": "Use schema-boundary validation before API deployment so grounded citations always point to reviewed evidence.",
+        "tags": ["release", "grounding"],
+        "metadata": {
+          "role": "assistant",
+          "conversationId": "holdout-release-1"
+        }
+      },
+      {
+        "id": "memory-release-owner",
+        "storeId": "eval-grounded",
+        "space": "release",
+        "source": "playbook",
+        "timestamp": "2026-03-01T09:05:00.000Z",
+        "content": "Assign a rollback owner and keep latency dashboards visible during every release.",
+        "tags": ["release", "ops"],
+        "metadata": {
+          "role": "assistant",
+          "conversationId": "holdout-release-1"
+        }
+      },
+      {
+        "id": "memory-doc-archive",
+        "storeId": "eval-grounded",
+        "space": "release",
+        "source": "notes",
+        "timestamp": "2026-03-01T09:10:00.000Z",
+        "content": "Archive the release summary after the rollout closes and link the incident notes.",
+        "tags": ["release", "notes"],
+        "metadata": {
+          "role": "assistant",
+          "conversationId": "holdout-release-1"
+        }
+      }
+    ]
+  },
+  "expect": {
+    "citations": [
+      {
+        "memoryId": "memory-schema-boundary-release",
+        "source": "playbook",
+        "quote": "schema-boundary validation before API deployment"
+      }
+    ],
+    "minRecallRate": 1,
+    "minCitationIntegrityRate": 1
+  }
+}

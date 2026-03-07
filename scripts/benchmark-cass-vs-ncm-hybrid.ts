@@ -340,7 +340,7 @@ const parseArgs = (argv: readonly string[]): ParsedArgs => {
 const usage = (): string =>
   [
     "Usage:",
-    "  node --import tsx scripts/benchmark-cass-vs-ncm-hybrid.ts [--output <path>] [--compact]",
+    "  bun scripts/benchmark-cass-vs-ncm-hybrid.ts [--output <path>] [--compact]",
     "",
     "Options:",
     "  --output <path>   Write benchmark report JSON to a file.",

@@ -179,6 +179,39 @@ Before adapter cutover:
 - Audit append-only invariants and idempotency-ledger uniqueness checks remain green in parity CI.
 - No unresolved schema drift alerts for latest migration version.
 
+## Required Evidence Before Primary Cutover
+
+The primary cutover owner must attach all of the following evidence to the go/no-go decision:
+
+1. Latest green parity corpus output from `bun scripts/eval-storage-parity.ts --json`.
+2. Latest green shadow dual-run telemetry sample from `/v1/storage_dualrun` showing:
+   - `mismatchCount = 0` for the sampled request window
+   - tenant/store traceability in `observability.tracePayload.storeId`
+   - stable `requestDigest` values for replayed samples
+3. One successful staging-like restore drill manifest from `artifacts/dr-drills/<DRILL_ID>/manifest.json` with:
+   - `status = "pass"`
+   - `failureGate = "none"`
+   - `attemptsUsed <= 2`
+4. One successful rollback rehearsal bundle from the staging host proving the prior revision can be redeployed against the preserved backup/state volume. The bundle must include:
+   - `rollback-redeploy-check.txt` with:
+     - the release-candidate git SHA
+     - the prior git SHA used for rollback
+     - the backup artifact basename restored during the rehearsal
+   - `rollback-api-root.json` showing `ok = true`, `service = "ums-api"`, and `deterministic = true`
+   - `rollback-metrics.prom` containing successful `doctor` and `export` metrics lines for the rolled-back revision
+   - `rollback-compose-ps.txt`
+   - `rollback-compose-logs-api-worker.txt`
+   - one note stating the rollback command path used (`docker compose ... up --build -d --remove-orphans` after checking out the prior revision)
+5. Linked artifact bundle:
+   - `checksums.txt`
+   - `compose-ps.txt`
+   - `compose-logs-api-worker.txt`
+   - `metrics.prom`
+   - `replay-first.json`
+   - `replay-second.json`
+
+Cutover must not proceed if any required artifact is missing, stale, fails validation, or is tied to a different revision than the release candidate.
+
 ## Immediate Next Beads
 
 1. `ums-memory-dd2.2`: implement pluggable storage adapter contracts (pre-req for runtime routing).

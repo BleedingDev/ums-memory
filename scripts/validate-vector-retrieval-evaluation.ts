@@ -107,7 +107,7 @@ function printUsage() {
   process.stdout.write(
     [
       "Usage:",
-      "  node --import tsx scripts/validate-vector-retrieval-evaluation.ts [--file <path>] [--json]",
+      "  bun scripts/validate-vector-retrieval-evaluation.ts [--file <path>] [--json]",
       "",
       "Options:",
       "  --file         Path to vector retrieval runbook markdown.",

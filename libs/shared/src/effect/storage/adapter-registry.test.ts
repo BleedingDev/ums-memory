@@ -7,14 +7,21 @@ import { makeNoopStorageService } from "../services/storage-service.js";
 import {
   createStorageServiceFromAdapterRegistry,
   listStorageAdapterIds,
+  makePostgresStorageAdapterRegistration,
   makeSqliteStorageAdapterRegistration,
   makeStorageAdapterRegistry,
+  postgresStorageAdapterId,
   resolveStorageAdapterRegistration,
   StorageAdapterIdValidationError,
   type StorageAdapterRegistration,
   StorageAdapterDuplicateIdError,
   StorageAdapterUnknownIdError,
 } from "./adapter-registry.js";
+import type { PostgresStorageRepositoryDriver } from "./postgres/index.js";
+import {
+  enterprisePostgresSchemaVersion,
+  postgresStorageSnapshotFormat,
+} from "./postgres/index.js";
 import { DatabaseSync } from "./sqlite/database.ts";
 
 const makeNoopAdapterRegistration = (
@@ -22,6 +29,21 @@ const makeNoopAdapterRegistration = (
 ): StorageAdapterRegistration => ({
   id,
   create: () => Effect.succeed(makeNoopStorageService()),
+});
+
+const makeNoopPostgresDriver = (): PostgresStorageRepositoryDriver => ({
+  getMemory: () => Effect.succeed(null),
+  upsertMemory: (record) => Effect.succeed(record),
+  deleteMemory: () => Effect.succeed(true),
+  getIdempotency: () => Effect.succeed(null),
+  putIdempotency: () => Effect.void,
+  exportSnapshot: () =>
+    Effect.succeed({
+      format: postgresStorageSnapshotFormat,
+      schemaVersion: enterprisePostgresSchemaVersion,
+      tables: [],
+    }),
+  importSnapshot: () => Effect.void,
 });
 
 const expectFailure = async <A, E>(effect: Effect.Effect<A, E>): Promise<E> => {
@@ -66,14 +88,22 @@ void test("resolveStorageAdapterRegistration fails for unknown adapter IDs", asy
 void test("listStorageAdapterIds returns deterministic sorted IDs", async () => {
   const registry = await Effect.runPromise(
     makeStorageAdapterRegistry([
-      makeNoopAdapterRegistration("zeta"),
-      makeNoopAdapterRegistration("alpha"),
-      makeNoopAdapterRegistration("beta"),
+      makeSqliteStorageAdapterRegistration(),
+      makePostgresStorageAdapterRegistration(),
+      makeNoopAdapterRegistration("archive"),
     ])
   );
 
-  assert.deepEqual(listStorageAdapterIds(registry), ["alpha", "beta", "zeta"]);
-  assert.deepEqual(listStorageAdapterIds(registry), ["alpha", "beta", "zeta"]);
+  assert.deepEqual(listStorageAdapterIds(registry), [
+    "archive",
+    "postgres",
+    "sqlite",
+  ]);
+  assert.deepEqual(listStorageAdapterIds(registry), [
+    "archive",
+    "postgres",
+    "sqlite",
+  ]);
 });
 
 void test("sqlite adapter registration can create a working storage service", async () => {
@@ -107,6 +137,33 @@ void test("sqlite adapter registration can create a working storage service", as
   }
 });
 
+void test("postgres adapter registration can create a working storage service", async () => {
+  const registry = await Effect.runPromise(
+    makeStorageAdapterRegistry([makePostgresStorageAdapterRegistration()])
+  );
+
+  const storageService = await Effect.runPromise(
+    createStorageServiceFromAdapterRegistry(registry, {
+      adapterId: postgresStorageAdapterId,
+      configuration: {
+        driver: makeNoopPostgresDriver(),
+      },
+    })
+  );
+
+  const snapshot = await Effect.runPromise(
+    storageService.exportSnapshot({
+      signature_secret: "postgres-test-secret",
+    })
+  );
+
+  assert.equal(snapshot.signatureAlgorithm, "hmac-sha256");
+  assert.ok(
+    snapshot.payload.includes("ums-memory/postgres-storage-snapshot/v1")
+  );
+  assert.equal(snapshot.tableCount, 0);
+});
+
 void test("resolveStorageAdapterRegistration rejects invalid adapter ID format", async () => {
   const registry = await Effect.runPromise(
     makeStorageAdapterRegistry([makeNoopAdapterRegistration("sqlite")])
@@ -136,5 +193,24 @@ void test("sqlite adapter registration rejects missing database configuration", 
   assert.equal(
     configurationError.contract,
     "SqliteStorageAdapterConfiguration"
+  );
+});
+
+void test("postgres adapter registration rejects missing driver configuration", async () => {
+  const registry = await Effect.runPromise(
+    makeStorageAdapterRegistry([makePostgresStorageAdapterRegistration()])
+  );
+
+  const configurationError = await expectFailure(
+    createStorageServiceFromAdapterRegistry(registry, {
+      adapterId: postgresStorageAdapterId,
+      configuration: {},
+    })
+  );
+
+  assert.equal(configurationError._tag, "ContractValidationError");
+  assert.equal(
+    configurationError.contract,
+    "PostgresStorageAdapterConfiguration"
   );
 });

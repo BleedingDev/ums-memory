@@ -31,7 +31,7 @@ Result:
 Command:
 
 ```bash
-node -e "const fs=require('node:fs');const a=JSON.parse(fs.readFileSync('docs/migration/runtime-ts-suppression-allowlist.v1.json','utf8'));const b=JSON.parse(fs.readFileSync('docs/migration/legacy-runtime-shim-inventory.v1.json','utf8'));console.log(JSON.stringify({suppressionEntries:a.entries.length,legacyShimEntries:b.entries.length},null,2));"
+bun -e "import { readFileSync } from 'node:fs'; const a = JSON.parse(readFileSync('docs/migration/runtime-ts-suppression-allowlist.v1.json','utf8')); const b = JSON.parse(readFileSync('docs/migration/legacy-runtime-shim-inventory.v1.json','utf8')); console.log(JSON.stringify({ suppressionEntries: a.entries.length, legacyShimEntries: b.entries.length }, null, 2));"
 ```
 
 Result:

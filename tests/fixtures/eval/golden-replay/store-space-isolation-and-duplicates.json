@@ -1,0 +1,151 @@
+{
+  "schemaVersion": "golden_replay_fixture.v1",
+  "fixtureId": "store-space-isolation-and-duplicates",
+  "fixtureVersion": 1,
+  "fixtureDigest": "sha256:e68de723b5f16857bf1cb5db8daf8747e26facf610ef30079baa708482bf6da5",
+  "description": "Store and space isolation stay bounded while duplicate synthetic ids remain replay-safe.",
+  "engineOptions": {
+    "seed": "ums-golden-replay-v1"
+  },
+  "operations": [
+    {
+      "kind": "ingest",
+      "label": "ingest isolated events and a duplicate replay",
+      "input": [
+        {
+          "storeId": "tenant-golden-a",
+          "space": "workspace-a",
+          "source": "cli",
+          "timestamp": "2026-03-02T09:00:00.000Z",
+          "content": "migration rollback playbook for tenant alpha"
+        },
+        {
+          "storeId": "tenant-golden-a",
+          "space": "workspace-a",
+          "source": "cli",
+          "timestamp": "2026-03-02T09:00:00.000Z",
+          "content": "migration rollback playbook for tenant alpha"
+        },
+        {
+          "storeId": "tenant-golden-a",
+          "space": "workspace-b",
+          "source": "cli",
+          "timestamp": "2026-03-02T09:05:00.000Z",
+          "content": "workspace beta unrelated retention checklist"
+        },
+        {
+          "storeId": "tenant-golden-b",
+          "space": "workspace-a",
+          "source": "cli",
+          "timestamp": "2026-03-02T09:10:00.000Z",
+          "content": "migration rollback playbook for tenant bravo"
+        }
+      ],
+      "expect": {
+        "accepted": 3,
+        "duplicates": 1,
+        "rejected": 0,
+        "stats": {
+          "storeCount": 2,
+          "spaceCount": 3,
+          "totalEvents": 3,
+          "redactedSecrets": 0,
+          "unsafeInstructions": 0
+        }
+      }
+    },
+    {
+      "kind": "recall",
+      "label": "recall honors store and space isolation",
+      "input": {
+        "storeId": "tenant-golden-a",
+        "space": "workspace-a",
+        "query": "migration rollback playbook",
+        "maxItems": 3,
+        "tokenBudget": 64
+      },
+      "expect": {
+        "query": "migration rollback playbook",
+        "storeId": "tenant-golden-a",
+        "space": "workspace-a",
+        "maxItems": 3,
+        "tokenBudget": 64,
+        "estimatedTokens": 11,
+        "payloadBytes": 326,
+        "truncated": false,
+        "items": [
+          {
+            "id": "evt-37c18a0e767d8576",
+            "storeId": "tenant-golden-a",
+            "space": "workspace-a",
+            "source": "cli",
+            "timestamp": "2026-03-02T09:00:00.000Z",
+            "content": "migration rollback playbook for tenant alpha",
+            "score": 3.000223,
+            "flags": {
+              "hasSecret": false,
+              "unsafeInstruction": false
+            },
+            "evidence": {
+              "episodeId": "evt-37c18a0e767d8576",
+              "source": "cli"
+            }
+          }
+        ],
+        "guardrails": {
+          "filteredUnsafe": 0,
+          "redactedSecrets": 0,
+          "storeIsolationEnforced": true,
+          "spaceIsolationEnforced": true
+        }
+      }
+    },
+    {
+      "kind": "recall",
+      "label": "other store remains independently addressable",
+      "input": {
+        "storeId": "tenant-golden-b",
+        "space": "workspace-a",
+        "query": "migration rollback playbook",
+        "maxItems": 3,
+        "tokenBudget": 64
+      },
+      "expect": {
+        "query": "migration rollback playbook",
+        "storeId": "tenant-golden-b",
+        "space": "workspace-a",
+        "maxItems": 3,
+        "tokenBudget": 64,
+        "estimatedTokens": 11,
+        "payloadBytes": 326,
+        "truncated": false,
+        "items": [
+          {
+            "id": "evt-8d489ecf7b377081",
+            "storeId": "tenant-golden-b",
+            "space": "workspace-a",
+            "source": "cli",
+            "timestamp": "2026-03-02T09:10:00.000Z",
+            "content": "migration rollback playbook for tenant bravo",
+            "score": 3.009005,
+            "flags": {
+              "hasSecret": false,
+              "unsafeInstruction": false
+            },
+            "evidence": {
+              "episodeId": "evt-8d489ecf7b377081",
+              "source": "cli"
+            }
+          }
+        ],
+        "guardrails": {
+          "filteredUnsafe": 0,
+          "redactedSecrets": 0,
+          "storeIsolationEnforced": true,
+          "spaceIsolationEnforced": true
+        }
+      }
+    }
+  ],
+  "expectedStateDigest": "faad49178af797dcbaf9233bf5eaf4161796291a5782fdfe0dc8c22bb39842ca"
+}

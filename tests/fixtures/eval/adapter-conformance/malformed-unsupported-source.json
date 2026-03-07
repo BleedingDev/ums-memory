@@ -1,0 +1,25 @@
+{
+  "schemaVersion": "adapter_conformance_fixture.v1",
+  "id": "malformed-unsupported-source",
+  "description": "Unknown adapter sources must fail conformance validation.",
+  "kind": "malformed",
+  "input": {
+    "tenantId": "tenant-conformance",
+    "spaceId": "workspace-malformed",
+    "source": "unknown-adapter",
+    "sessionId": "session-malformed-source",
+    "runId": "run-malformed-source",
+    "startedAt": "2026-03-04T17:05:00.000Z",
+    "messages": [
+      {
+        "eventId": "event-malformed-2",
+        "messageId": "message-malformed-2",
+        "role": "assistant",
+        "content": "This source should not decode.",
+        "createdAt": "2026-03-04T17:05:00.000Z",
+        "citations": []
+      }
+    ]
+  },
+  "expectedErrorPattern": "ParseError|source"
+}

@@ -1,0 +1,78 @@
+{
+  "schemaVersion": "grounded_holdout_case.v1",
+  "caseId": "citation-offset-verification",
+  "usage": {
+    "split": "holdout",
+    "tuningAllowed": false,
+    "ownerBeadId": "ums-memory-jny.3"
+  },
+  "objective": "grounded_recall_citation_integrity",
+  "description": "Citation verification should recall exact-span quoting guidance and the offset requirement together.",
+  "seed": "grounded-holdout-offsets",
+  "request": {
+    "storeId": "eval-grounded",
+    "space": "citations",
+    "query": "What makes a grounded citation easy to review?",
+    "maxItems": 4,
+    "tokenBudget": 220
+  },
+  "dataset": {
+    "events": [
+      {
+        "id": "memory-exact-quote",
+        "storeId": "eval-grounded",
+        "space": "citations",
+        "source": "guideline",
+        "timestamp": "2026-03-03T08:00:00.000Z",
+        "content": "Grounded citations should quote the exact evidence span instead of paraphrasing unrelated notes.",
+        "tags": ["citations", "grounding"],
+        "metadata": {
+          "role": "assistant",
+          "conversationId": "holdout-citations-1"
+        }
+      },
+      {
+        "id": "memory-offsets-required",
+        "storeId": "eval-grounded",
+        "space": "citations",
+        "source": "guideline",
+        "timestamp": "2026-03-03T08:02:00.000Z",
+        "content": "Record start and end offsets for every grounded citation so reviewers can verify the quote in place.",
+        "tags": ["citations", "review"],
+        "metadata": {
+          "role": "assistant",
+          "conversationId": "holdout-citations-1"
+        }
+      },
+      {
+        "id": "memory-dashboard-noise",
+        "storeId": "eval-grounded",
+        "space": "citations",
+        "source": "notes",
+        "timestamp": "2026-03-03T08:05:00.000Z",
+        "content": "Store retention dashboards next to cost alerts for weekly review.",
+        "tags": ["ops", "reporting"],
+        "metadata": {
+          "role": "assistant",
+          "conversationId": "holdout-citations-1"
+        }
+      }
+    ]
+  },
+  "expect": {
+    "citations": [
+      {
+        "memoryId": "memory-exact-quote",
+        "source": "guideline",
+        "quote": "quote the exact evidence span"
+      },
+      {
+        "memoryId": "memory-offsets-required",
+        "source": "guideline",
+        "quote": "start and end offsets for every grounded citation"
+      }
+    ],
+    "minRecallRate": 1,
+    "minCitationIntegrityRate": 1
+  }
+}

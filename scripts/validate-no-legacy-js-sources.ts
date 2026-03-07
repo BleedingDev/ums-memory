@@ -51,7 +51,7 @@ function printUsage() {
   process.stdout.write(
     [
       "Usage:",
-      "  node --import tsx scripts/validate-no-legacy-js-sources.ts [--dir <path>]...",
+      "  bun scripts/validate-no-legacy-js-sources.ts [--dir <path>]...",
       "",
       "Defaults:",
       `  ${DEFAULT_DIRECTORIES.join(", ")}`,

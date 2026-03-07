@@ -59,6 +59,14 @@ function createPromotedRule(
   };
 }
 
+function executeGuardedCuration(request: Record<string, unknown>) {
+  const validations = executeOperation("validate", request);
+  return executeOperation("curate_guarded", {
+    ...request,
+    validations: validations.validations,
+  });
+}
+
 test("core exposes the full required operation surface", () => {
   assert.deepEqual(listOperations(), [
     "ingest",
@@ -2642,7 +2650,7 @@ test("context and curate operate on shared profile state", () => {
     profile: "demo",
     maxCandidates: 1,
   });
-  const curated = executeOperation("curate", {
+  const curated = executeGuardedCuration({
     profile: "demo",
     candidates: reflected.candidates,
   });
@@ -2686,6 +2694,229 @@ test("context pack and usage ids remain deterministic across repeated calls", ()
   assert.deepEqual(first.matches, second.matches);
   assert.equal(first.matches.length, 1);
   assert.equal(first.matches[0]?.usageId.startsWith("usage_"), true);
+});
+
+test("reflect remains deterministic and bounded for duplicate source-type families", () => {
+  executeOperation("ingest", {
+    storeId: "coding-agent",
+    profile: "reflect-bounds",
+    events: [
+      { type: "note", source: "codex", content: "first codex note" },
+      { type: "note", source: "codex", content: "second codex note" },
+      { type: "ticket", source: "jira", content: "jira ticket" },
+    ],
+  });
+
+  const first = executeOperation("reflect", {
+    storeId: "coding-agent",
+    profile: "reflect-bounds",
+    maxCandidates: 5,
+  });
+  const second = executeOperation("reflect", {
+    storeId: "coding-agent",
+    profile: "reflect-bounds",
+    maxCandidates: 5,
+  });
+
+  assert.deepEqual(first, second);
+  assert.equal(first.candidateCount, 2);
+  assert.deepEqual(
+    first.candidates.map((candidate: any) => candidate.statement),
+    ["Prefer source=codex for type=note", "Prefer source=jira for type=ticket"]
+  );
+});
+
+test("validate returns deterministic evidence depth, contradiction, and freshness reason codes", () => {
+  executeOperation("ingest", {
+    storeId: "coding-agent",
+    profile: "validator-demo",
+    events: [
+      {
+        id: "evt-fresh",
+        type: "ticket",
+        source: "jira",
+        content: "fresh evidence",
+        timestamp: "2026-03-07T00:00:00.000Z",
+      },
+      {
+        id: "evt-contradiction",
+        type: "ticket",
+        source: "review",
+        content: "contradiction evidence",
+        timestamp: "2026-03-07T00:00:00.000Z",
+      },
+      {
+        id: "evt-stale",
+        type: "ticket",
+        source: "jira",
+        content: "stale evidence",
+        timestamp: "2026-01-01T00:00:00.000Z",
+      },
+    ],
+  });
+
+  const validation = executeOperation("validate", {
+    storeId: "coding-agent",
+    profile: "validator-demo",
+    timestamp: "2026-03-07T00:00:00.000Z",
+    candidates: [
+      {
+        statement: "Prefer source=jira for type=ticket",
+        sourceEventId: "evt-fresh",
+        sourceEventIds: ["evt-fresh"],
+        evidenceEventIds: ["evt-fresh"],
+      },
+      {
+        statement: "Prefer source=jira for type=ticket",
+        sourceEventId: "evt-fresh",
+        sourceEventIds: ["evt-fresh"],
+        evidenceEventIds: ["evt-fresh"],
+        contradictionEventIds: ["evt-contradiction"],
+      },
+      {
+        statement: "Prefer source=jira for type=ticket",
+        sourceEventId: "evt-stale",
+        sourceEventIds: ["evt-stale"],
+        evidenceEventIds: ["evt-stale"],
+      },
+      {
+        statement: "Prefer source=jira for type=ticket",
+        sourceEventId: "evt-missing",
+        sourceEventIds: ["evt-missing"],
+        evidenceEventIds: ["evt-missing"],
+      },
+    ],
+  });
+
+  assert.deepEqual(
+    validation.validations.map((entry: any) => ({
+      valid: entry.valid,
+      reasonCodes: entry.reasonCodes,
+      evidenceDepth: entry.evidenceDepth,
+      contradictionCount: entry.contradictionCount,
+    })),
+    [
+      {
+        valid: true,
+        reasonCodes: ["accepted"],
+        evidenceDepth: 1,
+        contradictionCount: 0,
+      },
+      {
+        valid: false,
+        reasonCodes: ["contradicting_evidence"],
+        evidenceDepth: 1,
+        contradictionCount: 1,
+      },
+      {
+        valid: false,
+        reasonCodes: ["stale_evidence"],
+        evidenceDepth: 1,
+        contradictionCount: 0,
+      },
+      {
+        valid: false,
+        reasonCodes: ["insufficient_evidence_depth"],
+        evidenceDepth: 0,
+        contradictionCount: 0,
+      },
+    ]
+  );
+});
+
+test("curate rejects direct active procedural mutation attempts without curate_guarded", () => {
+  assert.throws(
+    () =>
+      executeOperation("curate", {
+        storeId: "coding-agent",
+        profile: "guarded-path",
+        candidates: [
+          {
+            statement: "Prefer source=jira for type=ticket",
+            sourceEventId: "evt-direct",
+          },
+        ],
+      }),
+    /active procedural mutations must use curate_guarded/u
+  );
+});
+
+test("curate_guarded resolves conflicting candidates deterministically and preserves incumbent winner on replay", () => {
+  executeOperation("ingest", {
+    storeId: "coding-agent",
+    profile: "tie-break-demo",
+    events: [
+      {
+        id: "evt-a",
+        type: "ticket",
+        source: "jira",
+        content: "evidence a",
+        timestamp: "2026-03-07T00:00:00.000Z",
+      },
+      {
+        id: "evt-b",
+        type: "ticket",
+        source: "jira",
+        content: "evidence b",
+        timestamp: "2026-03-07T00:00:00.000Z",
+      },
+    ],
+  });
+
+  const request = {
+    storeId: "coding-agent",
+    profile: "tie-break-demo",
+    timestamp: "2026-03-07T00:00:00.000Z",
+    candidates: [
+      {
+        statement: "Prefer source=jira for type=ticket",
+        sourceEventId: "evt-a",
+        sourceEventIds: ["evt-a"],
+        evidenceEventIds: ["evt-a"],
+        confidence: 0.7,
+      },
+      {
+        statement: "Prefer source=jira for type=ticket",
+        sourceEventId: "evt-b",
+        sourceEventIds: ["evt-b"],
+        evidenceEventIds: ["evt-b"],
+        confidence: 0.7,
+      },
+    ],
+  };
+
+  const first = executeOperation("curate_guarded", {
+    ...request,
+    validations: executeOperation("validate", {
+      storeId: request.storeId,
+      profile: request.profile,
+      timestamp: request.timestamp,
+      candidates: request.candidates,
+    }).validations,
+  });
+  const snapshotAfterFirst = snapshotProfile(request.profile, request.storeId);
+  const incumbentCandidateId = snapshotAfterFirst.rules[0]?.selectedCandidateId;
+
+  const reversed = executeOperation("curate_guarded", {
+    ...request,
+    candidates: [...request.candidates].reverse(),
+    validations: executeOperation("validate", {
+      storeId: request.storeId,
+      profile: request.profile,
+      timestamp: request.timestamp,
+      candidates: [...request.candidates].reverse(),
+    }).validations,
+  });
+  const snapshotAfterSecond = snapshotProfile(request.profile, request.storeId);
+
+  assert.equal(first.applied.length, 1);
+  assert.equal(first.rejected.length, 1);
+  assert.equal(reversed.applied[0]?.ruleId, first.applied[0]?.ruleId);
+  assert.equal(
+    snapshotAfterSecond.rules[0]?.selectedCandidateId,
+    incumbentCandidateId
+  );
+  assert.equal(snapshotAfterSecond.rules.length, 1);
 });
 
 test("store isolation prevents cross-store state bleed", () => {
@@ -2760,7 +2991,7 @@ test("findRuleByDigestPrefix resolves rules in the requested profile only", () =
     profile: "ops-alpha",
     maxCandidates: 1,
   });
-  executeOperation("curate", {
+  executeGuardedCuration({
     storeId: "coding-agent",
     profile: "ops-alpha",
     candidates: reflectedAlpha.candidates,
@@ -2776,7 +3007,7 @@ test("findRuleByDigestPrefix resolves rules in the requested profile only", () =
     profile: "ops-beta",
     maxCandidates: 1,
   });
-  executeOperation("curate", {
+  executeGuardedCuration({
     storeId: "coding-agent",
     profile: "ops-beta",
     candidates: reflectedBeta.candidates,
@@ -4901,7 +5132,8 @@ test("ums-memory-d6q.2.14 context recall exposes bounded deterministic misconcep
 
   assert.equal(bounded.misconceptionChronology.limit, 1);
   assert.equal(bounded.misconceptionChronology.notes.length, 1);
-  assert.equal(bounded.misconceptionChronology.bounded, true);
+  assert.equal(bounded.misconceptionChronology.bounded, false);
+  assert.equal(bounded.misconceptionChronology.truncated, true);
   assert.equal(Array.isArray(bounded.misconceptionChronology.formatting), true);
   assert.equal(full.misconceptionChronology.notes.length >= 2, true);
   assert.equal(

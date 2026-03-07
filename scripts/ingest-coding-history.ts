@@ -188,7 +188,7 @@ function printUsage() {
   process.stdout.write(
     [
       "Usage:",
-      "  node --import tsx scripts/ingest-coding-history.ts [--state-file path] [--store-id id] [--profile id] [--report path]",
+      "  bun scripts/ingest-coding-history.ts [--state-file path] [--store-id id] [--profile id] [--report path]",
       "",
       "Defaults:",
       `  --state-file ${DEFAULT_SHARED_STATE_FILE}`,

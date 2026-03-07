@@ -26,9 +26,9 @@ services:
       test:
         [
           "CMD",
-          "node",
+          "bun",
           "-e",
-          "const http=require('node:http');const req=http.get('http://127.0.0.1:8787/',(res)=>process.exit(res.statusCode===200?0:1));req.on('error',()=>process.exit(1));",
+          "import { get } from 'node:http'; const req = get('http://127.0.0.1:8787/', (res) => process.exit(res.statusCode === 200 ? 0 : 1)); req.on('error', () => process.exit(1));",
         ]
       interval: 30s
       timeout: 5s
@@ -62,17 +62,17 @@ services:
       - /bin/sh
       - -ec
       - |
-        node -e "const http=require('node:http');const host=process.env.UMS_API_HOST||'api';const port=Number(process.env.UMS_API_PORT||8787);const path=process.env.UMS_API_HEALTH_PATH||'/';const timeoutMs=Number(process.env.UMS_API_READY_TIMEOUT_MS||90000);const started=Date.now();const sleep=(ms)=>new Promise((resolve)=>setTimeout(resolve,ms));(async()=>{for(;;){const ready=await new Promise((resolve)=>{const req=http.get({host,port,path},(res)=>{res.resume();resolve(res.statusCode===200);});req.on('error',()=>resolve(false));});if(ready){break;}if(Date.now()-started>timeoutMs){console.error('worker startup timed out waiting for api readiness');process.exit(1);}await sleep(1000);}})().catch(()=>process.exit(1));"
-        exec node --import tsx apps/ums/src/index.ts worker
+        bun -e "import { get } from 'node:http'; const host = process.env.UMS_API_HOST ?? 'api'; const port = Number(process.env.UMS_API_PORT ?? 8787); const path = process.env.UMS_API_HEALTH_PATH ?? '/'; const timeoutMs = Number(process.env.UMS_API_READY_TIMEOUT_MS ?? 90000); const started = Date.now(); const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)); const isReady = () => new Promise((resolve) => { const req = get({ host, port, path }, (res) => { res.resume(); resolve(res.statusCode === 200); }); req.on('error', () => resolve(false)); }); const main = async () => { for (;;) { if (await isReady()) { return; } if (Date.now() - started > timeoutMs) { console.error('worker startup timed out waiting for api readiness'); process.exit(1); } await sleep(1000); } }; await main();"
+        exec bun apps/ums/src/index.ts worker
     volumes:
       - ums_shared_state:/var/lib/ums
     healthcheck:
       test:
         [
           "CMD",
-          "node",
+          "bun",
           "-e",
-          "const fs=require('node:fs');const hasWorkerProcess=fs.readdirSync('/proc').filter((entry)=>/^\\d+$/.test(entry)).some((pid)=>{try{const cmdline=fs.readFileSync('/proc/'+pid+'/cmdline','utf8');return cmdline.includes('apps/ums/src/index.ts')&&cmdline.includes('worker');}catch{return false;}});if(!hasWorkerProcess){process.exit(1);}fs.accessSync('/var/lib/ums',fs.constants.R_OK|fs.constants.W_OK);",
+          "import { accessSync, constants, readFileSync, readdirSync } from 'node:fs'; const hasWorkerProcess = readdirSync('/proc').filter((entry) => /^\\d+$/.test(entry)).some((pid) => { try { const cmdline = readFileSync(`/proc/${pid}/cmdline`, 'utf8'); return cmdline.includes('apps/ums/src/index.ts') && cmdline.includes('worker'); } catch { return false; } }); if (!hasWorkerProcess) { process.exit(1); } accessSync('/var/lib/ums', constants.R_OK | constants.W_OK);",
         ]
       interval: 30s
       timeout: 5s

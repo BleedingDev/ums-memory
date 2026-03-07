@@ -96,7 +96,7 @@ const printUsage = (): void => {
   process.stdout.write(
     [
       "Usage:",
-      "  node --import tsx scripts/validate-provenance-health.ts --db <sqlite-file> [--json]",
+      "  bun scripts/validate-provenance-health.ts --db <sqlite-file> [--json]",
       "",
       "Options:",
       "  --critical-missing-provenance-links <N>   Critical threshold override.",

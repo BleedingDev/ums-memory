@@ -1,0 +1,44 @@
+{
+  "schemaVersion": "storage_parity_fixture.v1",
+  "fixtureId": "basic-roundtrip",
+  "description": "Baseline storage parity across upsert, delete, and snapshot roundtrip operations.",
+  "request": {
+    "suiteId": "basic-roundtrip",
+    "storeId": "tenant-storage-parity",
+    "operations": [
+      {
+        "kind": "upsert",
+        "label": "seed working memory",
+        "request": {
+          "spaceId": "tenant-storage-parity",
+          "memoryId": "memory-a",
+          "layer": "working",
+          "payload": {
+            "title": "Working memory seed",
+            "updatedAtMillis": 1700000000100
+          },
+          "idempotencyKey": "upsert-a"
+        }
+      },
+      {
+        "kind": "delete",
+        "label": "delete missing memory stays deterministic",
+        "request": {
+          "spaceId": "tenant-storage-parity",
+          "memoryId": "memory-missing",
+          "idempotencyKey": "delete-missing"
+        }
+      },
+      {
+        "kind": "snapshot_roundtrip",
+        "label": "roundtrip exported snapshot state"
+      }
+    ]
+  },
+  "expect": {
+    "ok": true,
+    "mismatchCount": 0,
+    "waivedMismatchCount": 0,
+    "mismatchReasonCodes": []
+  }
+}

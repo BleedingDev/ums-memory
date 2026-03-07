@@ -1,0 +1,78 @@
+{
+  "schemaVersion": "grounded_holdout_case.v1",
+  "caseId": "holdout-isolation-policy",
+  "usage": {
+    "split": "holdout",
+    "tuningAllowed": false,
+    "ownerBeadId": "ums-memory-jny.3"
+  },
+  "objective": "grounded_recall_citation_integrity",
+  "description": "Holdout governance should recall both the isolation rule and the explicit tuning ban.",
+  "seed": "grounded-holdout-isolation",
+  "request": {
+    "storeId": "eval-grounded",
+    "space": "policy",
+    "query": "How should we stop the grounded holdout dataset from leaking into tuning?",
+    "maxItems": 4,
+    "tokenBudget": 220
+  },
+  "dataset": {
+    "events": [
+      {
+        "id": "memory-holdout-isolation",
+        "storeId": "eval-grounded",
+        "space": "policy",
+        "source": "policy",
+        "timestamp": "2026-03-02T10:00:00.000Z",
+        "content": "Mark every grounded holdout fixture as holdout-only and keep tuning prompts isolated from the evaluation corpus.",
+        "tags": ["holdout", "policy"],
+        "metadata": {
+          "role": "assistant",
+          "conversationId": "holdout-policy-1"
+        }
+      },
+      {
+        "id": "memory-tuning-ban",
+        "storeId": "eval-grounded",
+        "space": "policy",
+        "source": "policy",
+        "timestamp": "2026-03-02T10:01:00.000Z",
+        "content": "Set tuningAllowed to false for every holdout case so regression runners reject training reuse immediately.",
+        "tags": ["holdout", "policy"],
+        "metadata": {
+          "role": "assistant",
+          "conversationId": "holdout-policy-1"
+        }
+      },
+      {
+        "id": "memory-focused-gates",
+        "storeId": "eval-grounded",
+        "space": "policy",
+        "source": "notes",
+        "timestamp": "2026-03-02T10:03:00.000Z",
+        "content": "Run focused Bun checks before landing evaluation changes.",
+        "tags": ["quality", "bun"],
+        "metadata": {
+          "role": "assistant",
+          "conversationId": "holdout-policy-1"
+        }
+      }
+    ]
+  },
+  "expect": {
+    "citations": [
+      {
+        "memoryId": "memory-holdout-isolation",
+        "source": "policy",
+        "quote": "grounded holdout fixture as holdout-only"
+      },
+      {
+        "memoryId": "memory-tuning-ban",
+        "source": "policy",
+        "quote": "tuningAllowed to false for every holdout case"
+      }
+    ],
+    "minRecallRate": 1,
+    "minCitationIntegrityRate": 1
+  }
+}

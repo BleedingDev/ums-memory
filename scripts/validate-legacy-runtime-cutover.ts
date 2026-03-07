@@ -393,7 +393,7 @@ function printUsage() {
   process.stdout.write(
     [
       "Usage:",
-      "  node --import tsx scripts/validate-legacy-runtime-cutover.ts [--project-root <path>] [--inventory <path>] [--json]",
+      "  bun scripts/validate-legacy-runtime-cutover.ts [--project-root <path>] [--inventory <path>] [--json]",
       "",
       "Options:",
       "  --project-root   Repository root to scan (default: current working directory).",

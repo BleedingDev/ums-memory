@@ -97,6 +97,27 @@ docker compose -p "$PROJECT" -f deploy/compose.yml logs --tail=100 api worker
 
 3. If validation fails, restore the backup and redeploy the last known-good revision.
 
+## Postgres Cutover and Rollback Evidence
+
+Before enabling Postgres cutover or ending the rollback window, operators must verify all of the following:
+
+1. The current release candidate has a green parity artifact from `bun scripts/eval-storage-parity.ts --json`.
+2. Shadow dual-run telemetry from `/v1/storage_dualrun` is green for the candidate tenant/store sample and keeps `requestDigest` plus `observability.tracePayload.storeId`.
+3. A staging-like drill run exists under `artifacts/dr-drills/<DRILL_ID>/` with:
+   - `manifest.json` showing `status = "pass"` and `failureGate = "none"`
+   - `checksums.txt`
+   - `compose-ps.txt`
+   - `compose-logs-api-worker.txt`
+4. A rollback rehearsal bundle exists for the same release candidate. It must contain:
+   - `rollback-redeploy-check.txt` listing the candidate SHA, fallback SHA, and restored backup basename
+   - `rollback-api-root.json`
+   - `rollback-metrics.prom`
+   - `rollback-compose-ps.txt`
+   - `rollback-compose-logs-api-worker.txt`
+   - evidence that the prior revision was redeployed with `docker compose ... up --build -d --remove-orphans` after checkout
+
+If any item above is missing, rollback remains the default path and Postgres must not become the irreversible primary backend.
+
 ## Backup Procedure
 
 Use this for staging or production by setting `PROJECT`:

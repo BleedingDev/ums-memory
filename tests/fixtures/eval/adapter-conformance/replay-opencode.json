@@ -1,0 +1,52 @@
+{
+  "schemaVersion": "adapter_conformance_fixture.v1",
+  "id": "replay-opencode",
+  "description": "OpenCode envelopes retain assistant and tool evidence ordering.",
+  "kind": "replay",
+  "adapter": "opencode",
+  "replayCount": 3,
+  "input": {
+    "tenantId": "tenant-conformance",
+    "spaceId": "workspace-opencode",
+    "source": "opencode",
+    "sessionId": "session-opencode",
+    "runId": "run-opencode",
+    "batchId": "batch-opencode",
+    "startedAt": "2026-03-04T13:00:00.000Z",
+    "messages": [
+      {
+        "eventId": "event-opencode-1",
+        "messageId": "message-opencode-1",
+        "role": "user",
+        "content": "Verify replay gating before promote.",
+        "createdAt": "2026-03-04T13:00:00.000Z",
+        "citations": []
+      },
+      {
+        "eventId": "event-opencode-2",
+        "messageId": "message-opencode-2",
+        "role": "assistant",
+        "content": "Replay gate looks healthy.",
+        "createdAt": "2026-03-04T13:00:30.000Z",
+        "citations": []
+      },
+      {
+        "eventId": "event-opencode-3",
+        "messageId": "message-opencode-3",
+        "role": "tool",
+        "content": "Attached prior evidence pointers.",
+        "createdAt": "2026-03-04T13:00:45.000Z",
+        "citations": ["evidence-opencode-1", "evidence-opencode-2"]
+      }
+    ]
+  },
+  "expected": {
+    "tenantId": "tenant-conformance",
+    "spaceId": "workspace-opencode",
+    "source": "opencode",
+    "sessionId": "session-opencode",
+    "messageCount": 3,
+    "roles": ["user", "assistant", "tool"],
+    "citationCounts": [0, 0, 2]
+  }
+}

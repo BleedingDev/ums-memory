@@ -24,10 +24,11 @@
 
 ## Runtime/Test/Script Entrypoints
 
-- Runtime entrypoints (package scripts): `api -> apps/api/src/server.mjs`, `cli -> apps/cli/src/index.mjs`, `ums -> apps/ums/src/index.mjs`, `bench:api -> apps/api/bench/benchmark.mjs`, `bench:ums -> benchmarks/ums-latency-benchmark.mjs`.
+- Runtime entrypoints (package scripts): `api -> apps/api/src/server.ts`, `cli -> apps/cli/src/index.ts`, `ums -> apps/ums/src/index.ts`, `bench:api -> apps/api/bench/benchmark.ts`, `bench:ums -> benchmarks/ums-latency-benchmark.ts`.
 - Test entrypoints:
   - Root: `test:api`, `test:sfe`, `test:ums`.
   - Shared package: `libs/shared/package.json -> test`.
+- Test runner policy: repository tests execute through `bun test`; Effect-oriented tests import `@effect-native/bun-test`.
 - Script-file entrypoints invoked directly: `apps/api/bench/benchmark.mjs`, `benchmarks/ums-latency-benchmark.mjs`, `scripts/build-sfe-matrix.mjs`, `scripts/ingest-coding-history.mjs`, `scripts/validate-ingestion.mjs`.
 - Root package scripts total: 24 (full sorted map captured in JSON), including benchmark wrappers (`bench`, `bench:api`, `bench:ums`).
 
@@ -74,6 +75,6 @@
 - Mixed module extensions across runtime surface: app/runtime code is mostly `.mjs`, shared core is `.js`.
 - `libs/shared/package.json` test glob points to `./tests/**/*.test.js`, but there is no tracked `libs/shared/tests` directory.
 - Binary build outputs come from two patterns (direct `dist/*` and matrix `dist/<target>/*`), increasing path variance.
-- `test:ums` and `bench:ums` depend on `UMS_IMPL_MODULE` and `UMS_IMPL_EXPORT` env wiring.
+- `test:ums` and `bench:ums` depend on `UMS_IMPL_MODULE` and `UMS_IMPL_EXPORT` env wiring under Bun.
 - `scripts/ingest-coding-history.mjs` and `scripts/validate-ingestion.mjs` import API internals directly.
 - Current `dist` contains only matrix-style single-app executables (`ums`, `ums.exe`) plus sourcemaps, not all direct build outputs.

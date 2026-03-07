@@ -133,6 +133,7 @@ const transpileManifest = Object.freeze([
   "contracts/ids.ts",
   "contracts/domains.ts",
   "contracts/services.ts",
+  "contracts/validators.ts",
   "contracts/index.ts",
   "errors.ts",
   "services/runtime-persistence-service.ts",
@@ -144,6 +145,10 @@ const transpileManifest = Object.freeze([
   "storage/sqlite/snapshot-codec.ts",
   "storage/sqlite/storage-repository.ts",
   "storage/sqlite/index.ts",
+  "storage/postgres/schema.ts",
+  "storage/postgres/migrations.ts",
+  "storage/postgres/storage-repository.ts",
+  "storage/postgres/index.ts",
   "services/storage-service.ts",
 ]);
 

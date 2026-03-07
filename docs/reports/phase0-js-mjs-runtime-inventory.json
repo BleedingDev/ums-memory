@@ -126,49 +126,49 @@
     "packagesScanned": ["libs/shared/package.json", "package.json"],
     "runtimeEntrypoints": [
       {
-        "command": "node apps/api/src/server.mjs",
+        "command": "bun apps/api/src/server.ts",
         "package": "package.json",
         "script": "api"
       },
       {
-        "command": "node apps/api/bench/benchmark.mjs",
+        "command": "bun apps/api/bench/benchmark.ts",
         "package": "package.json",
         "script": "bench:api"
       },
       {
-        "command": "UMS_IMPL_MODULE=./apps/api/src/ums/engine.mjs UMS_IMPL_EXPORT=createUmsEngine node benchmarks/ums-latency-benchmark.mjs",
+        "command": "UMS_IMPL_MODULE=./apps/api/src/ums/engine.ts UMS_IMPL_EXPORT=createUmsEngine bun benchmarks/ums-latency-benchmark.ts",
         "package": "package.json",
         "script": "bench:ums"
       },
       {
-        "command": "node apps/cli/src/index.mjs",
+        "command": "bun apps/cli/src/index.ts",
         "package": "package.json",
         "script": "cli"
       },
       {
-        "command": "node apps/ums/src/index.mjs",
+        "command": "bun apps/ums/src/index.ts",
         "package": "package.json",
         "script": "ums"
       }
     ],
     "testEntrypoints": [
       {
-        "command": "node --test apps/api/test/*.test.mjs apps/cli/test/*.test.mjs",
+        "command": "bun test apps/api/test/*.test.ts apps/cli/test/*.test.ts",
         "package": "package.json",
         "script": "test:api"
       },
       {
-        "command": "node --test apps/cli/test/cli.sfe.test.mjs apps/api/test/server.sfe.test.mjs apps/cli/test/single.sfe.test.mjs",
+        "command": "bun test apps/cli/test/cli.sfe.test.ts apps/api/test/server.sfe.test.ts apps/cli/test/single.sfe.test.ts",
         "package": "package.json",
         "script": "test:sfe"
       },
       {
-        "command": "UMS_IMPL_MODULE=./apps/api/src/ums/engine.mjs UMS_IMPL_EXPORT=createUmsEngine node --test tests/unit/*.test.mjs tests/integration/*.test.mjs",
+        "command": "UMS_IMPL_MODULE=./apps/api/src/ums/engine.ts UMS_IMPL_EXPORT=createUmsEngine bun test tests/unit/*.test.ts tests/integration/*.test.ts",
         "package": "package.json",
         "script": "test:ums"
       },
       {
-        "command": "node --test ./tests/**/*.test.js",
+        "command": "bun test ./src/**/*.test.ts",
         "package": "libs/shared/package.json",
         "script": "test"
       }
@@ -237,33 +237,33 @@
     ],
     "allPackageScripts": {
       "libs/shared/package.json": {
-        "test": "node --test ./tests/**/*.test.js"
+        "test": "bun test ./src/**/*.test.ts"
       },
       "package.json": {
-        "api": "node apps/api/src/server.mjs",
+        "api": "bun apps/api/src/server.ts",
         "bench": "bun run bench:api && bun run bench:ums",
-        "bench:api": "node apps/api/bench/benchmark.mjs",
-        "bench:ums": "UMS_IMPL_MODULE=./apps/api/src/ums/engine.mjs UMS_IMPL_EXPORT=createUmsEngine node benchmarks/ums-latency-benchmark.mjs",
+        "bench:api": "bun apps/api/bench/benchmark.ts",
+        "bench:ums": "UMS_IMPL_MODULE=./apps/api/src/ums/engine.ts UMS_IMPL_EXPORT=createUmsEngine bun benchmarks/ums-latency-benchmark.ts",
         "build:sfe": "bun run build:sfe:single",
-        "build:sfe:api": "node -e \"require('node:fs').mkdirSync('dist',{recursive:true})\" && bun build --compile --minify --sourcemap --bytecode apps/api/src/server.mjs --outfile dist/ums-api",
-        "build:sfe:api:linux-x64": "node scripts/build-sfe-matrix.mjs --targets bun-linux-x64 --apps api",
-        "build:sfe:api:windows-x64": "node scripts/build-sfe-matrix.mjs --targets bun-windows-x64 --apps api",
-        "build:sfe:cli": "node -e \"require('node:fs').mkdirSync('dist',{recursive:true})\" && bun build --compile --minify --sourcemap --bytecode apps/cli/src/index.mjs --outfile dist/ums-cli",
-        "build:sfe:cli:linux-x64": "node scripts/build-sfe-matrix.mjs --targets bun-linux-x64 --apps cli",
-        "build:sfe:cli:windows-x64": "node scripts/build-sfe-matrix.mjs --targets bun-windows-x64 --apps cli",
-        "build:sfe:linux-x64": "node scripts/build-sfe-matrix.mjs --targets bun-linux-x64",
-        "build:sfe:matrix": "node scripts/build-sfe-matrix.mjs",
-        "build:sfe:matrix:split": "node scripts/build-sfe-matrix.mjs --apps cli,api",
-        "build:sfe:single": "node -e \"require('node:fs').mkdirSync('dist',{recursive:true})\" && bun build --compile --minify --sourcemap --bytecode apps/ums/src/index.mjs --outfile dist/ums",
-        "build:sfe:windows-x64": "node scripts/build-sfe-matrix.mjs --targets bun-windows-x64",
-        "cli": "node apps/cli/src/index.mjs",
-        "ingest:coding-history": "node scripts/ingest-coding-history.mjs",
+        "build:sfe:api": "bun -e \"import { mkdirSync } from 'node:fs'; mkdirSync('dist',{recursive:true});\" && bun build --compile --format esm --minify --sourcemap --bytecode apps/api/src/server.ts --outfile dist/ums-api",
+        "build:sfe:api:linux-x64": "bun scripts/build-sfe-matrix.ts --targets bun-linux-x64 --apps api",
+        "build:sfe:api:windows-x64": "bun scripts/build-sfe-matrix.ts --targets bun-windows-x64 --apps api",
+        "build:sfe:cli": "bun -e \"import { mkdirSync } from 'node:fs'; mkdirSync('dist',{recursive:true});\" && bun build --compile --format esm --minify --sourcemap --bytecode apps/cli/src/index.ts --outfile dist/ums-cli",
+        "build:sfe:cli:linux-x64": "bun scripts/build-sfe-matrix.ts --targets bun-linux-x64 --apps cli",
+        "build:sfe:cli:windows-x64": "bun scripts/build-sfe-matrix.ts --targets bun-windows-x64 --apps cli",
+        "build:sfe:linux-x64": "bun scripts/build-sfe-matrix.ts --targets bun-linux-x64",
+        "build:sfe:matrix": "bun scripts/build-sfe-matrix.ts",
+        "build:sfe:matrix:split": "bun scripts/build-sfe-matrix.ts --apps cli,api",
+        "build:sfe:single": "bun -e \"import { mkdirSync } from 'node:fs'; mkdirSync('dist',{recursive:true});\" && bun build --compile --format esm --minify --sourcemap --bytecode apps/ums/src/index.ts --outfile dist/ums",
+        "build:sfe:windows-x64": "bun scripts/build-sfe-matrix.ts --targets bun-windows-x64",
+        "cli": "bun apps/cli/src/index.ts",
+        "ingest:coding-history": "bun scripts/ingest-coding-history.ts",
         "test": "bun run test:api && bun run test:ums",
-        "test:api": "node --test apps/api/test/*.test.mjs apps/cli/test/*.test.mjs",
-        "test:sfe": "node --test apps/cli/test/cli.sfe.test.mjs apps/api/test/server.sfe.test.mjs apps/cli/test/single.sfe.test.mjs",
-        "test:ums": "UMS_IMPL_MODULE=./apps/api/src/ums/engine.mjs UMS_IMPL_EXPORT=createUmsEngine node --test tests/unit/*.test.mjs tests/integration/*.test.mjs",
-        "ums": "node apps/ums/src/index.mjs",
-        "validate:ingestion": "node scripts/validate-ingestion.mjs"
+        "test:api": "bun test apps/api/test/*.test.ts apps/cli/test/*.test.ts",
+        "test:sfe": "bun test apps/cli/test/cli.sfe.test.ts apps/api/test/server.sfe.test.ts apps/cli/test/single.sfe.test.ts",
+        "test:ums": "UMS_IMPL_MODULE=./apps/api/src/ums/engine.ts UMS_IMPL_EXPORT=createUmsEngine bun test tests/unit/*.test.ts tests/integration/*.test.ts",
+        "ums": "bun apps/ums/src/index.ts",
+        "validate:ingestion": "bun scripts/validate-ingestion.ts"
       }
     }
   },

@@ -14,6 +14,11 @@ import {
   ContractValidationError,
   type StorageServiceError,
 } from "../errors.js";
+import {
+  makePostgresStorageRepository,
+  type PostgresStorageRepositoryDriver,
+  type PostgresStorageRepositoryOptions,
+} from "../storage/postgres/index.js";
 import type { DatabaseSync } from "../storage/sqlite/database.ts";
 import {
   makeSqliteStorageRepository,
@@ -108,7 +113,8 @@ export const makeStorageServiceFromRepository = (
 });
 
 // Unsafe synchronous constructor; prefer makeSqliteStorageServiceEffect/makeSqliteStorageLayer
-// for typed initialization failures in the Effect error channel.
+// or makePostgresStorageServiceEffect/makePostgresStorageLayer for typed
+// initialization failures in the Effect error channel.
 export const makeSqliteStorageService = (
   database: DatabaseSync,
   options: SqliteStorageRepositoryOptions = {}
@@ -117,22 +123,30 @@ export const makeSqliteStorageService = (
     makeSqliteStorageRepository(database, options)
   );
 
-const toStorageInitializationError = (
-  cause: unknown
-): ContractValidationError => {
-  if (cause instanceof ContractValidationError) {
-    return cause;
-  }
+export const makePostgresStorageService = (
+  driver: PostgresStorageRepositoryDriver,
+  options: PostgresStorageRepositoryOptions = {}
+): StorageService =>
+  makeStorageServiceFromRepository(
+    makePostgresStorageRepository(driver, options)
+  );
 
-  return new ContractValidationError({
-    contract: "StorageServiceInitialization",
-    message: "Failed to initialize SQLite storage service",
-    details:
-      cause instanceof Error
-        ? cause.message
-        : `Unknown initialization failure: ${String(cause)}`,
-  });
-};
+const toStorageInitializationError =
+  (backendName: "SQLite" | "Postgres") =>
+  (cause: unknown): ContractValidationError => {
+    if (cause instanceof ContractValidationError) {
+      return cause;
+    }
+
+    return new ContractValidationError({
+      contract: "StorageServiceInitialization",
+      message: `Failed to initialize ${backendName} storage service`,
+      details:
+        cause instanceof Error
+          ? cause.message
+          : `Unknown initialization failure: ${String(cause)}`,
+    });
+  };
 
 export const makeSqliteStorageServiceEffect = (
   database: DatabaseSync,
@@ -140,7 +154,16 @@ export const makeSqliteStorageServiceEffect = (
 ): Effect.Effect<StorageService, StorageServiceError> =>
   Effect.try({
     try: () => makeSqliteStorageService(database, options),
-    catch: toStorageInitializationError,
+    catch: toStorageInitializationError("SQLite"),
+  });
+
+export const makePostgresStorageServiceEffect = (
+  driver: PostgresStorageRepositoryDriver,
+  options: PostgresStorageRepositoryOptions = {}
+): Effect.Effect<StorageService, StorageServiceError> =>
+  Effect.try({
+    try: () => makePostgresStorageService(driver, options),
+    catch: toStorageInitializationError("Postgres"),
   });
 
 export const noopStorageLayer: Layer.Layer<StorageService> = Layer.succeed(
@@ -155,6 +178,15 @@ export const makeSqliteStorageLayer = (
   Layer.effect(
     StorageServiceTag,
     makeSqliteStorageServiceEffect(database, options)
+  );
+
+export const makePostgresStorageLayer = (
+  driver: PostgresStorageRepositoryDriver,
+  options: PostgresStorageRepositoryOptions = {}
+): Layer.Layer<StorageService, StorageServiceError> =>
+  Layer.effect(
+    StorageServiceTag,
+    makePostgresStorageServiceEffect(driver, options)
   );
 
 export const deterministicTestStorageLayer: Layer.Layer<StorageService> =

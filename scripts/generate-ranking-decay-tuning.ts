@@ -1428,7 +1428,7 @@ function printUsage() {
   process.stdout.write(
     [
       "Usage:",
-      "  node --import tsx scripts/generate-ranking-decay-tuning.ts --input <summary.json> [--input <summary.json> ...]",
+      "  bun scripts/generate-ranking-decay-tuning.ts --input <summary.json> [--input <summary.json> ...]",
       "    [--dashboard <dashboard.json>] [--feedback <feedback.ndjson>] [--output <path>] [--compact]",
       "",
       "Notes:",
@@ -1437,7 +1437,7 @@ function printUsage() {
       "  - --feedback accepts optional NDJSON feedback files (repeatable).",
       "",
       "Example:",
-      "  node --import tsx scripts/generate-ranking-decay-tuning.ts --input docs/reports/pilot-rollout/final-summary.json \\",
+      "  bun scripts/generate-ranking-decay-tuning.ts --input docs/reports/pilot-rollout/final-summary.json \\",
       "    --dashboard docs/reports/pilot-rollout/kpi-dashboard.json \\",
       "    --feedback ops/pilot-rollout/pilot-alpha/feedback.ndjson --compact",
     ].join("\n") + "\n"

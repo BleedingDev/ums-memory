@@ -161,10 +161,19 @@ export const StorageDeleteResponseSchema = Schema.Struct({
 export const StorageSnapshotSignatureAlgorithmSchema =
   Schema.Literal("hmac-sha256");
 
-export const StorageSnapshotExportRequestSchema = Schema.Struct({
+const StorageSnapshotSigningSecretAliasCamelCaseSchema = Schema.Struct({
   signatureSecret: Schema.String,
   signature_secret: Schema.optional(Schema.String),
 });
+const StorageSnapshotSigningSecretAliasSnakeCaseSchema = Schema.Struct({
+  signatureSecret: Schema.optional(Schema.String),
+  signature_secret: Schema.String,
+});
+
+export const StorageSnapshotExportRequestSchema = Schema.Union([
+  StorageSnapshotSigningSecretAliasCamelCaseSchema,
+  StorageSnapshotSigningSecretAliasSnakeCaseSchema,
+]);
 
 export const StorageSnapshotExportResponseSchema = Schema.Struct({
   signatureAlgorithm: StorageSnapshotSignatureAlgorithmSchema,
@@ -174,13 +183,22 @@ export const StorageSnapshotExportResponseSchema = Schema.Struct({
   rowCount: NonNegativeIntSchema,
 });
 
-export const StorageSnapshotImportRequestSchema = Schema.Struct({
-  signatureSecret: Schema.String,
-  signature_secret: Schema.optional(Schema.String),
-  signatureAlgorithm: StorageSnapshotSignatureAlgorithmSchema,
-  payload: Schema.String,
-  signature: Sha256HexSchema,
-});
+export const StorageSnapshotImportRequestSchema = Schema.Union([
+  Schema.Struct({
+    signatureSecret: Schema.String,
+    signature_secret: Schema.optional(Schema.String),
+    signatureAlgorithm: StorageSnapshotSignatureAlgorithmSchema,
+    payload: Schema.String,
+    signature: Sha256HexSchema,
+  }),
+  Schema.Struct({
+    signatureSecret: Schema.optional(Schema.String),
+    signature_secret: Schema.String,
+    signatureAlgorithm: StorageSnapshotSignatureAlgorithmSchema,
+    payload: Schema.String,
+    signature: Sha256HexSchema,
+  }),
+]);
 
 export const StorageSnapshotImportResponseSchema = Schema.Struct({
   imported: Schema.Boolean,

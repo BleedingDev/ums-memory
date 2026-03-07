@@ -2,6 +2,11 @@ import { createHash, createHmac } from "node:crypto";
 
 import { Effect } from "effect";
 
+import { buildContextPack } from "./ace/context-pack.ts";
+import { selectCurationCandidates } from "./ace/curation-tiebreaks.ts";
+import { buildReflectedCandidates } from "./ace/reflector.ts";
+import { buildCandidateValidations } from "./ace/validator.ts";
+
 const OPS = [
   "ingest",
   "context",
@@ -117,6 +122,8 @@ const MANUAL_OVERRIDE_ACTOR_CONTRACT_ERROR =
   "VALIDATION_CONTRACT_VIOLATION: manual_quarantine_override requires actor.";
 const GUARDED_CURATION_EVIDENCE_CONTRACT_ERROR =
   "VALIDATION_CONTRACT_VIOLATION: curate_guarded candidate promotion requires evidence-backed validation.";
+const GUARDED_CURATION_REQUIRED_ERROR =
+  "VALIDATION_CONTRACT_VIOLATION: active procedural mutations must use curate_guarded.";
 const RECALL_AUTHORIZATION_REQUESTER_ERROR =
   "VALIDATION_CONTRACT_VIOLATION: recall_authorization requires requesterStoreId for cross-space checks.";
 const CROSS_SPACE_ALLOWLIST_DENY_ERROR =
@@ -2557,6 +2564,11 @@ function normalizeEvent(raw: any, index: any) {
     type: event.type ?? "note",
     source: event.source ?? "unknown",
     content: event.content ?? "",
+    timestamp: normalizeIsoTimestamp(
+      event.timestamp ?? event.occurredAt,
+      `ingest.events[].timestamp`,
+      DEFAULT_VERSION_TIMESTAMP
+    ),
     dedupeDigest,
     digest,
   };
@@ -2570,12 +2582,29 @@ function normalizeRuleCandidate(raw: any) {
     typeof candidate.sourceEventId === "string"
       ? candidate.sourceEventId
       : "unknown";
-  const material = stableStringify({ statement, source });
-  const digest = hash(material);
+  const sourceEventIds = mergeStringLists(candidate.sourceEventIds, [source]);
+  const evidenceEventIds = mergeStringLists(
+    candidate.evidenceEventIds,
+    sourceEventIds
+  );
+  const contradictionEventIds = mergeStringLists(
+    candidate.contradictionEventIds,
+    []
+  );
+  const scope = normalizeBoundedStringLenient(candidate.scope, 64) ?? "global";
+  const candidateDigest = hash(stableStringify({ statement, source }));
+  const ruleDigest = hash(stableStringify({ statement, scope, source }));
   return {
-    candidateId: makeId("cand", digest),
+    candidateId: makeId("cand", candidateDigest),
+    ruleId:
+      normalizeBoundedStringLenient(candidate.ruleId, 64) ??
+      makeId("rule", ruleDigest),
     statement,
     sourceEventId: source,
+    sourceEventIds,
+    evidenceEventIds,
+    contradictionEventIds,
+    scope,
     confidence: Number.isFinite(candidate.confidence)
       ? Number(candidate.confidence)
       : 0.5,
@@ -5321,33 +5350,6 @@ function runContext(request: any) {
     ),
     MAX_LIST_ITEMS
   );
-
-  const matched = state.events
-    .map((event: any) => {
-      const content =
-        `${event.type} ${event.source} ${event.content}`.toLowerCase();
-      const match = query ? content.includes(query) : true;
-      return { event, match };
-    })
-    .filter((item: any) => item.match)
-    .slice(0, limit)
-    .map((item: any) => {
-      const usageSeed = hash(
-        stableStringify({
-          packId,
-          eventId: item.event.eventId,
-          digest: item.event.digest,
-        })
-      );
-      return {
-        eventId: item.event.eventId,
-        usageId: makeId("usage", usageSeed),
-        type: item.event.type,
-        source: item.event.source,
-        excerpt: item.event.content.slice(0, 180),
-        digest: item.event.digest,
-      };
-    });
   const chronologyHistory = Array.isArray(state.misconceptionChronologyHistory)
     ? sortByTimestampAndId(
         state.misconceptionChronologyHistory,
@@ -5355,58 +5357,6 @@ function runContext(request: any) {
         "noteId"
       )
     : [];
-  const scoredChronology = chronologyHistory.map((note: any) => {
-    const searchable =
-      `${note.misconceptionKey ?? ""} ${(note.changedFields ?? []).join(" ")}`.toLowerCase();
-    const relevance =
-      (query && searchable.includes(query) ? 60 : 0) +
-      ((note.changedFields ?? []).includes("harmfulSignalCount") ? 20 : 0) +
-      ((note.changedFields ?? []).includes("status") ? 15 : 0) +
-      ((note.changedFields ?? []).includes("confidence") ? 10 : 0);
-    return {
-      note,
-      relevance,
-    };
-  });
-  const prioritizedChronology = scoredChronology
-    .sort((left: any, right: any) => {
-      if (right.relevance !== left.relevance) {
-        return right.relevance - left.relevance;
-      }
-      const recency = String(right.note?.timestamp ?? "").localeCompare(
-        String(left.note?.timestamp ?? "")
-      );
-      if (recency !== 0) {
-        return recency;
-      }
-      return String(left.note?.noteId ?? "").localeCompare(
-        String(right.note?.noteId ?? "")
-      );
-    })
-    .slice(0, chronologyLimit)
-    .map((entry: any) => ({
-      noteId: entry.note.noteId,
-      misconceptionId: entry.note.misconceptionId,
-      misconceptionKey: entry.note.misconceptionKey,
-      profileId: entry.note.profileId,
-      timestamp: entry.note.timestamp,
-      changedFields: entry.note.changedFields,
-      previousDigest: entry.note.previousDigest,
-      nextDigest: entry.note.nextDigest,
-      confidence: entry.note.confidence,
-      harmfulSignalCount: entry.note.harmfulSignalCount,
-      evidenceEventIds: entry.note.evidenceEventIds,
-      relevance: entry.relevance,
-    }));
-  const orderedChronology = sortByTimestampAndId(
-    prioritizedChronology,
-    "timestamp",
-    "noteId"
-  );
-  const chronologyFormatting = orderedChronology.map(
-    (note: any, index: any) =>
-      `${index + 1}. ${note.timestamp} ${note.misconceptionKey} -> ${note.changedFields.join("|")}`
-  );
   const attributionRankingRequested =
     request.enableAttributionRanking === true ||
     request.attributionRanking === true ||
@@ -5547,6 +5497,42 @@ function runContext(request: any) {
     }
   }
 
+  const contextPack = buildContextPack({
+    query,
+    limit,
+    chronologyLimit,
+    events: state.events.map((event: any) => ({
+      eventId: event.eventId,
+      type: event.type,
+      source: event.source,
+      content: event.content,
+      digest: event.digest,
+    })),
+    chronologyHistory: chronologyHistory.map((note: any) => ({
+      noteId: note.noteId,
+      misconceptionId: note.misconceptionId,
+      misconceptionKey: note.misconceptionKey,
+      profileId: note.profileId,
+      timestamp: note.timestamp,
+      changedFields: note.changedFields,
+      previousDigest: note.previousDigest,
+      nextDigest: note.nextDigest,
+      confidence: note.confidence,
+      harmfulSignalCount: note.harmfulSignalCount,
+      evidenceEventIds: note.evidenceEventIds,
+    })),
+    makeUsageId: (event) => {
+      const usageSeed = hash(
+        stableStringify({
+          packId,
+          eventId: event.eventId,
+          digest: event.digest,
+        })
+      );
+      return makeId("usage", usageSeed);
+    },
+  });
+
   return {
     ...meta,
     packId,
@@ -5559,7 +5545,7 @@ function runContext(request: any) {
           policyAuditEventId: recallAuthorization.policyAuditEventId,
         }
       : null,
-    matches: matched,
+    matches: contextPack.matches,
     rules: rankedRules.slice(0, 5).map((rule: any) => {
       const baseRule = {
         ruleId: rule.ruleId,
@@ -5582,17 +5568,7 @@ function runContext(request: any) {
         },
       };
     }),
-    misconceptionChronology: {
-      bounded: orderedChronology.length <= chronologyLimit,
-      deterministicFormatting: true,
-      prioritization: query
-        ? "query_relevance_then_recency_then_noteId"
-        : "severity_then_recency_then_noteId",
-      limit: chronologyLimit,
-      totalAvailable: chronologyHistory.length,
-      notes: orderedChronology,
-      formatting: chronologyFormatting,
-    },
+    misconceptionChronology: contextPack.misconceptionChronology,
     observability: {
       attributionRanking: attributionRankingObservability,
     },
@@ -5606,14 +5582,10 @@ function runReflect(request: any) {
     Number.isInteger(request.maxCandidates) && request.maxCandidates > 0
       ? request.maxCandidates
       : 3;
-  const candidates = state.events.slice(-max).map((event: any) => {
-    const statement = `Prefer source=${event.source} for type=${event.type}`;
-    const normalized = normalizeRuleCandidate({
-      statement,
-      sourceEventId: event.eventId,
-      confidence: 0.6,
-    });
-    return normalized;
+  const candidates = buildReflectedCandidates({
+    events: state.events,
+    maxCandidates: max,
+    normalizeRuleCandidate,
   });
 
   return {
@@ -5630,17 +5602,28 @@ function runValidate(request: any) {
     ? request.candidates
     : [];
   const candidates = rawCandidates.map(normalizeRuleCandidate);
-  const validations = candidates.map((candidate: any) => {
-    const evidence =
-      state.events.find(
-        (event: any) => event.eventId === candidate.sourceEventId
-      ) ?? null;
-    return {
-      candidateId: candidate.candidateId,
-      valid: Boolean(evidence && candidate.statement),
-      evidenceEventId: evidence ? evidence.eventId : null,
-      contradictionCount: 0,
-    };
+  const evaluatedAt = normalizeIsoTimestamp(
+    request.timestamp ?? request.evaluatedAt ?? request.requestedAt,
+    "validate.timestamp",
+    DEFAULT_VERSION_TIMESTAMP
+  );
+  const freshnessWarningDays = Math.max(
+    toPositiveInteger(
+      request.freshnessWarningDays,
+      DEFAULT_FRESHNESS_WARNING_DAYS
+    ),
+    1
+  );
+  const minEvidenceDepth = Math.max(
+    toPositiveInteger(request.minEvidenceDepth, 1),
+    1
+  );
+  const validations = buildCandidateValidations({
+    candidates,
+    events: state.events,
+    evaluatedAt,
+    freshnessWarningDays,
+    minEvidenceDepth,
   });
 
   return {
@@ -5650,12 +5633,11 @@ function runValidate(request: any) {
   };
 }
 
-function runCurate(request: any) {
-  const { storeId, profile, input } = normalizeRequest("curate", request);
-  const state = getProfileState(storeId, profile);
-  const rawCandidates = Array.isArray(request.candidates)
-    ? request.candidates
-    : [];
+function applyCurateMutations(
+  state: any,
+  rawCandidates: ReadonlyArray<any>,
+  timestamp: string
+) {
   const applied = [];
   const skipped = [];
 
@@ -5668,35 +5650,68 @@ function runCurate(request: any) {
       });
       continue;
     }
-    const existing = state.rules.find(
-      (rule: any) => rule.ruleId === candidate.candidateId
-    );
-    if (existing) {
-      existing.statement = candidate.statement;
-      existing.confidence = candidate.confidence;
-      applied.push({
-        ruleId: existing.ruleId,
-        action: "updated",
-      });
-      continue;
-    }
-    const rule = {
-      ruleId: candidate.candidateId,
+    const nextRule = {
+      ruleId: candidate.ruleId,
       statement: candidate.statement,
-      confidence: candidate.confidence,
+      confidence: roundNumber(clamp01(candidate.confidence, 0.5), 6),
+      scope: candidate.scope,
+      sourceEventIds: mergeStringLists([], candidate.sourceEventIds),
+      evidenceEventIds: mergeStringLists([], candidate.evidenceEventIds),
+      selectedCandidateId: candidate.candidateId,
+      updatedAt: timestamp,
     };
-    state.rules.push(rule);
+    const existingRuleIndex = state.rules.findIndex(
+      (rule: any) => rule.ruleId === candidate.ruleId
+    );
+    let action = "created";
+    if (existingRuleIndex !== -1) {
+      const existingRule = state.rules[existingRuleIndex];
+      if (stableStringify(existingRule) === stableStringify(nextRule)) {
+        action = "noop";
+      } else {
+        action = "updated";
+        state.rules[existingRuleIndex] = nextRule;
+      }
+    } else {
+      state.rules.push(nextRule);
+    }
     applied.push({
-      ruleId: rule.ruleId,
-      action: "created",
+      ruleId: nextRule.ruleId,
+      candidateId: candidate.candidateId,
+      action,
     });
   }
 
+  state.rules = sortByTimestampAndId(state.rules, "updatedAt", "ruleId");
+
   return {
-    ...buildMeta("curate", storeId, profile, input),
     applied,
     skipped,
     totalRules: state.rules.length,
+  };
+}
+
+function runCurate(request: any) {
+  const { storeId, profile, input } = normalizeRequest("curate", request);
+  const state = getProfileState(storeId, profile);
+  const rawCandidates = Array.isArray(request.candidates)
+    ? request.candidates
+    : [];
+  if (rawCandidates.length > 0) {
+    throw new Error(GUARDED_CURATION_REQUIRED_ERROR);
+  }
+  const timestamp = normalizeIsoTimestamp(
+    request.timestamp ?? request.updatedAt ?? request.createdAt,
+    "curate.timestamp",
+    DEFAULT_VERSION_TIMESTAMP
+  );
+  const curateResult = applyCurateMutations(state, rawCandidates, timestamp);
+
+  return {
+    ...buildMeta("curate", storeId, profile, input),
+    applied: curateResult.applied,
+    skipped: curateResult.skipped,
+    totalRules: curateResult.totalRules,
   };
 }
 
@@ -8978,6 +8993,7 @@ function runCurateGuarded(request: any) {
     ? request.validations
     : [];
   const validationByCandidateId = new Map();
+  const normalizedValidations = [];
   for (const validation of rawValidations) {
     if (!isPlainObject(validation)) {
       continue;
@@ -8990,13 +9006,28 @@ function runCurateGuarded(request: any) {
     if (!candidateId) {
       continue;
     }
-    validationByCandidateId.set(candidateId, {
+    const normalizedValidation = {
+      candidateId,
       valid: Boolean(validation.valid),
       evidenceEventId: normalizeBoundedString(
         validation.evidenceEventId,
         "validations.evidenceEventId"
       ),
-    });
+      evidenceDepth: Math.max(
+        toPositiveInteger(validation.evidenceDepth, 0),
+        0
+      ),
+      contradictionCount: Math.max(
+        toPositiveInteger(validation.contradictionCount, 0),
+        0
+      ),
+      freshnessDays: Number.isFinite(validation.freshnessDays)
+        ? Number(validation.freshnessDays)
+        : null,
+      reasonCodes: mergeStringLists(validation.reasonCodes, []),
+    };
+    validationByCandidateId.set(candidateId, normalizedValidation);
+    normalizedValidations.push(normalizedValidation);
   }
 
   const safeCandidates = [];
@@ -9032,33 +9063,44 @@ function runCurateGuarded(request: any) {
       continue;
     }
     const validation = validationByCandidateId.get(candidate.candidateId);
-    const hasEventEvidence = state.events.some(
-      (event: any) => event.eventId === candidate.sourceEventId
-    );
-    const hasValidationEvidence = Boolean(
-      validation?.valid && validation?.evidenceEventId
-    );
-    if (!hasEventEvidence && !hasValidationEvidence) {
+    if (!validation?.valid) {
       rejected.push({
         candidateId: candidate.candidateId,
-        reason: "missing_validation_evidence",
+        reason: validation?.reasonCodes?.[0] ?? "missing_validation_evidence",
       });
       continue;
     }
     safeCandidates.push(candidate);
   }
 
-  const curateResult = runCurate({
-    storeId,
-    profile,
+  const selection = selectCurationCandidates({
     candidates: safeCandidates,
+    validations: normalizedValidations,
+    existingRules: state.rules.map((rule: any) => ({
+      ruleId: rule.ruleId,
+      statement: rule.statement,
+      scope: rule.scope ?? "global",
+      selectedCandidateId: rule.selectedCandidateId ?? null,
+    })),
   });
+  rejected.push(
+    ...selection.rejected.map((entry) => ({
+      candidateId: entry.candidateId,
+      reason: entry.reason,
+      winnerCandidateId: entry.winnerCandidateId,
+    }))
+  );
+
+  const curateResult = applyCurateMutations(
+    state,
+    selection.winners,
+    guardTimestamp
+  );
   const action =
-    curateResult.applied.length > 0 || quarantined.length > 0
+    curateResult.applied.some((entry: any) => entry.action !== "noop") ||
+    quarantined.length > 0
       ? "updated"
-      : rejected.length > 0
-        ? "noop"
-        : "noop";
+      : "noop";
   const guardDigest = hash(
     stableStringify({
       appliedRuleIds: curateResult.applied.map((entry: any) => entry.ruleId),
@@ -9080,15 +9122,16 @@ function runCurateGuarded(request: any) {
         ? asSortedUniqueStrings(
             quarantined.flatMap((entry: any) => entry.reasonCodes)
           )
-        : rejected.some(
-              (entry: any) => entry.reason === "missing_validation_evidence"
+        : rejected.length > 0
+          ? asSortedUniqueStrings(
+              rejected.map((entry: any) => entry.reason).filter(Boolean)
             )
-          ? ["missing_validation_evidence"]
           : ["curation_allowed"],
     details: {
       safeCandidateCount: safeCandidates.length,
       quarantinedCount: quarantined.length,
       rejectedCount: rejected.length,
+      tieBreakRejectedCount: selection.rejected.length,
       appliedCount: curateResult.applied.length,
     },
     timestamp: guardTimestamp,
@@ -9108,6 +9151,7 @@ function runCurateGuarded(request: any) {
       safeCandidateCount: safeCandidates.length,
       quarantinedCount: quarantined.length,
       rejectedCount: rejected.length,
+      tieBreakRejectedCount: selection.rejected.length,
       requiresValidationEvidence: true,
       promptInjectionResistant: true,
       evidenceContract: GUARDED_CURATION_EVIDENCE_CONTRACT_ERROR,

@@ -711,8 +711,8 @@ function printUsage() {
   process.stdout.write(
     [
       "Usage:",
-      "  node --import tsx scripts/generate-pilot-rollout-report.ts --input <path|-> [--output <path>] [--compact]",
-      "  node --import tsx scripts/generate-pilot-rollout-report.ts --input <path|-> [--output <path>] [--compact] [--allow-invalid]",
+      "  bun scripts/generate-pilot-rollout-report.ts --input <path|-> [--output <path>] [--compact]",
+      "  bun scripts/generate-pilot-rollout-report.ts --input <path|-> [--output <path>] [--compact] [--allow-invalid]",
       "",
       "Input formats:",
       "  - NDJSON (one telemetry object per line)",
@@ -723,9 +723,9 @@ function printUsage() {
       "  Malformed top-level JSON arrays are always treated as fatal input errors.",
       "",
       "Examples:",
-      "  node --import tsx scripts/generate-pilot-rollout-report.ts --input ops/pilot-rollout/pilot-a/telemetry.ndjson",
-      "  node --import tsx scripts/generate-pilot-rollout-report.ts --input telemetry.json --output docs/reports/pilot-summary.json",
-      "  node --import tsx scripts/generate-pilot-rollout-report.ts --input telemetry.ndjson --allow-invalid",
+      "  bun scripts/generate-pilot-rollout-report.ts --input ops/pilot-rollout/pilot-a/telemetry.ndjson",
+      "  bun scripts/generate-pilot-rollout-report.ts --input telemetry.json --output docs/reports/pilot-summary.json",
+      "  bun scripts/generate-pilot-rollout-report.ts --input telemetry.ndjson --allow-invalid",
     ].join("\n") + "\n"
   );
 }

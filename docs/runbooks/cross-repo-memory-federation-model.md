@@ -122,6 +122,27 @@ Minimum monitoring surface:
 - policy decision cache ttl <= 60s
 - cross-tenant leak incidents == 0
 
+## Implementation Appendix
+
+The deferred implementation surface is intentionally narrow and read-only:
+
+- `apps/api/src/federation/shadow-evaluator.ts`
+  - evaluates federated candidates in shadow mode
+  - keeps `servedCandidates` local-only
+  - returns `shadowCandidates` plus an audit preview
+  - reports `writeCount = 0` and `persistedAuditEventCount = 0`
+- `apps/api/src/federation/canary-routing.ts`
+  - deny-by-default allowlist gate for allowlisted spaces only
+  - emits deterministic reason codes:
+    - `cross_tenant_forbidden`
+    - `space_not_allowlisted`
+    - `share_not_allowlisted`
+    - `selector_mismatch`
+    - `policy_deny`
+  - emits `federation.share.denied` for every deny path
+
+The implementation contract must remain Effect v4 + Bun test only. No federation path may introduce write-through behavior while the system is in shadow mode.
+
 ## Rollout Plan
 
 | Phase                       | Goal                                                     | Exit criteria                                     |
@@ -139,6 +160,17 @@ Minimum monitoring surface:
 - federated retrieval p95 latency delta <= 20%
 - federation policy decision mismatch rate <= 0.1%
 - federation.share.denied events contain reason codes in 100% of denials
+
+## GA Readiness Criteria
+
+Federation cannot move beyond deferred gate status until all of the following are true:
+
+- `docs/runbooks/federation-go-no-go-decision.md` records `Decision: GO`
+- `bun run ci:verify` is green on the same tip
+- `tests/integration/federation-shadow-eval.integration.test.ts` proves shadow mode has zero mutation side effects
+- `tests/integration/federation-canary-policy.integration.test.ts` proves allowlisted canary routing is deterministic and deny-complete
+- `tests/integration/federation-ga-readiness.integration.test.ts` proves cross-tenant paths remain impossible
+- the core prerequisite epics `ums-memory-thq`, `ums-memory-jny`, and `ums-memory-onf` are closed and stable
 
 ## Explicit Non-Goals
 

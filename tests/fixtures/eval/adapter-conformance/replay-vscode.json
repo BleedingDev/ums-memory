@@ -1,0 +1,35 @@
+{
+  "schemaVersion": "adapter_conformance_fixture.v1",
+  "id": "replay-vscode",
+  "description": "VS Code envelopes keep citation-bearing assistant turns canonical.",
+  "kind": "replay",
+  "adapter": "vscode",
+  "replayCount": 3,
+  "input": {
+    "tenantId": "tenant-conformance",
+    "spaceId": "workspace-vscode",
+    "source": "vscode",
+    "sessionId": "session-vscode",
+    "runId": "run-vscode",
+    "startedAt": "2026-03-04T14:00:00.000Z",
+    "messages": [
+      {
+        "eventId": "event-vscode-1",
+        "messageId": "message-vscode-1",
+        "role": "assistant",
+        "content": "Citations must stay aligned with evidence IDs.",
+        "createdAt": "2026-03-04T14:00:00.000Z",
+        "citations": ["evidence-vscode-1"]
+      }
+    ]
+  },
+  "expected": {
+    "tenantId": "tenant-conformance",
+    "spaceId": "workspace-vscode",
+    "source": "vscode",
+    "sessionId": "session-vscode",
+    "messageCount": 1,
+    "roles": ["assistant"],
+    "citationCounts": [1]
+  }
+}

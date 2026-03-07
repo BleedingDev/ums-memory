@@ -367,6 +367,7 @@ test("http server exposes deterministic JSON operation routes", async () => {
     );
     assert.equal(rootBody.operations.includes("/v1/shadow_attribution"), true);
     assert.equal(rootBody.operations.includes("/v1/attribution_report"), true);
+    assert.equal(rootBody.operations.includes("/v1/storage_dualrun"), false);
 
     const ingestRes = await fetch(`${base}/v1/ingest`, {
       method: "POST",
@@ -455,6 +456,94 @@ test("http server exposes deterministic JSON operation routes", async () => {
     assert.equal(manualReplayBody.ok, true);
     assert.equal(manualReplayBody.data.action, "noop");
     assert.equal(manualReplayBody.data.override.changed, false);
+  } finally {
+    await new Promise<void>((resolve, reject) => {
+      server.close((error) => (error ? reject(error) : resolve()));
+    });
+  }
+});
+
+test("ums-memory-onf.5: http server exposes gated storage dual-run telemetry with store traceability", async () => {
+  resetStore();
+  const events: any[] = [];
+  const telemetry = createInMemoryApiTelemetry({
+    logger(event) {
+      events.push(event);
+    },
+  });
+  const { server, host, port } = await startApiServer({
+    host: "127.0.0.1",
+    port: 0,
+    stateFile: null,
+    telemetry,
+    enableStorageDualRun: true,
+  });
+  const base = `http://${host}:${port}`;
+
+  try {
+    const rootRes = await fetch(`${base}/`);
+    assert.equal(rootRes.status, 200);
+    const rootBody = await rootRes.json();
+    assert.equal(rootBody.operations.includes("/v1/storage_dualrun"), true);
+
+    const response = await fetch(`${base}/v1/storage_dualrun`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-ums-store": "tenant-storage-telemetry",
+      },
+      body: JSON.stringify({
+        suiteId: "server-storage-dualrun",
+        operations: [
+          {
+            kind: "upsert",
+            label: "seed working memory",
+            request: {
+              spaceId: "tenant-storage-telemetry",
+              memoryId: "memory-a",
+              layer: "working",
+              payload: {
+                title: "Working memory seed",
+                updatedAtMillis: 1700000000100,
+              },
+              idempotencyKey: "upsert-a",
+            },
+          },
+          {
+            kind: "snapshot_roundtrip",
+            label: "roundtrip exported snapshot state",
+          },
+        ],
+      }),
+    });
+    assert.equal(response.status, 200);
+    const body = await response.json();
+    assert.equal(body.ok, true);
+    assert.equal(body.data.operation, "storage_dualrun");
+    assert.equal(body.data.storeId, "tenant-storage-telemetry");
+    assert.equal(body.data.mismatchCount, 0);
+    assert.equal(body.data.waivedMismatchCount, 0);
+    assert.equal(
+      body.data.observability.tracePayload.storeId,
+      body.data.storeId
+    );
+    assert.equal(
+      body.data.observability.tracePayload.requestDigest,
+      body.data.requestDigest
+    );
+
+    const telemetryEvent = events.find(
+      (event) => event.operation === "storage_dualrun"
+    );
+    assert.ok(telemetryEvent);
+    assert.equal(telemetryEvent.status, "success");
+    assert.equal(telemetryEvent.statusCode, 200);
+    assert.equal(telemetryEvent.storeId, "tenant-storage-telemetry");
+    assert.equal(
+      telemetryEvent.tracePayload.storeId,
+      "tenant-storage-telemetry"
+    );
+    assert.equal(telemetryEvent.requestDigest, body.data.requestDigest);
   } finally {
     await new Promise<void>((resolve, reject) => {
       server.close((error) => (error ? reject(error) : resolve()));

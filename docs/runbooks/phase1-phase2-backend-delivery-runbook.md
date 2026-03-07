@@ -66,9 +66,11 @@ Automation mapping:
 
 1. CI-enforced checks:
    Determinism/idempotency/bounded-recall/guardrail regressions are covered by `bun run test` and `bun run test:sfe`.
+   Lean eval corpus regressions are covered by `bun run eval:lean`.
    Reference suites:
 
 - determinism + idempotency + bounded recall + guardrails: `tests/unit/*.test.ts`, `tests/integration/*.test.ts`
+- lean eval corpora: `scripts/eval-golden-replay.ts`, `scripts/eval-adapter-conformance.ts`, `scripts/eval-grounded-recall.ts`
 - API/CLI/SFE contract behavior: `apps/api/test/*.test.ts`, `apps/cli/test/*.test.ts`, `apps/*/test/*.sfe.test.ts`
 
 2. Operational benchmark checks:
@@ -82,6 +84,8 @@ Automation mapping:
 ```bash
 bun run test:ums
 ```
+
+All Effect-facing tests in this repo run via `bun test` and import the test surface from `@effect-native/bun-test`. Do not introduce `node:test`, Vitest, or other alternate runners into this delivery path.
 
 2. Run benchmark harness and write reports:
 

@@ -1,0 +1,50 @@
+{
+  "schemaVersion": "storage_parity_fixture.v1",
+  "fixtureId": "waived-version-divergence",
+  "description": "Version counters diverge after repeated upserts, but the mismatch is explicitly waived.",
+  "request": {
+    "suiteId": "waived-version-divergence",
+    "storeId": "tenant-storage-parity",
+    "waivers": ["version_field_divergence"],
+    "operations": [
+      {
+        "kind": "upsert",
+        "label": "initial upsert",
+        "request": {
+          "spaceId": "tenant-storage-parity",
+          "memoryId": "memory-versioned",
+          "layer": "working",
+          "payload": {
+            "title": "Versioned memory",
+            "updatedAtMillis": 1700000000200
+          },
+          "idempotencyKey": "versioned-upsert-1"
+        }
+      },
+      {
+        "kind": "upsert",
+        "label": "follow-up upsert increments only postgres version",
+        "request": {
+          "spaceId": "tenant-storage-parity",
+          "memoryId": "memory-versioned",
+          "layer": "working",
+          "payload": {
+            "title": "Versioned memory updated",
+            "updatedAtMillis": 1700000000300
+          },
+          "idempotencyKey": "versioned-upsert-2"
+        }
+      },
+      {
+        "kind": "snapshot_state",
+        "label": "export comparable state"
+      }
+    ]
+  },
+  "expect": {
+    "ok": true,
+    "mismatchCount": 0,
+    "waivedMismatchCount": 1,
+    "mismatchReasonCodes": ["version_field_divergence"]
+  }
+}

@@ -5,9 +5,14 @@ import {
   type StorageServiceError,
 } from "../errors.js";
 import {
+  makePostgresStorageServiceEffect,
   makeSqliteStorageServiceEffect,
   type StorageService,
 } from "../services/storage-service.js";
+import type {
+  PostgresStorageRepositoryDriver,
+  PostgresStorageRepositoryOptions,
+} from "./postgres/index.js";
 import type { DatabaseSync } from "./sqlite/database.ts";
 import type { SqliteStorageRepositoryOptions } from "./sqlite/index.js";
 
@@ -44,7 +49,20 @@ const isDatabaseSync = (value: unknown): value is DatabaseSync =>
   hasFunctionProperty(value, "prepare") &&
   hasFunctionProperty(value, "close");
 
+const isPostgresStorageRepositoryDriver = (
+  value: unknown
+): value is PostgresStorageRepositoryDriver =>
+  hasFunctionProperty(value, "getMemory") &&
+  hasFunctionProperty(value, "upsertMemory") &&
+  hasFunctionProperty(value, "deleteMemory") &&
+  hasFunctionProperty(value, "getIdempotency") &&
+  hasFunctionProperty(value, "putIdempotency") &&
+  hasFunctionProperty(value, "exportSnapshot") &&
+  hasFunctionProperty(value, "importSnapshot");
+
 const sqliteAdapterConfigurationContract = "SqliteStorageAdapterConfiguration";
+const postgresAdapterConfigurationContract =
+  "PostgresStorageAdapterConfiguration";
 
 const sqliteAdapterConfigurationError = (
   details: string
@@ -52,6 +70,15 @@ const sqliteAdapterConfigurationError = (
   new ContractValidationError({
     contract: sqliteAdapterConfigurationContract,
     message: "Invalid sqlite storage adapter configuration.",
+    details,
+  });
+
+const postgresAdapterConfigurationError = (
+  details: string
+): ContractValidationError =>
+  new ContractValidationError({
+    contract: postgresAdapterConfigurationContract,
+    message: "Invalid postgres storage adapter configuration.",
     details,
   });
 
@@ -94,6 +121,48 @@ const decodeSqliteStorageAdapterConfiguration = (
   return Effect.succeed({
     database,
     options: options as SqliteStorageRepositoryOptions,
+  });
+};
+
+const decodePostgresStorageAdapterConfiguration = (
+  configuration: unknown
+): Effect.Effect<
+  PostgresStorageAdapterConfiguration,
+  ContractValidationError
+> => {
+  if (!isRecord(configuration)) {
+    return Effect.fail(
+      postgresAdapterConfigurationError(
+        "Expected a configuration object with a 'driver' property."
+      )
+    );
+  }
+
+  const driver = configuration["driver"];
+  if (!isPostgresStorageRepositoryDriver(driver)) {
+    return Effect.fail(
+      postgresAdapterConfigurationError(
+        "configuration.driver must implement the Postgres storage repository driver contract."
+      )
+    );
+  }
+
+  const options = configuration["options"];
+  if (options !== undefined && !isRecord(options)) {
+    return Effect.fail(
+      postgresAdapterConfigurationError(
+        "configuration.options must be an object when provided."
+      )
+    );
+  }
+
+  if (options === undefined) {
+    return Effect.succeed({ driver });
+  }
+
+  return Effect.succeed({
+    driver,
+    options: options as PostgresStorageRepositoryOptions,
   });
 };
 
@@ -159,7 +228,13 @@ export interface SqliteStorageAdapterConfiguration {
   readonly options?: SqliteStorageRepositoryOptions;
 }
 
+export interface PostgresStorageAdapterConfiguration {
+  readonly driver: PostgresStorageRepositoryDriver;
+  readonly options?: PostgresStorageRepositoryOptions;
+}
+
 export const sqliteStorageAdapterId = "sqlite";
+export const postgresStorageAdapterId = "postgres";
 
 export const validateStorageAdapterId = (
   adapterId: string
@@ -277,6 +352,21 @@ export const makeSqliteStorageAdapterRegistration = (
       return yield* makeSqliteStorageServiceEffect(
         sqliteConfiguration.database,
         sqliteConfiguration.options
+      );
+    }),
+});
+
+export const makePostgresStorageAdapterRegistration = (
+  adapterId: string = postgresStorageAdapterId
+): StorageAdapterRegistration => ({
+  id: adapterId,
+  create: (configuration) =>
+    Effect.gen(function* () {
+      const postgresConfiguration =
+        yield* decodePostgresStorageAdapterConfiguration(configuration);
+      return yield* makePostgresStorageServiceEffect(
+        postgresConfiguration.driver,
+        postgresConfiguration.options
       );
     }),
 });

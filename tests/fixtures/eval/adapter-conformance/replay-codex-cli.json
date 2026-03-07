@@ -1,0 +1,48 @@
+{
+  "schemaVersion": "adapter_conformance_fixture.v1",
+  "id": "replay-codex-cli",
+  "description": "Codex CLI envelopes stay deterministic across repeated decode passes.",
+  "kind": "replay",
+  "adapter": "codex-cli",
+  "replayCount": 3,
+  "input": {
+    "tenantId": "tenant-conformance",
+    "spaceId": "workspace-codex",
+    "source": "codex-cli",
+    "sessionId": "session-codex-cli",
+    "runId": "run-codex-cli",
+    "batchId": "batch-codex-cli",
+    "projectId": "project-conformance",
+    "userId": "user-codex",
+    "agentId": "agent-codex",
+    "startedAt": "2026-03-04T10:00:00.000Z",
+    "endedAt": "2026-03-04T10:05:00.000Z",
+    "messages": [
+      {
+        "eventId": "event-codex-1",
+        "messageId": "message-codex-1",
+        "role": "user",
+        "content": "Summarize adapter replay guarantees.",
+        "createdAt": "2026-03-04T10:00:00.000Z",
+        "citations": []
+      },
+      {
+        "eventId": "event-codex-2",
+        "messageId": "message-codex-2",
+        "role": "assistant",
+        "content": "Replay checks stay deterministic.",
+        "createdAt": "2026-03-04T10:01:00.000Z",
+        "citations": ["evidence-codex-1"]
+      }
+    ]
+  },
+  "expected": {
+    "tenantId": "tenant-conformance",
+    "spaceId": "workspace-codex",
+    "source": "codex-cli",
+    "sessionId": "session-codex-cli",
+    "messageCount": 2,
+    "roles": ["user", "assistant"],
+    "citationCounts": [0, 1]
+  }
+}

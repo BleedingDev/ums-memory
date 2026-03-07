@@ -1,0 +1,44 @@
+{
+  "schemaVersion": "adapter_conformance_fixture.v1",
+  "id": "replay-plan",
+  "description": "Plan envelopes keep handoff instructions deterministic on replay.",
+  "kind": "replay",
+  "adapter": "plan",
+  "replayCount": 3,
+  "input": {
+    "tenantId": "tenant-conformance",
+    "spaceId": "workspace-plan",
+    "source": "plan",
+    "sessionId": "session-plan",
+    "runId": "run-plan",
+    "roleId": "role-planner",
+    "startedAt": "2026-03-04T16:00:00.000Z",
+    "messages": [
+      {
+        "eventId": "event-plan-1",
+        "messageId": "message-plan-1",
+        "role": "user",
+        "content": "Draft the validation plan.",
+        "createdAt": "2026-03-04T16:00:00.000Z",
+        "citations": []
+      },
+      {
+        "eventId": "event-plan-2",
+        "messageId": "message-plan-2",
+        "role": "assistant",
+        "content": "Run replay, malformed, then integration gates.",
+        "createdAt": "2026-03-04T16:00:30.000Z",
+        "citations": []
+      }
+    ]
+  },
+  "expected": {
+    "tenantId": "tenant-conformance",
+    "spaceId": "workspace-plan",
+    "source": "plan",
+    "sessionId": "session-plan",
+    "messageCount": 2,
+    "roles": ["user", "assistant"],
+    "citationCounts": [0, 0]
+  }
+}

@@ -82,6 +82,7 @@
 {"created_at":"2026-03-02T00:42:21Z","created_by":"Petr Glaser","depends_on_id":"ums-memory-8as.2","issue_id":"ums-memory-8as.7","type":"blocks"}
 {"created_at":"2026-03-02T00:41:52Z","created_by":"Petr Glaser","depends_on_id":"ums-memory-8as","issue_id":"ums-memory-8as.8","type":"parent-child"}
 {"created_at":"2026-03-02T00:42:22Z","created_by":"Petr Glaser","depends_on_id":"ums-memory-8as.5","issue_id":"ums-memory-8as.8","type":"blocks"}
+{"created_at":"2026-03-08T05:56:10Z","created_by":"Petr Glaser","depends_on_id":"ums-memory-6nq.4","issue_id":"ums-memory-8na","type":"discovered-from"}
 {"created_at":"2026-03-02T00:42:05Z","created_by":"Petr Glaser","depends_on_id":"ums-memory-hpl","issue_id":"ums-memory-a9v","type":"blocks"}
 {"created_at":"2026-03-02T00:42:06Z","created_by":"Petr Glaser","depends_on_id":"ums-memory-yji","issue_id":"ums-memory-a9v","type":"blocks"}
 {"created_at":"2026-03-02T00:41:55Z","created_by":"Petr Glaser","depends_on_id":"ums-memory-a9v","issue_id":"ums-memory-a9v.1","type":"parent-child"}
@@ -1188,6 +1189,8 @@
 {"created_at":"2026-03-06T00:11:55Z","created_by":"Petr Glaser","depends_on_id":"ums-memory-thq.3","issue_id":"ums-memory-thq.4","type":"blocks"}
 {"created_at":"2026-03-06T00:11:26Z","created_by":"Petr Glaser","depends_on_id":"ums-memory-thq","issue_id":"ums-memory-thq.5","type":"parent-child"}
 {"created_at":"2026-03-06T00:11:55Z","created_by":"Petr Glaser","depends_on_id":"ums-memory-thq.4","issue_id":"ums-memory-thq.5","type":"blocks"}
+{"created_at":"2026-03-08T05:56:02Z","created_by":"Petr Glaser","depends_on_id":"ums-memory-6nq.2","issue_id":"ums-memory-ti8","type":"discovered-from"}
+{"created_at":"2026-03-08T05:56:02Z","created_by":"Petr Glaser","depends_on_id":"ums-memory-6nq.3","issue_id":"ums-memory-ti8","type":"discovered-from"}
 {"created_at":"2026-03-02T00:42:04Z","created_by":"Petr Glaser","depends_on_id":"ums-memory-5cb","issue_id":"ums-memory-yji","type":"blocks"}
 {"created_at":"2026-03-02T00:42:05Z","created_by":"Petr Glaser","depends_on_id":"ums-memory-8as","issue_id":"ums-memory-yji","type":"blocks"}
 {"created_at":"2026-03-02T00:41:52Z","created_by":"Petr Glaser","depends_on_id":"ums-memory-yji","issue_id":"ums-memory-yji.1","type":"parent-child"}

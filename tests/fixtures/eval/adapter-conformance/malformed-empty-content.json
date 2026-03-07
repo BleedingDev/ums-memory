@@ -1,0 +1,25 @@
+{
+  "schemaVersion": "adapter_conformance_fixture.v1",
+  "id": "malformed-empty-content",
+  "description": "Whitespace-only content must fail adapter conformance validation.",
+  "kind": "malformed",
+  "input": {
+    "tenantId": "tenant-conformance",
+    "spaceId": "workspace-malformed",
+    "source": "codex-cli",
+    "sessionId": "session-malformed-content",
+    "runId": "run-malformed-content",
+    "startedAt": "2026-03-04T17:00:00.000Z",
+    "messages": [
+      {
+        "eventId": "event-malformed-1",
+        "messageId": "message-malformed-1",
+        "role": "user",
+        "content": "   ",
+        "createdAt": "2026-03-04T17:00:00.000Z",
+        "citations": []
+      }
+    ]
+  },
+  "expectedErrorPattern": "ParseError|non-empty|content"
+}

@@ -24,13 +24,13 @@ docker build --target worker -t ums-memory-worker:local .
 API command in image:
 
 ```bash
-node --import tsx apps/api/src/server.ts
+bun apps/api/src/server.ts
 ```
 
 Worker command in image:
 
 ```bash
-node --import tsx apps/ums/src/index.ts worker
+bun apps/ums/src/index.ts worker
 ```
 
 ## Run With Docker Compose

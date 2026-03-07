@@ -95,7 +95,7 @@ function printUsage() {
   process.stdout.write(
     [
       "Usage:",
-      "  node --import tsx scripts/build-sfe-matrix.ts [--targets <csv>] [--apps <csv>] [--outdir <path>]",
+      "  bun scripts/build-sfe-matrix.ts [--targets <csv>] [--apps <csv>] [--outdir <path>]",
       "",
       "Defaults:",
       `  --targets ${DEFAULT_TARGETS.join(",")}`,
@@ -103,9 +103,9 @@ function printUsage() {
       "  --outdir dist",
       "",
       "Examples:",
-      "  node --import tsx scripts/build-sfe-matrix.ts",
-      "  node --import tsx scripts/build-sfe-matrix.ts --targets bun-linux-x64 --apps single",
-      "  node --import tsx scripts/build-sfe-matrix.ts --targets bun-windows-x64,bun-linux-x64 --apps single,cli,api",
+      "  bun scripts/build-sfe-matrix.ts",
+      "  bun scripts/build-sfe-matrix.ts --targets bun-linux-x64 --apps single",
+      "  bun scripts/build-sfe-matrix.ts --targets bun-windows-x64,bun-linux-x64 --apps single,cli,api",
     ].join("\n") + "\n"
   );
 }

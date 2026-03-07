@@ -15,7 +15,7 @@
 ## Prerequisites
 
 - Docker Engine with Compose plugin (`docker compose`)
-- Node.js CLI available on host (`node`; used for deterministic timestamp and payload checks)
+- Bun CLI available on host (`bun`; used for deterministic timestamp and payload checks)
 - `bash`, `curl`, `awk`, `grep`, and one SHA-256 utility (`sha256sum` or `shasum`)
 - At least one backup file at `backups/ums-state-*.json`
 
@@ -99,9 +99,9 @@ Run all checks against the restored drill stack.
 
 ```bash
 curl -fsS http://127.0.0.1:8787/ > "${ARTIFACT_DIR}/api-root.json"
-node -e '
-const fs = require("node:fs");
-const root = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+bun -e '
+import { readFileSync } from "node:fs";
+const root = JSON.parse(readFileSync(process.argv[1], "utf8"));
 if (root.ok !== true || root.service !== "ums-api" || root.deterministic !== true) process.exit(1);
 ' "${ARTIFACT_DIR}/api-root.json"
 ```
@@ -149,7 +149,7 @@ RESTORED_SHA="$(
 [[ "${BACKUP_SHA}" == "${RESTORED_SHA}" ]]
 
 docker run --rm -v "${VOLUME}:/var/lib/ums" ums-memory-api:local \
-  node -e 'JSON.parse(require("node:fs").readFileSync("/var/lib/ums/.ums-state.json","utf8"));'
+  bun -e 'import { readFileSync } from "node:fs"; JSON.parse(readFileSync("/var/lib/ums/.ums-state.json","utf8"));'
 ```
 
 Pass criteria:
@@ -176,12 +176,12 @@ cat > "${ARTIFACT_DIR}/replay-payload.json" <<'JSON'
 }
 JSON
 
-node -e '
-const fs = require("node:fs");
+bun -e '
+import { readFileSync, writeFileSync } from "node:fs";
 const p = process.argv[1];
-const payload = JSON.parse(fs.readFileSync(p, "utf8"));
+const payload = JSON.parse(readFileSync(p, "utf8"));
 payload.events[0].eventId = `drill-${process.env.DRILL_ID}-replay-event`;
-fs.writeFileSync(p, JSON.stringify(payload));
+writeFileSync(p, JSON.stringify(payload));
 ' "${ARTIFACT_DIR}/replay-payload.json"
 
 curl -fsS -X POST http://127.0.0.1:8787/v1/ingest \
@@ -194,10 +194,10 @@ curl -fsS -X POST http://127.0.0.1:8787/v1/ingest \
   --data-binary @"${ARTIFACT_DIR}/replay-payload.json" \
   > "${ARTIFACT_DIR}/replay-second.json"
 
-node -e '
-const fs = require("node:fs");
-const first = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
-const second = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+bun -e '
+import { readFileSync } from "node:fs";
+const first = JSON.parse(readFileSync(process.argv[1], "utf8"));
+const second = JSON.parse(readFileSync(process.argv[2], "utf8"));
 if (first.data.accepted !== 1 || first.data.duplicates !== 0) process.exit(1);
 if (second.data.accepted !== 0 || second.data.duplicates !== 1) process.exit(1);
 if (first.data.ledgerDigest !== second.data.ledgerDigest) process.exit(1);

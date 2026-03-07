@@ -21,7 +21,7 @@ const parseArgValue = (
 const printUsage = (): void => {
   process.stdout.write(
     [
-      "Usage: node --import tsx scripts/backfill-provenance-schema.ts --db <sqlite-file>",
+      "Usage: bun scripts/backfill-provenance-schema.ts --db <sqlite-file>",
       "",
       "Optional:",
       "  --source-prefix <prefix>   Default provenance sourceId prefix (default: backfill)",

@@ -23,6 +23,10 @@
     "test:sfe": "bun test apps/cli/test/cli.sfe.test.ts apps/api/test/server.sfe.test.ts apps/cli/test/single.sfe.test.ts",
     "test:ums": "UMS_IMPL_MODULE=./apps/api/src/ums/engine.ts UMS_IMPL_EXPORT=createUmsEngine bun test tests/unit/*.test.ts tests/integration/*.test.ts",
     "test": "bun run test:api && bun run test:ums",
+    "eval:golden-replay": "bun scripts/eval-golden-replay.ts --json",
+    "eval:adapter-conformance": "bun scripts/eval-adapter-conformance.ts --json",
+    "eval:grounded-recall": "bun scripts/eval-grounded-recall.ts --json",
+    "eval:lean": "bun run eval:golden-replay && bun run eval:adapter-conformance && bun run eval:grounded-recall",
     "lint:ts": "oxlint --deny-warnings --tsconfig tsconfig.json --ignore-pattern \"apps/**/test/**/*.ts\" --ignore-pattern \"apps/**/bench/**/*.ts\" --ignore-pattern \"**/adapter-registry.test.ts\" apps libs scripts",
     "lint:config-json": "bun scripts/validate-strict-json.ts tsconfig*.json apps/*/tsconfig.json libs/shared/tsconfig.json",
     "validate:tsconfig-policy": "bun scripts/validate-tsconfig-policy-lock.ts",
@@ -40,7 +44,7 @@
     "ultracite:check": "ultracite check",
     "ultracite:fix": "ultracite fix",
     "quality:ts": "bun run lint:ts && bun run lint:config-json && bun run validate:tsconfig-policy && bun run validate:effect-beta-pin && bun run validate:runtime-ts-suppressions && bun run validate:no-legacy-js-sources && bun run validate:legacy-shims && bun run validate:cutover && bun run validate:vector-eval && bun run validate:federation-model && bun run validate:schema-boundaries && bun run validate:ingestion && bun run format:check:ts && bun run typecheck",
-    "ci:verify": "bun run quality:ts && bun run test && bun run test:sfe && bun run build:sfe:single",
+    "ci:verify": "bun run quality:ts && bun run test && bun run eval:lean && bun run test:sfe && bun run build:sfe:single",
     "typecheck": "bun x tsc -b --pretty false",
     "bench:api": "bun apps/api/bench/benchmark.ts",
     "bench:ums": "UMS_IMPL_MODULE=./apps/api/src/ums/engine.ts UMS_IMPL_EXPORT=createUmsEngine bun benchmarks/ums-latency-benchmark.ts",
@@ -61,7 +65,7 @@
     "effect": "4.0.0-beta.27"
   },
   "devDependencies": {
-    "@effect-native/bun-test": "file:vendor/effect-native-bun-test",
+    "@effect-native/bun-test": "4.0.0",
     "@types/bun": "1.3.10",
     "@types/node": "24.12.0",
     "oxfmt": "^0.35.0",
@@ -70,7 +74,7 @@
     "ultracite": "^7.2.4"
   },
   "engines": {
-    "bun": ">=1.3.10",
-    "node": "^20.19.0 || >=22.12.0"
-  }
+    "bun": ">=1.3.10"
+  },
+  "packageManager": "bun@1.3.10"
 }

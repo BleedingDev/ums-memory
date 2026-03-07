@@ -25,7 +25,7 @@ exec > >(tee -a "${ARTIFACT_DIR}/commands.log") 2>&1
 
 require_command docker
 require_command curl
-require_command node
+require_command bun
 require_command awk
 require_command grep
 docker compose version >/dev/null 2>&1 || { echo "docker compose plugin is required"; exit 2; }
@@ -50,11 +50,12 @@ sha256_file() {
     shasum -a 256 "$1" | awk '{print $1}'
     return
   fi
-  node -e '
-const fs = require("node:fs");
-const crypto = require("node:crypto");
-const body = fs.readFileSync(process.argv[1]);
-process.stdout.write(crypto.createHash("sha256").update(body).digest("hex"));
+  bun -e '
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
+
+const body = readFileSync(process.argv[2]);
+process.stdout.write(createHash("sha256").update(body).digest("hex"));
 ' "$1"
 }
 
@@ -131,7 +132,11 @@ run_restore_attempt() {
   [[ -s "${BACKUP_FILE}" ]] || { echo "Backup file is empty: ${BACKUP_FILE}"; return 1; }
 
   backup_mtime="$(
-    node -e 'console.log(Math.floor(require("node:fs").statSync(process.argv[1]).mtimeMs / 1000));' \
+    bun -e '
+import { statSync } from "node:fs";
+
+console.log(Math.floor(statSync(process.argv[2]).mtimeMs / 1000));
+' \
       "${BACKUP_FILE}"
   )"
   BACKUP_AGE_SECONDS="$((START_TS - backup_mtime))"
@@ -162,10 +167,13 @@ run_restore_attempt() {
     FAILURE_GATE="G3_API_HEALTH"
     return 1
   fi
-  if ! node -e '
-const fs = require("node:fs");
-const root = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
-if (root.ok !== true || root.service !== "ums-api" || root.deterministic !== true) process.exit(1);
+  if ! bun -e '
+import { readFileSync } from "node:fs";
+
+const root = JSON.parse(readFileSync(process.argv[2], "utf8"));
+if (root.ok !== true || root.service !== "ums-api" || root.deterministic !== true) {
+  process.exit(1);
+}
 ' "${ARTIFACT_DIR}/api-root.json"; then
     FAILURE_GATE="G3_API_HEALTH"
     return 1
@@ -200,13 +208,14 @@ if (root.ok !== true || root.service !== "ums-api" || root.deterministic !== tru
   BACKUP_SHA="$(sha256_file "${BACKUP_FILE}")"
   RESTORED_SHA="$(
     docker run --rm -v "${VOLUME}:/var/lib/ums" ums-memory-api:local \
-      node -e '
-const fs = require("node:fs");
-const crypto = require("node:crypto");
+      bun -e '
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
+
 const statePath = "/var/lib/ums/.ums-state.json";
-const body = fs.readFileSync(statePath);
+const body = readFileSync(statePath);
 JSON.parse(body.toString("utf8"));
-process.stdout.write(crypto.createHash("sha256").update(body).digest("hex"));
+process.stdout.write(createHash("sha256").update(body).digest("hex"));
 '
   )"
   if [[ "${BACKUP_SHA}" != "${RESTORED_SHA}" ]]; then
@@ -231,13 +240,20 @@ JSON
     FAILURE_GATE="G6_REPLAY_PARITY"
     return 1
   fi
-  if ! node -e '
-const fs = require("node:fs");
-const first = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
-const second = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
-if (first.data.accepted !== 1 || first.data.duplicates !== 0) process.exit(1);
-if (second.data.accepted !== 0 || second.data.duplicates !== 1) process.exit(1);
-if (first.data.ledgerDigest !== second.data.ledgerDigest) process.exit(1);
+  if ! bun -e '
+import { readFileSync } from "node:fs";
+
+const first = JSON.parse(readFileSync(process.argv[2], "utf8"));
+const second = JSON.parse(readFileSync(process.argv[3], "utf8"));
+if (first.data.accepted !== 1 || first.data.duplicates !== 0) {
+  process.exit(1);
+}
+if (second.data.accepted !== 0 || second.data.duplicates !== 1) {
+  process.exit(1);
+}
+if (first.data.ledgerDigest !== second.data.ledgerDigest) {
+  process.exit(1);
+}
 ' "${ARTIFACT_DIR}/replay-first.json" "${ARTIFACT_DIR}/replay-second.json"; then
     FAILURE_GATE="G6_REPLAY_PARITY"
     return 1

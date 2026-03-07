@@ -1,0 +1,44 @@
+{
+  "schemaVersion": "adapter_conformance_fixture.v1",
+  "id": "replay-cursor",
+  "description": "Cursor envelopes keep tool traces stable during replay.",
+  "kind": "replay",
+  "adapter": "cursor",
+  "replayCount": 4,
+  "input": {
+    "tenantId": "tenant-conformance",
+    "spaceId": "workspace-cursor",
+    "source": "cursor",
+    "sessionId": "session-cursor",
+    "runId": "run-cursor",
+    "userId": "user-cursor",
+    "startedAt": "2026-03-04T12:00:00.000Z",
+    "messages": [
+      {
+        "eventId": "event-cursor-1",
+        "messageId": "message-cursor-1",
+        "role": "user",
+        "content": "Find ingestion contract drift.",
+        "createdAt": "2026-03-04T12:00:00.000Z",
+        "citations": []
+      },
+      {
+        "eventId": "event-cursor-2",
+        "messageId": "message-cursor-2",
+        "role": "tool",
+        "content": "rg -n \"adapter\" tests libs apps",
+        "createdAt": "2026-03-04T12:00:15.000Z",
+        "citations": []
+      }
+    ]
+  },
+  "expected": {
+    "tenantId": "tenant-conformance",
+    "spaceId": "workspace-cursor",
+    "source": "cursor",
+    "sessionId": "session-cursor",
+    "messageCount": 2,
+    "roles": ["user", "tool"],
+    "citationCounts": [0, 0]
+  }
+}

@@ -1,0 +1,44 @@
+{
+  "schemaVersion": "adapter_conformance_fixture.v1",
+  "id": "replay-codex-native",
+  "description": "Codex native envelopes remain stable when system and tool turns repeat.",
+  "kind": "replay",
+  "adapter": "codex-native",
+  "replayCount": 3,
+  "input": {
+    "tenantId": "tenant-conformance",
+    "spaceId": "workspace-codex-native",
+    "source": "codex-native",
+    "sessionId": "session-codex-native",
+    "runId": "run-codex-native",
+    "projectId": "project-conformance",
+    "startedAt": "2026-03-04T15:00:00.000Z",
+    "messages": [
+      {
+        "eventId": "event-codex-native-1",
+        "messageId": "message-codex-native-1",
+        "role": "system",
+        "content": "Only promote candidates with replay evidence.",
+        "createdAt": "2026-03-04T15:00:00.000Z",
+        "citations": []
+      },
+      {
+        "eventId": "event-codex-native-2",
+        "messageId": "message-codex-native-2",
+        "role": "tool",
+        "content": "shadow_write candidate-17",
+        "createdAt": "2026-03-04T15:00:10.000Z",
+        "citations": []
+      }
+    ]
+  },
+  "expected": {
+    "tenantId": "tenant-conformance",
+    "spaceId": "workspace-codex-native",
+    "source": "codex-native",
+    "sessionId": "session-codex-native",
+    "messageCount": 2,
+    "roles": ["system", "tool"],
+    "citationCounts": [0, 0]
+  }
+}

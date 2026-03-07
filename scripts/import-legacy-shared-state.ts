@@ -40,7 +40,7 @@ const parseArgs = (argv: readonly string[]): ParsedArgs => {
     }
     if (token === "--help" || token === "-h") {
       throw new Error(
-        "Usage: node --import tsx scripts/import-legacy-shared-state.ts --source-file <snapshot.json> [--state-file .ums-state.json]"
+        "Usage: bun scripts/import-legacy-shared-state.ts --source-file <snapshot.json> [--state-file .ums-state.json]"
       );
     }
     throw new Error(`Unknown argument: ${token}`);

@@ -572,7 +572,7 @@ function printUsage() {
   process.stdout.write(
     [
       "Usage:",
-      "  node --import tsx scripts/validate-ingestion.ts [--mode <check|refresh|local>] [--output <path>] [--json] [--write-report]",
+      "  bun scripts/validate-ingestion.ts [--mode <check|refresh|local>] [--output <path>] [--json] [--write-report]",
       "",
       "Modes:",
       "  check      Build deterministic fixture-based summary and compare it with the tracked report (default).",
@@ -860,7 +860,7 @@ export async function main(argv = process.argv.slice(2)) {
         process.stderr.write(
           [
             "Deterministic ingestion validation drift detected.",
-            `Run this to refresh baseline intentionally: node --import tsx scripts/validate-ingestion.ts --mode refresh --output ${parsed.outputPath}`,
+            `Run this to refresh baseline intentionally: bun scripts/validate-ingestion.ts --mode refresh --output ${parsed.outputPath}`,
           ].join("\n") + "\n"
         );
         return 1;

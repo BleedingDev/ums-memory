@@ -115,7 +115,7 @@ function printUsage() {
   process.stdout.write(
     [
       "Usage:",
-      "  node --import tsx scripts/validate-cross-repo-federation-model.ts [--file <path>] [--json]",
+      "  bun scripts/validate-cross-repo-federation-model.ts [--file <path>] [--json]",
       "",
       "Options:",
       "  --file         Path to cross-repo federation runbook markdown.",
